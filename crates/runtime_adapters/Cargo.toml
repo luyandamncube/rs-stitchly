@@ -1,0 +1,12 @@
+[package]
+name = "runtime_adapters"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+node_registry = { path = "../node_registry" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+workflow_schema = { path = "../workflow_schema" }
+

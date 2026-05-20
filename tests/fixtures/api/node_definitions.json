@@ -1,0 +1,332 @@
+{
+  "node_definitions": [
+    {
+      "type_id": "preview_output",
+      "version": 1,
+      "display_name": "Preview Output",
+      "category": "output",
+      "description": "Surfaces human-readable text in the run log stream.",
+      "inputs": [
+        {
+          "port_id": "text",
+          "display_name": "Text",
+          "direction": "input",
+          "data_type": "text",
+          "required": true,
+          "multiple": false,
+          "description": "Renderable preview text."
+        }
+      ],
+      "outputs": [],
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "runtime": {
+        "executor_kind": "rust_native",
+        "isolation_mode": "in_process"
+      },
+      "capabilities": {
+        "reads_external_state": false,
+        "writes_external_state": false,
+        "produces_durable_artifacts": false,
+        "supports_preview": true,
+        "requires_connection": false,
+        "may_emit_structured_logs": true
+      },
+      "ui": {
+        "icon": "sparkles",
+        "color_token": "var(--node-output)",
+        "default_width": 332,
+        "default_height": 160,
+        "help_text": "Expose the final human-readable output in the UI.",
+        "node_card": {
+          "variant": "output",
+          "icon_key": "preview_output",
+          "top_chip": {
+            "visible": true,
+            "text": "Output"
+          },
+          "header": {
+            "title_source": "instance_label_or_display_name",
+            "show_overflow_menu": true
+          },
+          "rows": [
+            {
+              "row_id": "title",
+              "kind": "kv",
+              "label": "Title",
+              "value": {
+                "source": "config",
+                "path": "title"
+              },
+              "formatter": "text",
+              "icon_key": "label",
+              "truncate": false
+            },
+            {
+              "row_id": "preview_text",
+              "kind": "text_block",
+              "label": "Preview",
+              "value": {
+                "source": "runtime",
+                "path": "last_output_preview"
+              },
+              "formatter": "text",
+              "truncate": true
+            }
+          ],
+          "footer": {
+            "kind": "metric",
+            "label": "Last emit",
+            "value": {
+              "source": "runtime",
+              "path": "last_status"
+            },
+            "formatter": "status",
+            "icon_key": "status"
+          },
+          "handles": {
+            "input_layout": "single_left",
+            "output_layout": "none",
+            "show_labels": "never",
+            "align_to_rows": true
+          },
+          "size": {
+            "width": 332,
+            "density": "comfortable"
+          }
+        }
+      }
+    },
+    {
+      "type_id": "text_input",
+      "version": 1,
+      "display_name": "Text Input",
+      "category": "input",
+      "description": "Injects literal text into the workflow.",
+      "inputs": [],
+      "outputs": [
+        {
+          "port_id": "text",
+          "display_name": "Text",
+          "direction": "output",
+          "data_type": "text",
+          "required": true,
+          "multiple": false,
+          "description": "The provided text payload."
+        }
+      ],
+      "config_schema": {
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        }
+      },
+      "runtime": {
+        "executor_kind": "rust_native",
+        "isolation_mode": "in_process"
+      },
+      "capabilities": {
+        "reads_external_state": false,
+        "writes_external_state": false,
+        "produces_durable_artifacts": false,
+        "supports_preview": true,
+        "requires_connection": false,
+        "may_emit_structured_logs": true
+      },
+      "ui": {
+        "icon": "type",
+        "color_token": "var(--node-input)",
+        "default_width": 320,
+        "default_height": 160,
+        "help_text": "Provide starter text for a flow or quick runtime smoke test.",
+        "node_card": {
+          "variant": "trigger",
+          "icon_key": "text_input",
+          "top_chip": {
+            "visible": true,
+            "text": "Start"
+          },
+          "header": {
+            "title_source": "instance_label_or_display_name",
+            "show_overflow_menu": true
+          },
+          "rows": [
+            {
+              "row_id": "text_value",
+              "kind": "text_block",
+              "label": "Text",
+              "value": {
+                "source": "config",
+                "path": "text"
+              },
+              "formatter": "text",
+              "truncate": true
+            },
+            {
+              "row_id": "char_count",
+              "kind": "kv",
+              "label": "Length",
+              "value": {
+                "source": "derived",
+                "path": "char_count"
+              },
+              "formatter": "text",
+              "icon_key": "metric",
+              "truncate": false
+            }
+          ],
+          "footer": {
+            "kind": "metric",
+            "label": "Last run",
+            "value": {
+              "source": "runtime",
+              "path": "last_status"
+            },
+            "formatter": "status",
+            "icon_key": "status"
+          },
+          "handles": {
+            "input_layout": "none",
+            "output_layout": "single_right",
+            "show_labels": "never",
+            "align_to_rows": true
+          },
+          "size": {
+            "width": 320,
+            "density": "comfortable"
+          }
+        }
+      }
+    },
+    {
+      "type_id": "text_transform",
+      "version": 1,
+      "display_name": "Text Transform",
+      "category": "compute",
+      "description": "Runs a tiny built-in Rust text transform.",
+      "inputs": [
+        {
+          "port_id": "source",
+          "display_name": "Source",
+          "direction": "input",
+          "data_type": "text",
+          "required": true,
+          "multiple": false,
+          "description": "Upstream text value."
+        }
+      ],
+      "outputs": [
+        {
+          "port_id": "text",
+          "display_name": "Text",
+          "direction": "output",
+          "data_type": "text",
+          "required": true,
+          "multiple": false,
+          "description": "Transformed text output."
+        }
+      ],
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "identity",
+              "uppercase",
+              "trim"
+            ],
+            "default": "identity"
+          }
+        }
+      },
+      "runtime": {
+        "executor_kind": "rust_native",
+        "isolation_mode": "in_process"
+      },
+      "capabilities": {
+        "reads_external_state": false,
+        "writes_external_state": false,
+        "produces_durable_artifacts": false,
+        "supports_preview": true,
+        "requires_connection": false,
+        "may_emit_structured_logs": true
+      },
+      "ui": {
+        "icon": "wand",
+        "color_token": "var(--node-transform)",
+        "default_width": 340,
+        "default_height": 156,
+        "help_text": "A starter compute node for the first vertical slice.",
+        "node_card": {
+          "variant": "compute",
+          "icon_key": "text_transform",
+          "top_chip": {
+            "visible": false
+          },
+          "header": {
+            "title_source": "instance_label_or_display_name",
+            "show_overflow_menu": true
+          },
+          "rows": [
+            {
+              "row_id": "operation",
+              "kind": "kv",
+              "label": "Operation",
+              "value": {
+                "source": "config",
+                "path": "operation"
+              },
+              "formatter": "text",
+              "icon_key": "logic",
+              "truncate": false
+            },
+            {
+              "row_id": "preview",
+              "kind": "text_block",
+              "label": "Input",
+              "value": {
+                "source": "runtime",
+                "path": "last_input_preview"
+              },
+              "formatter": "text",
+              "truncate": true
+            }
+          ],
+          "footer": {
+            "kind": "metric",
+            "label": "Duration",
+            "value": {
+              "source": "runtime",
+              "path": "last_duration_ms"
+            },
+            "formatter": "duration_ms",
+            "icon_key": "duration"
+          },
+          "handles": {
+            "input_layout": "single_left",
+            "output_layout": "single_right",
+            "show_labels": "never",
+            "align_to_rows": true
+          },
+          "size": {
+            "width": 340,
+            "density": "comfortable"
+          }
+        }
+      }
+    }
+  ]
+}

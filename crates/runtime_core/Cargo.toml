@@ -1,0 +1,16 @@
+[package]
+name = "runtime_core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+api_contract = { path = "../api_contract" }
+chrono = { workspace = true }
+node_registry = { path = "../node_registry" }
+runtime_adapters = { path = "../runtime_adapters" }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }
+workflow_schema = { path = "../workflow_schema" }
+

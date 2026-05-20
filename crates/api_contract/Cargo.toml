@@ -1,0 +1,12 @@
+[package]
+name = "api_contract"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chrono = { workspace = true }
+node_registry = { path = "../node_registry" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+workflow_schema = { path = "../workflow_schema" }
+

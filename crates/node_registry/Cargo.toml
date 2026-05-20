@@ -1,0 +1,10 @@
+[package]
+name = "node_registry"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+workflow_schema = { path = "../workflow_schema" }
+

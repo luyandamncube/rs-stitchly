@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "workflow_id": "wf_text_preview",
+  "version": 1,
+  "name": "Text Preview Flow",
+  "description": "A starter workflow for the first Stitchly vertical slice.",
+  "nodes": [
+    {
+      "node_id": "input_text",
+      "type_id": "text_input",
+      "definition_version": 1,
+      "label": "Source Text",
+      "config": {
+        "text": "ship the slice"
+      },
+      "position": {
+        "x": 120,
+        "y": 180
+      }
+    },
+    {
+      "node_id": "transform_text",
+      "type_id": "text_transform",
+      "definition_version": 1,
+      "label": "Uppercase",
+      "config": {
+        "operation": "uppercase"
+      },
+      "position": {
+        "x": 520,
+        "y": 180
+      }
+    },
+    {
+      "node_id": "preview_text",
+      "type_id": "preview_output",
+      "definition_version": 1,
+      "label": "Preview",
+      "config": {
+        "title": "Result"
+      },
+      "position": {
+        "x": 940,
+        "y": 180
+      }
+    }
+  ],
+  "edges": [
+    {
+      "edge_id": "edge_input_to_transform",
+      "source_node_id": "input_text",
+      "source_port_id": "text",
+      "target_node_id": "transform_text",
+      "target_port_id": "source"
+    },
+    {
+      "edge_id": "edge_transform_to_preview",
+      "source_node_id": "transform_text",
+      "source_port_id": "text",
+      "target_node_id": "preview_text",
+      "target_port_id": "text"
+    }
+  ],
+  "metadata": {
+    "viewport": {
+      "x": 0,
+      "y": 0,
+      "zoom": 1
+    }
+  }
+}

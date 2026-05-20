@@ -1,0 +1,14 @@
+{
+  "name": "stitchly",
+  "private": true,
+  "packageManager": "pnpm@10.11.0",
+  "scripts": {
+    "dev:ui": "bash ./scripts/dev_ui_agent.sh up",
+    "dev:ui:no-open": "bash ./scripts/dev_ui_agent.sh up --no-open",
+    "dev:ui:stop": "bash ./scripts/dev_ui_agent.sh down",
+    "dev:ui:status": "bash ./scripts/dev_ui_agent.sh status",
+    "dev:frontend": "corepack pnpm --dir apps/web dev",
+    "test:frontend": "corepack pnpm --dir apps/web test --run",
+    "typecheck:frontend": "corepack pnpm --dir apps/web typecheck"
+  }
+}

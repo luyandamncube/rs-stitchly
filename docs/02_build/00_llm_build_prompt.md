@@ -46,8 +46,8 @@ Use these docs for these responsibilities:
 - `docs/00_foundation/04_execution_runtime.md`
   Runtime behavior, planning, scheduling, retries, cancellation, and execution responsibilities.
 
-- `docs/00_foundation/05_frontend_canvas.md`
-  Frontend scope and non-responsibilities.
+- `docs/03_ui/00_frontend_canvas.md`
+  Frontend scope and non-responsibilities, shell model, visual direction, and interaction rules.
 
 - `docs/00_foundation/06_backend_api.md`
   API design, endpoint families, Rust API stack, REST and SSE transport model, and sample payloads.
@@ -101,11 +101,12 @@ When docs overlap, prefer them in this order:
 1. `11_decision_log.md`
 2. `10_mvp_scope.md`
 3. `14_repo_structure_and_build.md`
-4. `06_backend_api.md`
-5. `15_node_definition_spec.md`
-6. `19_compute_model.md`
-7. `18_run_lifecycle_and_events.md`
-8. the remaining foundation docs
+4. `03_ui/00_frontend_canvas.md`
+5. `06_backend_api.md`
+6. `15_node_definition_spec.md`
+7. `19_compute_model.md`
+8. `18_run_lifecycle_and_events.md`
+9. the remaining foundation and UI docs
 
 If details are missing:
 

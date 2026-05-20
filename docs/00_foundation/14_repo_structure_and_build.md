@@ -227,6 +227,10 @@ There should be one obvious command family for each task.
 
 Recommended direction:
 
+- `just dev-ui`
+- `just dev-ui-no-open`
+- `just dev-ui-stop`
+- `just dev-ui-status`
 - `just dev-backend`
 - `just dev-frontend`
 - `just generate-contracts`

@@ -1,0 +1,40 @@
+[package]
+name = "stitchly"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+members = [
+  ".",
+  "crates/api_contract",
+  "crates/node_registry",
+  "crates/runtime_adapters",
+  "crates/runtime_core",
+  "crates/runtime_server",
+  "crates/workflow_schema",
+]
+resolver = "2"
+
+[workspace.dependencies]
+anyhow = "1.0.98"
+axum = { version = "0.7.9", features = ["macros"] }
+chrono = { version = "0.4.41", features = ["serde"] }
+futures = "0.3.31"
+http-body-util = "0.1.3"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+thiserror = "1.0.69"
+tokio = { version = "1.48.0", features = ["full"] }
+tokio-stream = { version = "0.1.17", features = ["sync"] }
+tower = { version = "0.5.2", features = ["util"] }
+uuid = { version = "1.18.0", features = ["serde", "v4"] }
+
+[dependencies]
+api_contract = { path = "crates/api_contract" }
+node_registry = { path = "crates/node_registry" }
+runtime_core = { path = "crates/runtime_core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+workflow_schema = { path = "crates/workflow_schema" }

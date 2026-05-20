@@ -1,0 +1,20 @@
+{
+  "final_status": "succeeded",
+  "expected_sequence": [
+    "run_created",
+    "planning_started",
+    "planning_finished",
+    "run_status_changed",
+    "node_started",
+    "node_log",
+    "node_finished",
+    "node_started",
+    "node_log",
+    "node_finished",
+    "node_started",
+    "node_log",
+    "node_finished",
+    "run_succeeded"
+  ]
+}
+

@@ -13,6 +13,34 @@ Use this file to capture important product and technical decisions in a compact 
 
 ## Entries
 
+### 2026-05-19 - Nodes use a structured operational card design
+
+- status: accepted
+- context: generic schema-style node boxes do not match the intended product feel or the desired clarity of the workflow canvas.
+- decision: render nodes as compact operational cards with an optional top chip, header row, structured body rows, footer metric, integrated handles, and lava-colored edges.
+- consequence: node definitions need richer `ui` metadata, descriptions become lower-emphasis in the visual card, and edges/handles become part of the node design language instead of generic canvas defaults.
+
+### 2026-05-19 - The frontend defaults to a dark canvas-first shell
+
+- status: accepted
+- context: the product should feel like a high-performance workflow tool, not a dashboard with the canvas embedded inside it.
+- decision: make dark mode, infinite-canvas presentation, and minimal overlay chrome the default frontend direction.
+- consequence: future UI work should optimize for fullscreen graph editing with compact overlays instead of permanent headers and sidebars.
+
+### 2026-05-19 - Stitchly uses a rail, drawer, and floating-card navigation shell
+
+- status: accepted
+- context: the first UI scaffold exposed header, inspector, and control-pane content at the same time, which reduces canvas focus and does not match the intended premium tool feel.
+- decision: use a slim left rail for global navigation, a drawer for section content, and a contextual floating card for focused detail.
+- consequence: inspector and run controls move behind toggled navigation, and contextual detail becomes selection-driven instead of permanently visible.
+
+### 2026-05-19 - True Black plus Lava Core is the initial visual palette
+
+- status: accepted
+- context: the current frontend styling leans too heavily on cool atmospheric accents for the desired product direction.
+- decision: use a strict dark palette with `#0B0B0D`, `#17171C`, `#222229`, `#7A7A85`, `#F56E0F`, `#FF7A1A`, and white as the initial frontend visual system.
+- consequence: grayscale surfaces become the baseline, orange becomes the main active accent, and default UI chrome should avoid competing color families.
+
 ### 2026-05-18 - Rust owns runtime execution
 
 - status: accepted

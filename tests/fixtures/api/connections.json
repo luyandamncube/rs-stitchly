@@ -1,0 +1,31 @@
+{
+  "connections": [
+    {
+      "connection_id": "local_filesystem",
+      "connection_kind": "local_filesystem",
+      "display_name": "Local Filesystem",
+      "config": {
+        "root_label": "workspace",
+        "mode": "read_write"
+      },
+      "capabilities": {
+        "supports_file_input": true,
+        "supports_preview_output": true
+      }
+    },
+    {
+      "connection_id": "clickhouse_demo",
+      "connection_kind": "clickhouse",
+      "display_name": "ClickHouse Demo",
+      "config": {
+        "database": "analytics",
+        "tls": true
+      },
+      "capabilities": {
+        "supports_sql_transform": true,
+        "supports_table_output": true
+      }
+    }
+  ]
+}
+

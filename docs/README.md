@@ -17,6 +17,7 @@ The goal is to document:
 - Workflow example docs live under `01_workflows/` and use numbered filenames starting at `20_...`.
 - Each workflow example doc should capture one concrete dataflow or automation flow.
 - Build prompt and implementation-guidance docs live under `02_build/` and use numbered filenames starting at `00_...`.
+- UI-specific product and interaction docs live under `03_ui/` and use numbered filenames starting at `00_...`.
 - When a major product or technical direction changes, update the relevant doc and add an entry to `00_foundation/11_decision_log.md`.
 - Prefer extending an existing numbered doc before creating a new one for overlapping content.
 
@@ -27,7 +28,6 @@ The goal is to document:
 - `00_foundation/02_architecture.md`: top-level system architecture and component boundaries
 - `00_foundation/03_workflow_schema.md`: canonical workflow graph format and validation rules
 - `00_foundation/04_execution_runtime.md`: planning, scheduling, execution lifecycle, resource handling
-- `00_foundation/05_frontend_canvas.md`: React Flow editor responsibilities and UX rules
 - `00_foundation/06_backend_api.md`: APIs between the frontend and the Rust backend
 - `00_foundation/07_persistence.md`: workflow storage, versioning, runs, and artifact persistence
 - `00_foundation/08_security_and_sandboxing.md`: isolation model for custom code and untrusted execution
@@ -42,6 +42,11 @@ The goal is to document:
 - `00_foundation/17_artifacts_and_dataset_refs.md`: artifact references, dataset references, lifecycle, and lineage
 - `00_foundation/18_run_lifecycle_and_events.md`: run states, node states, retries, cancellation, and event streams
 - `00_foundation/19_compute_model.md`: compute lanes, executor kinds, isolation strategy, and scaling path
+
+## UI
+
+- `03_ui/00_frontend_canvas.md`: React Flow editor responsibilities, shell model, visual direction, node design direction, and UX rules
+- `03_ui/01_node_state_model.md`: node interaction, connection, validation, and runtime state layers for the canvas UI
 
 ## Workflows
 

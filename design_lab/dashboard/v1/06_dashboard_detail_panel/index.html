@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>06 Dashboard Detail Panel</title>
+    <link rel="stylesheet" href="../shared.css" />
+  </head>
+  <body class="dashboard-lab">
+    <main class="dashboard-shell-page">
+      <section class="dashboard-shell" aria-label="Dashboard detail panel study">
+        <aside class="dashboard-shell__sidebar">
+          <div class="dashboard-sidebar__brand">
+            <span class="dashboard-brand-chip">
+              <img
+                class="dashboard-brand-chip__symbol"
+                src="../../../../apps/web/public/brand/symbol/stitchly-symbol-white.svg"
+                alt=""
+              />
+              <span>Detail study</span>
+            </span>
+            <span class="dashboard-brand-name">Stitchly</span>
+            <span class="dashboard-brand-label">Operations workspace</span>
+          </div>
+
+          <div class="dashboard-sidebar__nav">
+            <div class="dashboard-nav-group">
+              <a class="dashboard-nav-item" href="/">
+                <span class="dashboard-nav-item__icon" aria-hidden="true">
+                  <svg viewBox="0 0 18 18" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="4" cy="4" r="2.2" />
+                    <circle cx="14" cy="4" r="2.2" />
+                    <circle cx="4" cy="14" r="2.2" />
+                    <circle cx="14" cy="14" r="2.2" />
+                  </svg>
+                </span>
+                <span>Overview</span>
+              </a>
+              <a class="dashboard-nav-item dashboard-nav-item--active" href="/">
+                <span class="dashboard-nav-item__icon" aria-hidden="true">
+                  <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="4" cy="13.8" r="2.1" fill="currentColor" />
+                    <circle cx="14" cy="4.2" r="2.1" fill="currentColor" />
+                    <path d="M6.7 13.8H10.7C12.1 13.8 13.2 12.7 13.2 11.3C13.2 9.9 12.1 8.8 10.7 8.8H7.3C5.9 8.8 4.8 7.7 4.8 6.3C4.8 4.9 5.9 3.8 7.3 3.8H11.3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.95" />
+                  </svg>
+                </span>
+                <span>Runs &amp; Logs</span>
+              </a>
+              <a class="dashboard-nav-item" href="/">
+                <span class="dashboard-nav-item__icon" aria-hidden="true">
+                  <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M2.8 14.2H15.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+                    <path d="M3.5 11.6L7.1 8L10 10.9L14.4 6.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+                    <circle cx="14.4" cy="6.5" r="2.05" fill="currentColor" />
+                  </svg>
+                </span>
+                <span>Analytics</span>
+              </a>
+            </div>
+
+            <div class="dashboard-sidebar__alert">
+              <div class="dashboard-sidebar__alert-title">
+                <span>Supplier workflow degraded</span>
+                <span class="dashboard-sidebar__alert-dot" aria-hidden="true"></span>
+              </div>
+              <div class="dashboard-sidebar__alert-meta">
+                Two failures in the last 30 minutes. Review run details and retry pressure.
+              </div>
+            </div>
+          </div>
+
+          <div class="dashboard-sidebar__footer">
+            <div class="dashboard-profile">
+              <span class="dashboard-profile__avatar">L</span>
+              <span class="dashboard-profile__meta">
+                <span class="dashboard-profile__name">Luyanda M.</span>
+                <span class="dashboard-profile__role">Workspace owner</span>
+              </span>
+            </div>
+          </div>
+        </aside>
+
+        <div class="dashboard-shell__main">
+          <div class="dashboard-main-card dashboard-main-card--detail-study">
+            <div class="dashboard-main-card__inner dashboard-main-card__inner--detail-study">
+              <div class="dashboard-main-card__topbar">
+                <div class="dashboard-main-card__title dashboard-main-card__title--compact">
+                  <span class="dashboard-main-card__eyebrow">Run inspection</span>
+                  <h1 class="dashboard-main-card__heading">Review execution and failure context side by side.</h1>
+                  <span class="dashboard-main-card__subcopy">
+                    A split surface for quick scan on the left and richer diagnostic context on the right.
+                  </span>
+                </div>
+
+                <div class="dashboard-toolbar">
+                  <span class="dashboard-pill">Last 24h</span>
+                  <span class="dashboard-pill dashboard-pill--strong">Retry run</span>
+                </div>
+              </div>
+
+              <div class="dashboard-detail-stage">
+                <div class="dashboard-detail-surface">
+                  <div class="dashboard-toolbar">
+                    <span class="dashboard-pill">All</span>
+                    <span class="dashboard-pill dashboard-pill--ghost">Success</span>
+                    <span class="dashboard-pill dashboard-pill--ghost">Failed</span>
+                    <span class="dashboard-pill dashboard-pill--ghost">Running</span>
+                    <span class="dashboard-pill dashboard-pill--ghost dashboard-toolbar__search">
+                      <span>Name, ID, errors...</span>
+                      <span>⌕</span>
+                    </span>
+                  </div>
+
+                  <div class="dashboard-table-shell dashboard-table-shell--study">
+                    <div class="dashboard-table-header">
+                      <span class="dashboard-table-header__lead">
+                        <span class="dashboard-table-check dashboard-table-check--header" aria-hidden="true"></span>
+                        <span>Run ID</span>
+                      </span>
+                      <span>Started</span>
+                      <span>Workflow</span>
+                      <span>Duration</span>
+                      <span>Status</span>
+                      <span>Error</span>
+                      <span>Retries</span>
+                    </div>
+
+                    <div class="dashboard-table-row">
+                      <span class="dashboard-table-row__lead">
+                        <span class="dashboard-table-check" aria-hidden="true"></span>
+                        <span>6724</span>
+                      </span>
+                      <span class="dashboard-cell--muted">22 Jun 2025, 11:10:27</span>
+                      <span class="dashboard-cell--truncate">Analytics Refresh</span>
+                      <span>25.9s</span>
+                      <span class="dashboard-status"><span class="dashboard-status__dot dashboard-status__dot--success">✓</span>Success</span>
+                      <span class="dashboard-cell--quiet">None</span>
+                      <span>0 / 0</span>
+                    </div>
+
+                    <div class="dashboard-table-row">
+                      <span class="dashboard-table-row__lead">
+                        <span class="dashboard-table-check" aria-hidden="true"></span>
+                        <span>6725</span>
+                      </span>
+                      <span class="dashboard-cell--muted">22 Jun 2025, 11:12:59</span>
+                      <span class="dashboard-cell--truncate">Billing Reconciliation</span>
+                      <span>12.7s</span>
+                      <span class="dashboard-status"><span class="dashboard-status__dot dashboard-status__dot--success">✓</span>Success</span>
+                      <span class="dashboard-cell--quiet">None</span>
+                      <span>0 / 0</span>
+                    </div>
+
+                    <div class="dashboard-table-row dashboard-table-row--selected dashboard-table-row--attention">
+                      <span class="dashboard-table-row__lead">
+                        <span class="dashboard-table-check" aria-hidden="true"></span>
+                        <span>6726</span>
+                      </span>
+                      <span class="dashboard-cell--muted">22 Jun 2025, 11:15:45</span>
+                      <span class="dashboard-cell--truncate">Inventory Level Sync</span>
+                      <span>8.2s</span>
+                      <span class="dashboard-status dashboard-status--failed"><span class="dashboard-status__dot dashboard-status__dot--failed">×</span>Failed</span>
+                      <span class="dashboard-error-cell">
+                        <span class="dashboard-error-cell__text">HTTPError 404: Not Found</span>
+                        <span class="dashboard-error-cell__toggle">⌄</span>
+                      </span>
+                      <span>2 / 4</span>
+                    </div>
+
+                    <div class="dashboard-table-row">
+                      <span class="dashboard-table-row__lead">
+                        <span class="dashboard-table-check" aria-hidden="true"></span>
+                        <span>6727</span>
+                      </span>
+                      <span class="dashboard-cell--muted">22 Jun 2025, 11:18:13</span>
+                      <span class="dashboard-cell--truncate">KYC Data Update</span>
+                      <span>18.6s</span>
+                      <span class="dashboard-status"><span class="dashboard-status__dot dashboard-status__dot--success">✓</span>Success</span>
+                      <span class="dashboard-cell--quiet">None</span>
+                      <span>0 / 0</span>
+                    </div>
+
+                    <div class="dashboard-table-row">
+                      <span class="dashboard-table-row__lead">
+                        <span class="dashboard-table-check" aria-hidden="true"></span>
+                        <span>6728</span>
+                      </span>
+                      <span class="dashboard-cell--muted">22 Jun 2025, 11:20:55</span>
+                      <span class="dashboard-cell--truncate">Monthly Log Archiver</span>
+                      <span>15.3s</span>
+                      <span class="dashboard-status"><span class="dashboard-status__dot dashboard-status__dot--success">✓</span>Success</span>
+                      <span class="dashboard-cell--quiet">None</span>
+                      <span>0 / 0</span>
+                    </div>
+                  </div>
+                </div>
+
+                <aside class="dashboard-detail-panel" aria-label="Selected run detail">
+                  <div class="dashboard-detail-panel__header">
+                    <span class="dashboard-detail-panel__eyebrow">Selected run</span>
+                    <span class="dashboard-detail-panel__title">Inventory Level Sync</span>
+                    <span class="dashboard-detail-panel__meta">
+                      Run `6726` failed while resolving supplier inventory from the upstream catalog endpoint.
+                    </span>
+                    <span class="dashboard-status dashboard-status--failed"><span class="dashboard-status__dot dashboard-status__dot--failed">×</span>Failed</span>
+                  </div>
+
+                  <div class="dashboard-detail-panel__section">
+                    <span class="dashboard-detail-panel__section-title">Run summary</span>
+                    <div class="dashboard-detail-grid">
+                      <div class="dashboard-detail-kv">
+                        <span class="dashboard-detail-kv__label">Started</span>
+                        <span class="dashboard-detail-kv__value">22 Jun 2025, 11:15:45</span>
+                      </div>
+                      <div class="dashboard-detail-kv">
+                        <span class="dashboard-detail-kv__label">Duration</span>
+                        <span class="dashboard-detail-kv__value">8.2s</span>
+                      </div>
+                      <div class="dashboard-detail-kv">
+                        <span class="dashboard-detail-kv__label">Retries</span>
+                        <span class="dashboard-detail-kv__value">2 / 4 used</span>
+                      </div>
+                      <div class="dashboard-detail-kv">
+                        <span class="dashboard-detail-kv__label">Workflow</span>
+                        <span class="dashboard-detail-kv__value">Supplier sync</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="dashboard-detail-panel__section">
+                    <span class="dashboard-detail-panel__section-title">Failure</span>
+                    <div class="dashboard-detail-callout">
+                      <span class="dashboard-detail-callout__title">HTTPError 404: Not Found</span>
+                      <span class="dashboard-detail-callout__body">
+                        Supplier API returned `404` for `/inventory/v2/levels` after the enrichment node resolved a stale product family identifier.
+                      </span>
+                    </div>
+                    <div class="dashboard-detail-pill-row">
+                      <span class="dashboard-detail-pill">Retryable</span>
+                      <span class="dashboard-detail-pill">Supplier API</span>
+                      <span class="dashboard-detail-pill">Schema stable</span>
+                    </div>
+                  </div>
+
+                  <div class="dashboard-detail-panel__section">
+                    <span class="dashboard-detail-panel__section-title">Timeline</span>
+                    <div class="dashboard-detail-timeline">
+                      <div class="dashboard-detail-timeline__item">
+                        <span class="dashboard-detail-timeline__dot"></span>
+                        <div class="dashboard-detail-timeline__content">
+                          <span class="dashboard-detail-timeline__title">Run queued</span>
+                          <span class="dashboard-detail-timeline__meta">11:15:45 • Waiting for supplier slot</span>
+                        </div>
+                      </div>
+                      <div class="dashboard-detail-timeline__item">
+                        <span class="dashboard-detail-timeline__dot"></span>
+                        <div class="dashboard-detail-timeline__content">
+                          <span class="dashboard-detail-timeline__title">Supplier request started</span>
+                          <span class="dashboard-detail-timeline__meta">11:15:47 • API request node issued `GET /inventory/v2/levels`</span>
+                        </div>
+                      </div>
+                      <div class="dashboard-detail-timeline__item">
+                        <span class="dashboard-detail-timeline__dot dashboard-detail-timeline__dot--accent"></span>
+                        <div class="dashboard-detail-timeline__content">
+                          <span class="dashboard-detail-timeline__title">Run failed</span>
+                          <span class="dashboard-detail-timeline__meta">11:15:53 • Retry budget decremented after repeated 404 response</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="dashboard-detail-panel__section">
+                    <span class="dashboard-detail-panel__section-title">Node execution</span>
+                    <div class="dashboard-detail-node-list">
+                      <div class="dashboard-detail-node">
+                        <span class="dashboard-detail-node__name">Schedule trigger</span>
+                        <span class="dashboard-detail-node__status">Succeeded</span>
+                      </div>
+                      <div class="dashboard-detail-node">
+                        <span class="dashboard-detail-node__name">HTTP API Request</span>
+                        <span class="dashboard-detail-node__status">Failed</span>
+                      </div>
+                      <div class="dashboard-detail-node">
+                        <span class="dashboard-detail-node__name">Conditional</span>
+                        <span class="dashboard-detail-node__status">Skipped</span>
+                      </div>
+                      <div class="dashboard-detail-node">
+                        <span class="dashboard-detail-node__name">Send Telegram</span>
+                        <span class="dashboard-detail-node__status">Pending</span>
+                      </div>
+                    </div>
+                  </div>
+                </aside>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <span class="dashboard-floating-action">Actions <span class="dashboard-floating-action__trail">/</span></span>
+      </section>
+    </main>
+  </body>
+</html>

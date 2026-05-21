@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>05 Dashboard Mobile</title>
+    <link rel="stylesheet" href="../shared.css" />
+  </head>
+  <body class="dashboard-lab">
+    <main class="dashboard-mobile-page">
+      <section class="dashboard-mobile-frame" aria-label="Mobile dashboard study">
+        <div class="dashboard-mobile-screen">
+          <div class="dashboard-mobile-statusbar" aria-hidden="true">
+            <span class="dashboard-mobile-statusbar__notch"></span>
+          </div>
+
+          <div class="dashboard-mobile-header">
+            <div class="dashboard-mobile-brand">
+              <span class="dashboard-mobile-brand__name">Stitchly</span>
+              <span class="dashboard-mobile-brand__label">Runs dashboard</span>
+            </div>
+            <span class="dashboard-mobile-badge">Mobile study</span>
+          </div>
+
+          <div class="dashboard-mobile-hero">
+            <span class="dashboard-mobile-hero__eyebrow">Runs &amp; Logs</span>
+            <h1 class="dashboard-mobile-hero__title">Track execution with calm, mobile-first clarity.</h1>
+            <span class="dashboard-mobile-hero__copy">
+              Review active runs, failures, and retry pressure from a dashboard rhythm that fits a smaller screen.
+            </span>
+          </div>
+
+          <div class="dashboard-mobile-chip-row" aria-label="Dashboard filters">
+            <span class="dashboard-mobile-chip">All</span>
+            <span class="dashboard-mobile-chip dashboard-mobile-chip--ghost">Success</span>
+            <span class="dashboard-mobile-chip dashboard-mobile-chip--ghost">Failed</span>
+            <span class="dashboard-mobile-chip dashboard-mobile-chip--ghost">Running</span>
+            <span class="dashboard-mobile-chip">Last 24h</span>
+          </div>
+
+          <div class="dashboard-mobile-grid">
+            <div class="dashboard-mobile-card">
+              <span class="dashboard-mobile-card__label">Total runs</span>
+              <span class="dashboard-mobile-card__value">237</span>
+              <span class="dashboard-mobile-card__meta">230 success • 5 failed</span>
+            </div>
+            <div class="dashboard-mobile-card">
+              <span class="dashboard-mobile-card__label">Workflow success</span>
+              <span class="dashboard-mobile-card__value">
+                <span>98.7%</span>
+                <span class="dashboard-mobile-card__delta">+2%</span>
+              </span>
+              <span class="dashboard-mobile-card__meta">Steady over the last 24h</span>
+            </div>
+            <div class="dashboard-mobile-card dashboard-mobile-card--wide">
+              <span class="dashboard-mobile-card__label">Average lag</span>
+              <span class="dashboard-mobile-card__value">38s</span>
+              <span class="dashboard-mobile-card__meta">
+                Latency remains within expected bounds for active supplier and enrichment workflows.
+              </span>
+            </div>
+          </div>
+
+          <div class="dashboard-mobile-list">
+            <div class="dashboard-mobile-list__header">
+              <span class="dashboard-mobile-list__title">Recent runs</span>
+              <span class="dashboard-mobile-list__link">See all</span>
+            </div>
+
+            <div class="dashboard-mobile-run-list">
+              <article class="dashboard-mobile-run-item">
+                <div class="dashboard-mobile-run-item__top">
+                  <div class="dashboard-mobile-run-item__title">
+                    <span class="dashboard-mobile-run-item__name">Customer Webhook Listener</span>
+                    <span class="dashboard-mobile-run-item__meta">6734 • 22 Jun 2025, 11:02</span>
+                  </div>
+                  <span class="dashboard-status"><span class="dashboard-status__dot dashboard-status__dot--running">i</span>Running</span>
+                </div>
+                <div class="dashboard-mobile-run-item__bottom">
+                  <span class="dashboard-mobile-run-item__error">Awaiting downstream supplier response.</span>
+                  <span class="dashboard-cell--quiet">45.2s</span>
+                </div>
+              </article>
+
+              <article class="dashboard-mobile-run-item dashboard-mobile-run-item--failed">
+                <div class="dashboard-mobile-run-item__top">
+                  <div class="dashboard-mobile-run-item__title">
+                    <span class="dashboard-mobile-run-item__name">Inventory Level Sync</span>
+                    <span class="dashboard-mobile-run-item__meta">6729 • 22 Jun 2025, 11:15</span>
+                  </div>
+                  <span class="dashboard-status dashboard-status--failed"><span class="dashboard-status__dot dashboard-status__dot--failed">×</span>Failed</span>
+                </div>
+                <div class="dashboard-mobile-run-item__bottom">
+                  <span class="dashboard-mobile-run-item__error">HTTPError 404: Not Found</span>
+                  <span class="dashboard-cell--quiet">2 / 4 retries</span>
+                </div>
+              </article>
+
+              <article class="dashboard-mobile-run-item">
+                <div class="dashboard-mobile-run-item__top">
+                  <div class="dashboard-mobile-run-item__title">
+                    <span class="dashboard-mobile-run-item__name">Marketing Metrics ETL</span>
+                    <span class="dashboard-mobile-run-item__meta">6730 • 22 Jun 2025, 11:26</span>
+                  </div>
+                  <span class="dashboard-status"><span class="dashboard-status__dot dashboard-status__dot--success">✓</span>Success</span>
+                </div>
+                <div class="dashboard-mobile-run-item__bottom">
+                  <span class="dashboard-mobile-run-item__error">Completed without downstream drift.</span>
+                  <span class="dashboard-cell--quiet">14.8s</span>
+                </div>
+              </article>
+            </div>
+          </div>
+
+          <nav class="dashboard-mobile-bottom-nav" aria-label="Mobile dashboard navigation">
+            <a class="dashboard-mobile-nav-item" href="/">
+              <svg viewBox="0 0 18 18" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="4" cy="4" r="2.2" />
+                <circle cx="14" cy="4" r="2.2" />
+                <circle cx="4" cy="14" r="2.2" />
+                <circle cx="14" cy="14" r="2.2" />
+              </svg>
+              <span>Home</span>
+            </a>
+            <a class="dashboard-mobile-nav-item dashboard-mobile-nav-item--active" href="/">
+              <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="4" cy="13.8" r="2.1" fill="currentColor" />
+                <circle cx="14" cy="4.2" r="2.1" fill="currentColor" />
+                <path d="M6.7 13.8H10.7C12.1 13.8 13.2 12.7 13.2 11.3C13.2 9.9 12.1 8.8 10.7 8.8H7.3C5.9 8.8 4.8 7.7 4.8 6.3C4.8 4.9 5.9 3.8 7.3 3.8H11.3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.95" />
+              </svg>
+              <span>Runs</span>
+            </a>
+            <a class="dashboard-mobile-nav-item" href="/">
+              <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                <path d="M2.8 14.2H15.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+                <path d="M3.5 11.6L7.1 8L10 10.9L14.4 6.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+                <circle cx="14.4" cy="6.5" r="2.05" fill="currentColor" />
+              </svg>
+              <span>Charts</span>
+            </a>
+            <a class="dashboard-mobile-nav-item" href="/">
+              <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="9" cy="9" r="2.2" fill="currentColor" />
+                <path d="M9 3.2V4.9M9 13.1V14.8M14.8 9H13.1M4.9 9H3.2M13.3 4.7L12.1 5.9M5.9 12.1L4.7 13.3M13.3 13.3L12.1 12.1M5.9 5.9L4.7 4.7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+                <circle cx="9" cy="9" r="5.2" stroke="currentColor" stroke-width="1.4" fill="none" opacity="0.5" />
+              </svg>
+              <span>Settings</span>
+            </a>
+          </nav>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

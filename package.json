@@ -3,6 +3,7 @@
   "private": true,
   "packageManager": "pnpm@10.11.0",
   "scripts": {
+    "brand:symbols": "node ./scripts/generate_brand_symbol_assets.mjs",
     "dev:ui": "bash ./scripts/dev_ui_agent.sh up",
     "dev:ui:no-open": "bash ./scripts/dev_ui_agent.sh up --no-open",
     "dev:ui:stop": "bash ./scripts/dev_ui_agent.sh down",

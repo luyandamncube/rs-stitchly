@@ -106,6 +106,9 @@ Use these docs for these responsibilities:
 - `docs/00_foundation/19_compute_model.md`
   Compute lanes, executor kinds, subprocess-first strategy, and why not to start container-first.
 
+- `docs/00_foundation/20_app_auth_and_workspace_spec.md`
+  Draft v1 direction for real authentication, protected routes, workspace selection, persisted workflows, and app-shell boot flow.
+
 - `docs/01_workflows/20_workflow_example_dolt.md`
   A concrete workflow example that should influence dataflow-oriented implementation decisions.
 
@@ -126,7 +129,8 @@ When docs overlap, prefer them in this order:
 11. `15_node_definition_spec.md`
 12. `19_compute_model.md`
 13. `18_run_lifecycle_and_events.md`
-14. the remaining foundation and UI docs
+14. `20_app_auth_and_workspace_spec.md`
+15. the remaining foundation and UI docs
 
 If details are missing:
 

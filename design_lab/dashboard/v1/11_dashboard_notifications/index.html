@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>11 Dashboard Notifications</title>
+    <link rel="stylesheet" href="../shared.css" />
+  </head>
+  <body class="dashboard-lab">
+    <main class="dashboard-shell-page">
+      <section class="dashboard-shell" aria-label="Dashboard notifications study">
+        <aside class="dashboard-shell__sidebar">
+          <div class="dashboard-sidebar__brand">
+            <span class="dashboard-brand-chip">
+              <img
+                class="dashboard-brand-chip__symbol"
+                src="../../../../apps/web/public/brand/symbol/stitchly-symbol-white.svg"
+                alt=""
+              />
+              <span>Notifications</span>
+            </span>
+            <span class="dashboard-brand-name">Stitchly</span>
+            <span class="dashboard-brand-label">Operations workspace</span>
+          </div>
+
+          <div class="dashboard-sidebar__nav">
+            <div class="dashboard-nav-group">
+              <a class="dashboard-nav-item" href="/">
+                <span class="dashboard-nav-item__icon" aria-hidden="true">
+                  <svg viewBox="0 0 18 18" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="4" cy="4" r="2.2" />
+                    <circle cx="14" cy="4" r="2.2" />
+                    <circle cx="4" cy="14" r="2.2" />
+                    <circle cx="14" cy="14" r="2.2" />
+                  </svg>
+                </span>
+                <span>Overview</span>
+              </a>
+              <a class="dashboard-nav-item" href="/">
+                <span class="dashboard-nav-item__icon" aria-hidden="true">
+                  <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="4" cy="13.8" r="2.1" fill="currentColor" />
+                    <circle cx="14" cy="4.2" r="2.1" fill="currentColor" />
+                    <path d="M6.7 13.8H10.7C12.1 13.8 13.2 12.7 13.2 11.3C13.2 9.9 12.1 8.8 10.7 8.8H7.3C5.9 8.8 4.8 7.7 4.8 6.3C4.8 4.9 5.9 3.8 7.3 3.8H11.3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.95" />
+                  </svg>
+                </span>
+                <span>Runs &amp; Logs</span>
+              </a>
+              <a class="dashboard-nav-item dashboard-nav-item--active" href="/">
+                <span class="dashboard-nav-item__icon" aria-hidden="true">
+                  <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M5.2 12.8C5.2 10.5 6.9 8.8 9 8.8C11.1 8.8 12.8 10.5 12.8 12.8V13.7H5.2V12.8Z" fill="currentColor" opacity="0.88" />
+                    <path d="M9 4.3C10.3 4.3 11.3 5.3 11.3 6.6C11.3 7.9 10.3 8.9 9 8.9C7.7 8.9 6.7 7.9 6.7 6.6C6.7 5.3 7.7 4.3 9 4.3Z" fill="currentColor" />
+                    <path d="M12.9 5.8C14 6.2 14.8 7.2 14.8 8.4C14.8 9.1 14.5 9.8 14 10.3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none" opacity="0.7" />
+                  </svg>
+                </span>
+                <span>Notifications</span>
+              </a>
+            </div>
+          </div>
+
+          <div class="dashboard-sidebar__footer">
+            <div class="dashboard-profile">
+              <span class="dashboard-profile__avatar">A</span>
+              <span class="dashboard-profile__meta">
+                <span class="dashboard-profile__name">Alex A.</span>
+                <span class="dashboard-profile__role">Workspace owner</span>
+              </span>
+            </div>
+          </div>
+        </aside>
+
+        <div class="dashboard-shell__main">
+          <div class="dashboard-main-card dashboard-main-card--notification-study">
+            <div class="dashboard-main-card__inner dashboard-main-card__inner--notification-study">
+              <div class="dashboard-main-card__topbar">
+                <div class="dashboard-main-card__title dashboard-main-card__title--compact">
+                  <span class="dashboard-main-card__eyebrow">Alert center</span>
+                  <h1 class="dashboard-main-card__heading">Workflow signals, grouped by urgency instead of noise.</h1>
+                  <span class="dashboard-main-card__subcopy">
+                    A dedicated destination for failures, warning thresholds, and operational messages that deserve attention outside the main runs table.
+                  </span>
+                </div>
+
+                <div class="dashboard-toolbar">
+                  <span class="dashboard-pill">All</span>
+                  <span class="dashboard-pill dashboard-pill--ghost">Critical</span>
+                  <span class="dashboard-pill dashboard-pill--ghost">Warnings</span>
+                  <span class="dashboard-pill dashboard-pill--ghost">Info</span>
+                </div>
+              </div>
+
+              <div class="dashboard-notification-stage">
+                <div class="dashboard-notification-feed">
+                  <div class="dashboard-notification-group">
+                    <span class="dashboard-notification-group__label">Today</span>
+                    <div class="dashboard-notification-list">
+                      <article class="dashboard-notification-item dashboard-notification-item--critical">
+                        <div class="dashboard-notification-item__top">
+                          <div class="dashboard-notification-item__title">
+                            <span class="dashboard-notification-item__name">Inventory Level Sync failed after retry budget was exceeded</span>
+                            <span class="dashboard-notification-item__meta">11:15 • Workflow `supplier_sync` • Run 6726</span>
+                          </div>
+                          <span class="dashboard-notification-pill dashboard-notification-pill--critical">Critical</span>
+                        </div>
+                        <span class="dashboard-notification-item__copy">
+                          Supplier API returned repeated `404` responses for `/inventory/v2/levels`. Downstream notification node is still pending and no recovery rule has resolved the incident.
+                        </span>
+                        <div class="dashboard-notification-item__actions">
+                          <span class="dashboard-notification-action dashboard-notification-action--accent">Open run</span>
+                          <span class="dashboard-notification-action">Retry workflow</span>
+                          <span class="dashboard-notification-action">Mute rule</span>
+                        </div>
+                      </article>
+
+                      <article class="dashboard-notification-item">
+                        <div class="dashboard-notification-item__top">
+                          <div class="dashboard-notification-item__title">
+                            <span class="dashboard-notification-item__name">Latency threshold exceeded for Customer Webhook Listener</span>
+                            <span class="dashboard-notification-item__meta">10:52 • Workflow `customer_webhook_listener` • Rolling 15m window</span>
+                          </div>
+                          <span class="dashboard-notification-pill dashboard-notification-pill--warning">Warning</span>
+                        </div>
+                        <span class="dashboard-notification-item__copy">
+                          Average processing latency reached `41s`, which is above the configured alert threshold for the listener workflow.
+                        </span>
+                        <div class="dashboard-notification-item__actions">
+                          <span class="dashboard-notification-action">Open analytics</span>
+                          <span class="dashboard-notification-action">Inspect recent runs</span>
+                        </div>
+                      </article>
+                    </div>
+                  </div>
+
+                  <div class="dashboard-notification-group">
+                    <span class="dashboard-notification-group__label">Earlier</span>
+                    <div class="dashboard-notification-list">
+                      <article class="dashboard-notification-item">
+                        <div class="dashboard-notification-item__top">
+                          <div class="dashboard-notification-item__title">
+                            <span class="dashboard-notification-item__name">Marketing Metrics ETL recovered after transient supplier degradation</span>
+                            <span class="dashboard-notification-item__meta">09:34 • Workflow `marketing_metrics_etl`</span>
+                          </div>
+                          <span class="dashboard-notification-pill dashboard-notification-pill--info">Info</span>
+                        </div>
+                        <span class="dashboard-notification-item__copy">
+                          Alert resolved automatically after a successful retry. No action required unless recurrence increases within the next hour.
+                        </span>
+                        <div class="dashboard-notification-item__actions">
+                          <span class="dashboard-notification-action">View history</span>
+                        </div>
+                      </article>
+                    </div>
+                  </div>
+                </div>
+
+                <aside class="dashboard-notification-rail" aria-label="Notification summary">
+                  <div class="dashboard-notification-card">
+                    <span class="dashboard-notification-card__label">Open alerts</span>
+                    <span class="dashboard-notification-card__value">3 active</span>
+                    <span class="dashboard-notification-card__meta">
+                      One critical incident, one degraded latency rule, and one informational recovery message still in the feed.
+                    </span>
+                  </div>
+
+                  <div class="dashboard-notification-card">
+                    <span class="dashboard-notification-card__label">Rule pressure</span>
+                    <div class="dashboard-notification-mini-list">
+                      <div class="dashboard-notification-mini-item">
+                        <span class="dashboard-notification-mini-item__label">
+                          <span class="dashboard-notification-mini-item__dot dashboard-notification-mini-item__dot--critical"></span>
+                          <span>Supplier failures</span>
+                        </span>
+                        <span class="dashboard-notification-mini-item__value">1 active</span>
+                      </div>
+                      <div class="dashboard-notification-mini-item">
+                        <span class="dashboard-notification-mini-item__label">
+                          <span class="dashboard-notification-mini-item__dot dashboard-notification-mini-item__dot--warning"></span>
+                          <span>Latency thresholds</span>
+                        </span>
+                        <span class="dashboard-notification-mini-item__value">1 active</span>
+                      </div>
+                      <div class="dashboard-notification-mini-item">
+                        <span class="dashboard-notification-mini-item__label">
+                          <span class="dashboard-notification-mini-item__dot dashboard-notification-mini-item__dot--info"></span>
+                          <span>Recovered runs</span>
+                        </span>
+                        <span class="dashboard-notification-mini-item__value">1 note</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="dashboard-notification-card">
+                    <span class="dashboard-notification-card__label">Suggested action</span>
+                    <span class="dashboard-notification-card__meta">
+                      Investigate the supplier inventory endpoint first, then review the webhook listener’s rolling latency trend before muting any rules.
+                    </span>
+                  </div>
+                </aside>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <span class="dashboard-floating-action">Actions <span class="dashboard-floating-action__trail">/</span></span>
+      </section>
+    </main>
+  </body>
+</html>

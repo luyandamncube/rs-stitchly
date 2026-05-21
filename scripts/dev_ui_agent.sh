@@ -62,7 +62,8 @@ clear_stale_pid_file() {
 }
 
 backend_ready() {
-  curl -fsS "$BACKEND_HTTP_URL/api/node-definitions" 2>/dev/null | grep -q '"node_definitions"'
+  curl -fsS "$BACKEND_HTTP_URL/api/node-definitions" 2>/dev/null | grep -q '"node_definitions"' \
+    && curl -fsS "$BACKEND_HTTP_URL/api/auth/session" 2>/dev/null | grep -q '"authenticated"'
 }
 
 frontend_ready() {
@@ -109,17 +110,18 @@ wait_for_ready() {
 start_backend() {
   clear_stale_pid_file "$BACKEND_PID_FILE"
 
+  local existing_pid
+  existing_pid="$(read_pid "$BACKEND_PID_FILE")"
+
   if backend_ready; then
     echo "Backend already available at $BACKEND_HTTP_URL"
     return 0
   fi
 
-  local existing_pid
-  existing_pid="$(read_pid "$BACKEND_PID_FILE")"
   if pid_is_running "$existing_pid"; then
-    echo "Waiting for existing backend process $existing_pid to become ready..."
-    wait_for_ready "Backend" backend_ready "$BACKEND_LOG_FILE" "$BACKEND_PID_FILE"
-    return 0
+    echo "Tracked backend process $existing_pid is running but missing current platform routes."
+    echo "Restarting backend so auth/session and workspace endpoints are available."
+    stop_process "Backend" "$BACKEND_PID_FILE"
   fi
 
   echo "Starting backend on $BACKEND_BIND_ADDR"

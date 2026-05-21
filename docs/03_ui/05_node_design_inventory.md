@@ -78,6 +78,8 @@ These archetypes are the reusable visual patterns we should design once and then
 | `NODE_OUT_PREVIEW` | `preview_output` | Output | Declared | Now | `ARC_OUTPUT_RESULT` | `v1` sample exists | Important for fast UI feedback and the current MVP |
 | `NODE_OUT_JSON` | `json_output` | Output | Declared | Soon | `ARC_OUTPUT_RESULT` | Not started | Useful for structured downstream consumption or persisted structured results |
 | `NODE_OUT_TABLE` | `table_output` | Output | Declared | Now | `ARC_OUTPUT_RESULT` | Not started | Important for dataflow and warehouse-oriented workflows |
+| `NODE_OUT_SEND_EMAIL` | `send_email` | Output | Proposed | Soon | `ARC_OUTPUT_RESULT` | `v1` sample exists | Useful concrete notification sink for human-facing workflow alerts and result delivery |
+| `NODE_OUT_SEND_TELEGRAM` | `send_telegram` | Output | Proposed | Soon | `ARC_OUTPUT_RESULT` | `v1` sample exists | Useful concrete chat-style notification sink for workflow alerts and operational messaging |
 | `NODE_OUT_NOTIFICATION` | `notification` | Output | Proposed | Soon | `ARC_OUTPUT_RESULT` | Not started | Useful future sink for Slack, email, webhook, or alert-style flows |
 | `NODE_SYS_CACHE` | `cache` | System | Declared | Soon | `ARC_SYSTEM_CACHE` | Not started | Useful once caching and recomputation semantics become visible in the UI |
 | `NODE_SYS_QUALITY_CHECK` | `quality_check` | System | Declared | Soon | `ARC_SYSTEM_ASSERT` | Not started | Important for data quality, expectations, and assertions |
@@ -119,6 +121,7 @@ without trying to solve every future node at once.
 ## Notes
 
 - `api_request` is intentionally listed as `Proposed` because it is not currently declared in [docs/00_foundation/01_node_types.md](../00_foundation/01_node_types.md), even though it appears highly useful and already has a strong initial design study.
-- `notification`, `approval_gate`, and `subgraph` are also listed as `Proposed` future additions, not current declared requirements.
+- `send_email`, `send_telegram`, `notification`, `approval_gate`, and `subgraph` are also listed as `Proposed` future additions, not current declared requirements.
+- `send_email` and `send_telegram` are intentionally listed separately from `notification` because they are useful concrete sinks to design and reason about, even if the eventual product model later groups email, chat, webhook, and similar channels under a broader notification family.
 - `branch` maps directly to the current `conditional` sample language. The product-facing label can remain `Conditional` even if the stable `type_id` stays `branch`.
 - We should generally create one design-lab study per archetype or important variant, not one fully custom design per node row in this table.

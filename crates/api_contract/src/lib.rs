@@ -226,6 +226,63 @@ pub struct ConnectionsResponse {
     pub connections: Vec<ConnectionSummary>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceMembershipRole {
+    Owner,
+    Editor,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SessionUserSummary {
+    pub user_id: String,
+    pub email: String,
+    pub display_name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceSummary {
+    pub workspace_id: String,
+    pub slug: String,
+    pub name: String,
+    pub role: WorkspaceMembershipRole,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AuthSessionResponse {
+    pub authenticated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<SessionUserSummary>,
+    #[serde(default)]
+    pub workspaces: Vec<WorkspaceSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_workspace_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LoginRequest {
+    pub email: String,
+    pub password: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CreateWorkspaceRequest {
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceListResponse {
+    #[serde(default)]
+    pub workspaces: Vec<WorkspaceSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_workspace_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceResponse {
+    pub workspace: WorkspaceSummary,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ErrorResponse {
     pub message: String,

@@ -42,6 +42,7 @@ The goal is to document:
 - `00_foundation/17_artifacts_and_dataset_refs.md`: artifact references, dataset references, lifecycle, and lineage
 - `00_foundation/18_run_lifecycle_and_events.md`: run states, node states, retries, cancellation, and event streams
 - `00_foundation/19_compute_model.md`: compute lanes, executor kinds, isolation strategy, and scaling path
+- `00_foundation/20_app_auth_and_workspace_spec.md`: v1 draft for auth, protected routes, workspace persistence, and the real application shell
 
 ## UI
 

@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>00 Login Reference Analysis</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b0b0d;
+        --surface: #17171c;
+        --elevated: #222229;
+        --muted: #7a7a85;
+        --accent: #f56e0f;
+        --accent-2: #ff7a1a;
+        --text: #ffffff;
+        --border: rgba(255, 255, 255, 0.08);
+        font-family: "Space Grotesk", "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at top left, rgba(245, 110, 15, 0.08), transparent 28%),
+          linear-gradient(180deg, #101014, #0b0b0d 32%);
+        color: var(--text);
+      }
+
+      main {
+        width: min(1160px, calc(100vw - 48px));
+        margin: 0 auto;
+        padding: 40px 0 56px;
+        display: grid;
+        gap: 28px;
+      }
+
+      header,
+      section {
+        background: rgba(23, 23, 28, 0.92);
+        border: 1px solid var(--border);
+        border-radius: 28px;
+        padding: 28px 30px;
+        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.28);
+      }
+
+      header {
+        display: grid;
+        gap: 14px;
+      }
+
+      h1,
+      h2,
+      h3,
+      p,
+      ul {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: clamp(2rem, 3vw, 3rem);
+        line-height: 1;
+        letter-spacing: -0.04em;
+      }
+
+      h2 {
+        font-size: 1rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--accent-2);
+        margin-bottom: 16px;
+      }
+
+      p,
+      li {
+        color: #d5d6dd;
+        line-height: 1.55;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .grid {
+        display: grid;
+        gap: 20px;
+      }
+
+      .grid--two {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .card {
+        background: var(--elevated);
+        border-radius: 22px;
+        padding: 18px 18px 20px;
+        display: grid;
+        gap: 12px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 12px;
+        border-radius: 999px;
+        background: rgba(245, 110, 15, 0.14);
+        color: #ffd2b2;
+        font-size: 0.82rem;
+        font-weight: 600;
+        width: fit-content;
+      }
+
+      ul {
+        padding-left: 18px;
+      }
+
+      .split {
+        display: grid;
+        grid-template-columns: 1.1fr 1fr;
+        gap: 18px;
+      }
+
+      .list-title {
+        font-size: 1rem;
+        font-weight: 700;
+        color: var(--text);
+      }
+
+      @media (max-width: 860px) {
+        main {
+          width: min(100vw - 24px, 1160px);
+          padding: 20px 0 36px;
+        }
+
+        header,
+        section {
+          padding: 22px 20px;
+        }
+
+        .grid--two,
+        .split {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <span class="pill">Reference Analysis</span>
+        <h1>Login Screen Breakdown</h1>
+        <p class="muted">
+          This study captures the structure, typography, spacing, and interaction language
+          of the supplied login reference before we adapt it into Stitchly’s own login system.
+        </p>
+      </header>
+
+      <section>
+        <h2>Overall Composition</h2>
+        <div class="split">
+          <div class="card">
+            <div class="list-title">High-level read</div>
+            <ul>
+              <li>Near-black full-screen environment with a luxury, editorial feel.</li>
+              <li>Strict split-screen composition with a brand stage on the left.</li>
+              <li>Rounded login card inset on the right rather than full-bleed form layout.</li>
+              <li>Very large title, very small helper text, and generous empty space.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="list-title">Primary layers</div>
+            <ul>
+              <li>Outer app frame with minimal padding.</li>
+              <li>Left brand panel with wordmark, symbol, and guide lines.</li>
+              <li>Right login card with internal form composition.</li>
+              <li>Detached circular CTA anchored to the bottom-right of the card.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Typography</h2>
+        <div class="grid grid--two">
+          <div class="card">
+            <div class="list-title">Observed type hierarchy</div>
+            <ul>
+              <li>Oversized page title with light or regular weight.</li>
+              <li>Small field labels that stay visually quiet.</li>
+              <li>Larger entered values that become the main scan target.</li>
+              <li>Tiny secondary actions like account creation and forgot password.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="list-title">Practical implications</div>
+            <ul>
+              <li>The title carries most of the emotional weight.</li>
+              <li>Labels should never compete with input values.</li>
+              <li>Support text should be restrained and low-emphasis.</li>
+              <li>We should pick a clean sans with premium editorial presence.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Spacing And Rhythm</h2>
+        <div class="grid grid--two">
+          <div class="card">
+            <div class="list-title">Spacing traits</div>
+            <ul>
+              <li>Large title-to-form gap.</li>
+              <li>Tight label-to-underline spacing.</li>
+              <li>Small field-row to helper-row spacing.</li>
+              <li>Large empty lower-middle card area.</li>
+              <li>Detached CTA with intentional breathing room.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="list-title">Why it feels premium</div>
+            <ul>
+              <li>Nothing is crowded.</li>
+              <li>Empty space is treated as a design tool.</li>
+              <li>Alignment feels strict and confident.</li>
+              <li>There are very few competing primitives on screen.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Element Inventory</h2>
+        <div class="grid grid--two">
+          <div class="card">
+            <div class="list-title">Left-side stage</div>
+            <ul>
+              <li>Top-left wordmark.</li>
+              <li>Central abstract monument/symbol.</li>
+              <li>Faint guide/grid lines.</li>
+              <li>Tiny footer/legal copy.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="list-title">Right-side form</div>
+            <ul>
+              <li>Top-right secondary action.</li>
+              <li>Large page title.</li>
+              <li>Email field and password field in one row.</li>
+              <li>Remember-me control and forgot-password link.</li>
+              <li>Bottom-right circular sign-in CTA.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Stitchly Adaptation</h2>
+        <div class="grid grid--two">
+          <div class="card">
+            <div class="list-title">Preserve</div>
+            <ul>
+              <li>Split-screen shell.</li>
+              <li>Right-side rounded login card.</li>
+              <li>Oversized title hierarchy.</li>
+              <li>Quiet support actions.</li>
+              <li>Spacing discipline and asymmetrical CTA placement.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="list-title">Replace</div>
+            <ul>
+              <li>Golden Suisse branding with Stitchly brand assets.</li>
+              <li>Finance-style left monument with workflow/canvas symbolism.</li>
+              <li>Pure monochrome emphasis with selective lava-core accents.</li>
+              <li>Banking tone with workflow/editor/product tone.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Recommended Next Studies</h2>
+        <div class="grid grid--two">
+          <div class="card">
+            <div class="list-title">Immediate follow-ups</div>
+            <ul>
+              <li><strong>01_login_shell</strong>: split layout and card proportions</li>
+              <li><strong>02_login_form</strong>: fields, helpers, and CTA</li>
+              <li><strong>03_login_brand_panel</strong>: Stitchly-specific left stage</li>
+              <li><strong>04_login_mobile</strong>: mobile translation</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="list-title">Open questions</div>
+            <ul>
+              <li>Do we keep underline-only inputs?</li>
+              <li>Do we keep the circular CTA literally?</li>
+              <li>How much lava accent belongs on auth screens?</li>
+              <li>How much of the left panel survives on mobile?</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

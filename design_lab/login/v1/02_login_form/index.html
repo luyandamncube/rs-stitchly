@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>02 Login Form</title>
+    <link rel="stylesheet" href="../shared.css" />
+  </head>
+  <body class="login-lab">
+    <main class="login-shell-page">
+      <section class="login-shell" aria-label="Login form study">
+        <div class="login-shell__panel login-brand-panel">
+          <div class="login-brand-panel__guides" aria-hidden="true"></div>
+
+          <header class="login-brand-panel__header">
+            <div class="login-wordmark" aria-label="Stitchly brand">
+              <span class="login-wordmark__brand">Stitchly</span>
+              <span class="login-wordmark__label">Workflow Studio</span>
+            </div>
+          </header>
+
+          <div class="login-brand-panel__stage">
+            <div class="login-brand-monument" aria-hidden="true">
+              <img
+                class="login-brand-monument__symbol"
+                src="../../../../apps/web/public/brand/symbol/stitchly-symbol-white.svg"
+                alt=""
+              />
+            </div>
+          </div>
+
+          <footer class="login-brand-panel__footer">
+            <span>Build and orchestrate AI workflows with clarity.</span>
+            <span>Form study</span>
+          </footer>
+        </div>
+
+        <div class="login-shell__panel login-form-panel">
+          <div class="login-form-card">
+            <div class="login-form-card__topbar">
+              <a class="login-form-card__toplink" href="/">Create an account</a>
+            </div>
+
+            <div class="login-form-card__content login-form-card__content--form-study">
+              <h1 class="login-form-card__title">Log in</h1>
+
+              <div class="login-form-shell login-form-shell--study">
+                <div class="login-form-shell__row login-form-shell__row--study">
+                  <label class="login-auth-field" aria-label="Email field study">
+                    <span class="login-auth-field__label">Email</span>
+                    <span class="login-auth-field__track">
+                      <span class="login-auth-field__value">mark.johnson@gmail.com</span>
+                    </span>
+                  </label>
+
+                  <label class="login-auth-field" aria-label="Password field study">
+                    <span class="login-auth-field__label">Password</span>
+                    <span class="login-auth-field__track">
+                      <span class="login-auth-field__value login-auth-field__value--password">
+                        ••••••••••
+                      </span>
+                      <span class="login-auth-field__icon" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                </div>
+
+                <div class="login-auth-helpers">
+                  <a class="login-auth-check" href="/">
+                    <span class="login-auth-check__circle" aria-hidden="true"></span>
+                    <span>Remember me</span>
+                  </a>
+
+                  <a class="login-auth-link" href="/">Forgot?</a>
+                </div>
+              </div>
+
+              <div class="login-form-card__spacer" aria-hidden="true"></div>
+
+              <button class="login-form-card__cta login-form-card__cta--lava-shadow" type="button">
+                Sign in
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div class="login-lab-note">
+      `02_login_form` focuses on field hierarchy and CTA balance inside the auth card.
+    </div>
+  </body>
+</html>

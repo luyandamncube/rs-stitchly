@@ -13,6 +13,13 @@ Use this file to capture important product and technical decisions in a compact 
 
 ## Entries
 
+### 2026-05-21 - Real app shell should move to backend auth, protected routes, and persisted workspaces
+
+- status: proposed
+- context: the current frontend shell is still scaffolded with local-only login, conditional screen rendering, and in-memory workspace/workflow assumptions, which now blocks real product behavior.
+- decision: draft a v1 app-platform direction built around backend-owned cookie sessions, protected routes, workspace-scoped URLs, and persisted workflows and runs.
+- consequence: implementation should wait for explicit approval of the auth, routing, and workspace keys captured in `20_app_auth_and_workspace_spec.md` before replacing the current scaffold.
+
 ### 2026-05-19 - Nodes use a structured operational card design
 
 - status: accepted

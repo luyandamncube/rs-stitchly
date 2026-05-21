@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>07 Dashboard Empty States</title>
+    <link rel="stylesheet" href="../shared.css" />
+  </head>
+  <body class="dashboard-lab">
+    <main class="dashboard-shell-page">
+      <section class="dashboard-shell" aria-label="Dashboard empty states study">
+        <aside class="dashboard-shell__sidebar">
+          <div class="dashboard-sidebar__brand">
+            <span class="dashboard-brand-chip">
+              <img
+                class="dashboard-brand-chip__symbol"
+                src="../../../../apps/web/public/brand/symbol/stitchly-symbol-white.svg"
+                alt=""
+              />
+              <span>Empty states</span>
+            </span>
+            <span class="dashboard-brand-name">Stitchly</span>
+            <span class="dashboard-brand-label">Operations workspace</span>
+          </div>
+
+          <div class="dashboard-sidebar__nav">
+            <div class="dashboard-nav-group">
+              <a class="dashboard-nav-item dashboard-nav-item--active" href="/">
+                <span class="dashboard-nav-item__icon" aria-hidden="true">
+                  <svg viewBox="0 0 18 18" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="4" cy="4" r="2.2" />
+                    <circle cx="14" cy="4" r="2.2" />
+                    <circle cx="4" cy="14" r="2.2" />
+                    <circle cx="14" cy="14" r="2.2" />
+                  </svg>
+                </span>
+                <span>Overview</span>
+              </a>
+              <a class="dashboard-nav-item" href="/">
+                <span class="dashboard-nav-item__icon" aria-hidden="true">
+                  <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="4" cy="13.8" r="2.1" fill="currentColor" />
+                    <circle cx="14" cy="4.2" r="2.1" fill="currentColor" />
+                    <path d="M6.7 13.8H10.7C12.1 13.8 13.2 12.7 13.2 11.3C13.2 9.9 12.1 8.8 10.7 8.8H7.3C5.9 8.8 4.8 7.7 4.8 6.3C4.8 4.9 5.9 3.8 7.3 3.8H11.3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.95" />
+                  </svg>
+                </span>
+                <span>Runs &amp; Logs</span>
+              </a>
+              <a class="dashboard-nav-item" href="/">
+                <span class="dashboard-nav-item__icon" aria-hidden="true">
+                  <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M2.8 14.2H15.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+                    <path d="M3.5 11.6L7.1 8L10 10.9L14.4 6.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+                    <circle cx="14.4" cy="6.5" r="2.05" fill="currentColor" />
+                  </svg>
+                </span>
+                <span>Analytics</span>
+              </a>
+            </div>
+          </div>
+
+          <div class="dashboard-sidebar__footer">
+            <div class="dashboard-profile">
+              <span class="dashboard-profile__avatar">A</span>
+              <span class="dashboard-profile__meta">
+                <span class="dashboard-profile__name">Alex A.</span>
+                <span class="dashboard-profile__role">Workspace owner</span>
+              </span>
+            </div>
+          </div>
+        </aside>
+
+        <div class="dashboard-shell__main">
+          <div class="dashboard-main-card dashboard-main-card--empty-study">
+            <div class="dashboard-main-card__inner dashboard-main-card__inner--empty-study">
+              <div class="dashboard-main-card__title dashboard-main-card__title--compact">
+                <span class="dashboard-main-card__eyebrow">Empty states</span>
+                <h1 class="dashboard-main-card__heading">When the dashboard has nothing to show, it still needs a point of view.</h1>
+                <span class="dashboard-main-card__subcopy">
+                  These studies compare different kinds of quiet: first run, filtered no-results, and all-clear health.
+                </span>
+              </div>
+
+              <div class="dashboard-empty-grid">
+                <article class="dashboard-empty-card dashboard-empty-card--accent">
+                  <span class="dashboard-empty-card__icon" aria-hidden="true">
+                    <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                      <circle cx="4" cy="4.2" r="2.1" fill="currentColor" />
+                      <circle cx="14" cy="13.8" r="2.1" fill="currentColor" />
+                      <path d="M6.7 4.2H10.7C12.1 4.2 13.2 5.3 13.2 6.7C13.2 8.1 12.1 9.2 10.7 9.2H7.3C5.9 9.2 4.8 10.3 4.8 11.7C4.8 13.1 5.9 14.2 7.3 14.2H11.3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.9" />
+                    </svg>
+                  </span>
+                  <span class="dashboard-empty-card__eyebrow">New workspace</span>
+                  <span class="dashboard-empty-card__title">No runs yet. Start by publishing your first workflow.</span>
+                  <span class="dashboard-empty-card__copy">
+                    This state appears when a team has just created a workspace or has not executed any workflow since setup.
+                  </span>
+                  <div class="dashboard-empty-list">
+                    <div class="dashboard-empty-list__item">
+                      <span class="dashboard-empty-list__dot dashboard-empty-list__dot--accent"></span>
+                      <span>Create or import a workflow</span>
+                    </div>
+                    <div class="dashboard-empty-list__item">
+                      <span class="dashboard-empty-list__dot"></span>
+                      <span>Connect an input or trigger node</span>
+                    </div>
+                    <div class="dashboard-empty-list__item">
+                      <span class="dashboard-empty-list__dot"></span>
+                      <span>Publish and run from canvas mode</span>
+                    </div>
+                  </div>
+                  <div class="dashboard-empty-card__actions">
+                    <span class="dashboard-empty-button dashboard-empty-button--accent">Open canvas</span>
+                    <span class="dashboard-empty-button">Browse templates</span>
+                  </div>
+                </article>
+
+                <article class="dashboard-empty-card">
+                  <span class="dashboard-empty-card__icon" aria-hidden="true">
+                    <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                      <circle cx="7.4" cy="7.4" r="4.9" stroke="currentColor" stroke-width="1.7" fill="none" />
+                      <path d="M11.1 11.1L15.2 15.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+                    </svg>
+                  </span>
+                  <span class="dashboard-empty-card__eyebrow">No results</span>
+                  <span class="dashboard-empty-card__title">Nothing matched your current filters.</span>
+                  <span class="dashboard-empty-card__copy">
+                    Use this state when the dashboard has data overall, but the active workflow, date, or search filters return no records.
+                  </span>
+                  <div class="dashboard-empty-list">
+                    <div class="dashboard-empty-list__item">
+                      <span class="dashboard-empty-list__dot"></span>
+                      <span>Clear search and error filters</span>
+                    </div>
+                    <div class="dashboard-empty-list__item">
+                      <span class="dashboard-empty-list__dot"></span>
+                      <span>Expand the date range</span>
+                    </div>
+                    <div class="dashboard-empty-list__item">
+                      <span class="dashboard-empty-list__dot"></span>
+                      <span>Switch to all workflows</span>
+                    </div>
+                  </div>
+                  <div class="dashboard-empty-card__actions">
+                    <span class="dashboard-empty-button">Reset filters</span>
+                    <span class="dashboard-empty-button">Open search</span>
+                  </div>
+                </article>
+
+                <article class="dashboard-empty-card">
+                  <span class="dashboard-empty-card__icon" aria-hidden="true">
+                    <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                      <circle cx="9" cy="9" r="6.1" stroke="currentColor" stroke-width="1.8" fill="none" opacity="0.55" />
+                      <path d="M5.6 9.3L7.9 11.4L12.4 6.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+                    </svg>
+                  </span>
+                  <span class="dashboard-empty-card__eyebrow">All clear</span>
+                  <span class="dashboard-empty-card__title">No active incidents across monitored workflows.</span>
+                  <span class="dashboard-empty-card__copy">
+                    This is the calm healthy state: no failed runs, no noisy alerts, and nothing requiring immediate intervention.
+                  </span>
+                  <div class="dashboard-empty-list">
+                    <div class="dashboard-empty-list__item">
+                      <span class="dashboard-empty-list__dot dashboard-empty-list__dot--success"></span>
+                      <span>Success rate above baseline</span>
+                    </div>
+                    <div class="dashboard-empty-list__item">
+                      <span class="dashboard-empty-list__dot dashboard-empty-list__dot--success"></span>
+                      <span>No alerting thresholds crossed</span>
+                    </div>
+                    <div class="dashboard-empty-list__item">
+                      <span class="dashboard-empty-list__dot dashboard-empty-list__dot--success"></span>
+                      <span>Retry pressure remains low</span>
+                    </div>
+                  </div>
+                  <div class="dashboard-empty-card__actions">
+                    <span class="dashboard-empty-button">View history</span>
+                    <span class="dashboard-empty-button">Open analytics</span>
+                  </div>
+                </article>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <span class="dashboard-floating-action">Actions <span class="dashboard-floating-action__trail">/</span></span>
+      </section>
+    </main>
+  </body>
+</html>

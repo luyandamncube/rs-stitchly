@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>08 Dashboard Loading States</title>
+    <link rel="stylesheet" href="../shared.css" />
+  </head>
+  <body class="dashboard-lab">
+    <main class="dashboard-shell-page">
+      <section class="dashboard-shell" aria-label="Dashboard loading states study">
+        <aside class="dashboard-shell__sidebar">
+          <div class="dashboard-sidebar__brand">
+            <span class="dashboard-brand-chip">
+              <img
+                class="dashboard-brand-chip__symbol"
+                src="../../../../apps/web/public/brand/symbol/stitchly-symbol-white.svg"
+                alt=""
+              />
+              <span>Loading states</span>
+            </span>
+            <span class="dashboard-brand-name">Stitchly</span>
+            <span class="dashboard-brand-label">Operations workspace</span>
+          </div>
+
+          <div class="dashboard-sidebar__nav">
+            <div class="dashboard-nav-group">
+              <a class="dashboard-nav-item" href="/">
+                <span class="dashboard-nav-item__icon" aria-hidden="true">
+                  <svg viewBox="0 0 18 18" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="4" cy="4" r="2.2" />
+                    <circle cx="14" cy="4" r="2.2" />
+                    <circle cx="4" cy="14" r="2.2" />
+                    <circle cx="14" cy="14" r="2.2" />
+                  </svg>
+                </span>
+                <span>Overview</span>
+              </a>
+              <a class="dashboard-nav-item dashboard-nav-item--active" href="/">
+                <span class="dashboard-nav-item__icon" aria-hidden="true">
+                  <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="4" cy="13.8" r="2.1" fill="currentColor" />
+                    <circle cx="14" cy="4.2" r="2.1" fill="currentColor" />
+                    <path d="M6.7 13.8H10.7C12.1 13.8 13.2 12.7 13.2 11.3C13.2 9.9 12.1 8.8 10.7 8.8H7.3C5.9 8.8 4.8 7.7 4.8 6.3C4.8 4.9 5.9 3.8 7.3 3.8H11.3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.95" />
+                  </svg>
+                </span>
+                <span>Runs &amp; Logs</span>
+              </a>
+              <a class="dashboard-nav-item" href="/">
+                <span class="dashboard-nav-item__icon" aria-hidden="true">
+                  <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M2.8 14.2H15.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+                    <path d="M3.5 11.6L7.1 8L10 10.9L14.4 6.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+                    <circle cx="14.4" cy="6.5" r="2.05" fill="currentColor" />
+                  </svg>
+                </span>
+                <span>Analytics</span>
+              </a>
+            </div>
+          </div>
+
+          <div class="dashboard-sidebar__footer">
+            <div class="dashboard-profile">
+              <span class="dashboard-profile__avatar">A</span>
+              <span class="dashboard-profile__meta">
+                <span class="dashboard-profile__name">Alex A.</span>
+                <span class="dashboard-profile__role">Workspace owner</span>
+              </span>
+            </div>
+          </div>
+        </aside>
+
+        <div class="dashboard-shell__main">
+          <div class="dashboard-main-card dashboard-main-card--loading-study">
+            <div class="dashboard-main-card__inner dashboard-main-card__inner--loading-study">
+              <div class="dashboard-main-card__title dashboard-main-card__title--compact">
+                <span class="dashboard-main-card__eyebrow">Loading states</span>
+                <h1 class="dashboard-main-card__heading">The dashboard should still feel calm while data is on the way.</h1>
+                <span class="dashboard-main-card__subcopy">
+                  This study compares a richer first-load skeleton with a softer side-note for partial refresh.
+                </span>
+              </div>
+
+              <div class="dashboard-loading-stage">
+                <div class="dashboard-loading-surface">
+                  <div class="dashboard-loading-card">
+                    <span class="dashboard-loading-card__label">Header + filters loading</span>
+                    <div class="dashboard-loading-stack">
+                      <span class="dashboard-loading-block dashboard-loading-block--title"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--subcopy"></span>
+                    </div>
+                    <div class="dashboard-loading-row">
+                      <span class="dashboard-loading-block dashboard-loading-block--chip"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--chip"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--chip"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--search"></span>
+                    </div>
+                  </div>
+
+                  <div class="dashboard-loading-grid">
+                    <span class="dashboard-loading-block dashboard-loading-block--kpi"></span>
+                    <span class="dashboard-loading-block dashboard-loading-block--kpi"></span>
+                    <span class="dashboard-loading-block dashboard-loading-block--kpi"></span>
+                  </div>
+
+                  <div class="dashboard-loading-table">
+                    <span class="dashboard-loading-block dashboard-loading-block--table-header"></span>
+
+                    <div class="dashboard-loading-table__row">
+                      <span class="dashboard-loading-block dashboard-loading-block--check"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--cell-sm"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--cell-lg"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--cell-sm"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--cell-sm"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--cell-md"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--cell-sm"></span>
+                    </div>
+
+                    <div class="dashboard-loading-table__row">
+                      <span class="dashboard-loading-block dashboard-loading-block--check"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--cell-sm"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--cell-lg"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--cell-sm"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--cell-sm"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--cell-md"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--cell-sm"></span>
+                    </div>
+
+                    <div class="dashboard-loading-table__row">
+                      <span class="dashboard-loading-block dashboard-loading-block--check"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--cell-sm"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--cell-lg"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--cell-sm"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--cell-sm"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--cell-md"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--cell-sm"></span>
+                    </div>
+
+                    <div class="dashboard-loading-table__row">
+                      <span class="dashboard-loading-block dashboard-loading-block--check"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--cell-sm"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--cell-lg"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--cell-sm"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--cell-sm"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--cell-md"></span>
+                      <span class="dashboard-loading-block dashboard-loading-block--cell-sm"></span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="dashboard-loading-sidebar">
+                  <div class="dashboard-loading-card">
+                    <span class="dashboard-loading-card__label">Partial refresh</span>
+                    <span class="dashboard-loading-status">
+                      <span class="dashboard-loading-status__dot"></span>
+                      Refreshing KPI and run data
+                    </span>
+                    <span class="dashboard-loading-note">
+                      Use this softer state when the dashboard already has structure on screen and we’re only refreshing values.
+                    </span>
+                  </div>
+
+                  <div class="dashboard-loading-metric">
+                    <span class="dashboard-loading-card__label">Metric patch</span>
+                    <span class="dashboard-loading-block dashboard-loading-block--panel"></span>
+                  </div>
+
+                  <div class="dashboard-loading-metric">
+                    <span class="dashboard-loading-card__label">Side activity</span>
+                    <span class="dashboard-loading-block dashboard-loading-block--panel"></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <span class="dashboard-floating-action">Actions <span class="dashboard-floating-action__trail">/</span></span>
+      </section>
+    </main>
+  </body>
+</html>

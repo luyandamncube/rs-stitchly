@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Design Lab · Send Email</title>
+    <link rel="stylesheet" href="../shared.css" />
+  </head>
+  <body>
+    <main class="lab-page">
+      <section class="lab-stage" aria-label="Send email node study">
+        <article
+          class="node-card node-card--output-result"
+          aria-label="Send email node"
+          data-node-kind="output-result"
+        >
+          <span class="node-card__top-chip">Notify</span>
+          <span
+            class="node-card__handle node-card__handle--left"
+            aria-hidden="true"
+          ></span>
+
+          <header class="node-card__header">
+            <div class="node-card__heading">
+              <span class="node-card__icon" aria-hidden="true">@</span>
+              <strong>Send email</strong>
+            </div>
+
+            <span class="node-card__menu" aria-hidden="true">...</span>
+          </header>
+
+          <section class="node-card__body">
+            <div class="node-card__row node-card__row--kv">
+              <span class="node-card__label">
+                <span class="node-card__label-icon" aria-hidden="true">T</span>
+                <span>To</span>
+              </span>
+              <span class="node-card__value">ops@stitchly.dev</span>
+            </div>
+
+            <div class="node-card__row node-card__row--primary">
+              <span class="node-card__label">Subject</span>
+              <strong class="node-card__value node-card__value--truncate">
+                Failed refunds need review from the latest sync
+              </strong>
+            </div>
+          </section>
+
+          <footer class="node-card__footer">
+            <span class="node-card__footer-meta">
+              <span class="node-card__footer-icon" aria-hidden="true">S</span>
+              <span>Last send</span>
+            </span>
+            <strong>Idle</strong>
+          </footer>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

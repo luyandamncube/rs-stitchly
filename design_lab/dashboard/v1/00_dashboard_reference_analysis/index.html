@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>00 Dashboard Reference Analysis</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b0b0d;
+        --surface: #17171c;
+        --elevated: #222229;
+        --muted: #7a7a85;
+        --accent: #f56e0f;
+        --accent-2: #ff7a1a;
+        --text: #ffffff;
+        --border: rgba(255, 255, 255, 0.08);
+        font-family: "Space Grotesk", "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at top right, rgba(245, 110, 15, 0.06), transparent 26%),
+          linear-gradient(180deg, #111114, #0b0b0d 34%);
+        color: var(--text);
+      }
+
+      main {
+        width: min(1180px, calc(100vw - 48px));
+        margin: 0 auto;
+        padding: 40px 0 56px;
+        display: grid;
+        gap: 28px;
+      }
+
+      header,
+      section {
+        background: rgba(23, 23, 28, 0.94);
+        border: 1px solid var(--border);
+        border-radius: 28px;
+        padding: 28px 30px;
+        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.28);
+      }
+
+      header {
+        display: grid;
+        gap: 14px;
+      }
+
+      h1,
+      h2,
+      h3,
+      p,
+      ul {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: clamp(2rem, 3vw, 3rem);
+        line-height: 1;
+        letter-spacing: -0.04em;
+      }
+
+      h2 {
+        font-size: 1rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--accent-2);
+        margin-bottom: 16px;
+      }
+
+      p,
+      li {
+        color: #d5d6dd;
+        line-height: 1.55;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 12px;
+        border-radius: 999px;
+        background: rgba(245, 110, 15, 0.14);
+        color: #ffd2b2;
+        font-size: 0.82rem;
+        font-weight: 600;
+        width: fit-content;
+      }
+
+      .grid {
+        display: grid;
+        gap: 20px;
+      }
+
+      .grid--two {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .card {
+        background: var(--elevated);
+        border-radius: 22px;
+        padding: 18px 18px 20px;
+        display: grid;
+        gap: 12px;
+      }
+
+      .list-title {
+        font-size: 1rem;
+        font-weight: 700;
+        color: var(--text);
+      }
+
+      ul {
+        padding-left: 18px;
+      }
+
+      @media (max-width: 860px) {
+        main {
+          width: min(100vw - 24px, 1180px);
+          padding: 20px 0 36px;
+        }
+
+        header,
+        section {
+          padding: 22px 20px;
+        }
+
+        .grid--two {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <span class="pill">Reference Analysis</span>
+        <h1>Dashboard Screen Breakdown</h1>
+        <p class="muted">
+          This study captures the structure, density, and interaction language of the supplied
+          dashboard reference before we adapt it into Stitchly’s post-login product shell.
+        </p>
+      </header>
+
+      <section>
+        <h2>Overall Composition</h2>
+        <div class="grid grid--two">
+          <div class="card">
+            <div class="list-title">High-level read</div>
+            <ul>
+              <li>Contained dashboard shell floating on a clean neutral background.</li>
+              <li>Minimal left sidebar plus wide right-side data surface.</li>
+              <li>Calm product tone driven by spacing and soft surfaces.</li>
+              <li>Operations-first table view with just enough summary above it.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="list-title">Primary layers</div>
+            <ul>
+              <li>Large rounded outer frame.</li>
+              <li>Narrow vertical navigation sidebar.</li>
+              <li>Main content area with title, filters, metrics, and table.</li>
+              <li>Small embedded notifications and floating utility action.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Shell And Navigation</h2>
+        <div class="grid grid--two">
+          <div class="card">
+            <div class="list-title">Sidebar behavior</div>
+            <ul>
+              <li>Primary nav sits high in the sidebar with generous spacing.</li>
+              <li>Active item is indicated quietly with stronger text and a side marker.</li>
+              <li>Notification tile is integrated into the sidebar, not separate chrome.</li>
+              <li>Profile and settings live at the bottom as utility destinations.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="list-title">Main content behavior</div>
+            <ul>
+              <li>Compact title area, not hero-like.</li>
+              <li>Filter row sits directly above the data it controls.</li>
+              <li>Export and search are present but visually restrained.</li>
+              <li>Everything is aligned to a clean table-centric grid.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Typography And Density</h2>
+        <div class="grid grid--two">
+          <div class="card">
+            <div class="list-title">Type observations</div>
+            <ul>
+              <li>Neutral sans with compact product/UI rhythm.</li>
+              <li>Hierarchy relies on weight more than large size jumps.</li>
+              <li>Muted labels and stronger values drive the scan pattern.</li>
+              <li>Status text stays small and functional.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="list-title">Density observations</div>
+            <ul>
+              <li>Overall shell is spacious, but data areas are compact.</li>
+              <li>KPI strip is lightweight instead of becoming a grid of cards.</li>
+              <li>Table rows are dense but legible.</li>
+              <li>Soft separators do most of the organization work.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Key Elements</h2>
+        <div class="grid grid--two">
+          <div class="card">
+            <div class="list-title">Filter and KPI language</div>
+            <ul>
+              <li>Pill filters for category, scope, and time.</li>
+              <li>`More filters` keeps the top bar from getting crowded.</li>
+              <li>KPI values live in one horizontal summary strip.</li>
+              <li>Small deltas and success indicators provide lightweight context.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="list-title">Table and utility language</div>
+            <ul>
+              <li>Operational table is the main feature of the page.</li>
+              <li>Statuses use compact icon-plus-text treatments.</li>
+              <li>Errors are inline and practical, not dramatic.</li>
+              <li>Floating bottom-right `Actions` pill creates a secondary utility anchor.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Stitchly Adaptation</h2>
+        <div class="grid grid--two">
+          <div class="card">
+            <div class="list-title">Preserve</div>
+            <ul>
+              <li>Contained outer shell.</li>
+              <li>Calm narrow sidebar.</li>
+              <li>Inline KPI strip above the table.</li>
+              <li>Dense readable table-first layout.</li>
+              <li>Restrained use of status color.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="list-title">Replace</div>
+            <ul>
+              <li>Light neutral palette with our dark `True Black + Lava Core` system.</li>
+              <li>Generic business analytics content with Stitchly workflow/run content.</li>
+              <li>Static alerts with execution-aware problems and agent notifications.</li>
+              <li>Business dashboard language with workflow-editor product language.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Recommended Next Studies</h2>
+        <div class="grid grid--two">
+          <div class="card">
+            <div class="list-title">Immediate follow-ups</div>
+            <ul>
+              <li><strong>01_dashboard_shell</strong>: outer frame, sidebar, and content split</li>
+              <li><strong>02_dashboard_table</strong>: filters, KPIs, and runs table</li>
+              <li><strong>03_dashboard_sidebar</strong>: nav, notifications, and profile area</li>
+              <li><strong>04_dashboard_mobile</strong>: narrow-layout translation</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="list-title">Open questions</div>
+            <ul>
+              <li>Do canvas and dashboard need different shell families?</li>
+              <li>How much lava should appear in a dark dashboard adaptation?</li>
+              <li>Should KPI strips remain inline or become slightly more modular?</li>
+              <li>How much of the sidebar utility pattern survives on mobile?</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

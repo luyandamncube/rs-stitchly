@@ -632,7 +632,12 @@ function WorkflowCanvas({
         zoomOnScroll={false}
       >
         <MiniMap pannable zoomable />
-        <Background gap={24} size={1} color="rgba(255,255,255,0.06)" />
+        <Background
+          color="rgba(255,255,255,0.12)"
+          gap={24}
+          size={1.35}
+          variant="dots"
+        />
       </ReactFlow>
 
       {SANDBOX_NODE_DEFS.map((sandboxNode) => (

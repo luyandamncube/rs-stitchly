@@ -12,6 +12,10 @@ Structure:
 
 - `nodes/`
   Node-focused design studies.
+- `login/`
+  Login and authentication screen studies.
+- `dashboard/`
+  Dashboard and application-shell studies.
 
 Current convention:
 
@@ -20,6 +24,12 @@ Current convention:
 
 - `nodes/v1/00_xxx/`
   Ordered node design samples for the first node-language pass.
+
+- `login/v1/00_xxx/`
+  Ordered login design studies for the first login-shell pass.
+
+- `dashboard/v1/00_xxx/`
+  Ordered dashboard design studies for the first dashboard-shell pass.
 
 How to use:
 

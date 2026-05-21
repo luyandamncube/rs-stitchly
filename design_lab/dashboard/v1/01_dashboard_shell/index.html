@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>01 Dashboard Shell</title>
+    <link rel="stylesheet" href="../shared.css" />
+  </head>
+  <body class="dashboard-lab">
+    <main class="dashboard-shell-page">
+      <section class="dashboard-shell" aria-label="Dashboard shell study">
+        <aside class="dashboard-shell__sidebar">
+          <div class="dashboard-sidebar__brand">
+            <span class="dashboard-brand-chip">
+              <img
+                class="dashboard-brand-chip__symbol"
+                src="../../../../apps/web/public/brand/symbol/stitchly-symbol-white.svg"
+                alt=""
+              />
+              <span>Contained shell</span>
+            </span>
+            <span class="dashboard-brand-name">Stitchly</span>
+            <span class="dashboard-brand-label">Operations workspace</span>
+          </div>
+
+          <div class="dashboard-sidebar__nav">
+            <div class="dashboard-nav-group">
+              <a class="dashboard-nav-item" href="/">
+                <span class="dashboard-nav-item__icon" aria-hidden="true">
+                  <svg viewBox="0 0 18 18" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="4" cy="4" r="2.2" />
+                    <circle cx="14" cy="4" r="2.2" />
+                    <circle cx="4" cy="14" r="2.2" />
+                    <circle cx="14" cy="14" r="2.2" />
+                  </svg>
+                </span>
+                <span>Overview</span>
+              </a>
+              <a class="dashboard-nav-item" href="/">
+                <span class="dashboard-nav-item__icon" aria-hidden="true">
+                  <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="4" cy="4.2" r="2.1" fill="currentColor" />
+                    <circle cx="14" cy="13.8" r="2.1" fill="currentColor" />
+                    <path d="M6.7 4.2H10.7C12.1 4.2 13.2 5.3 13.2 6.7C13.2 8.1 12.1 9.2 10.7 9.2H7.3C5.9 9.2 4.8 10.3 4.8 11.7C4.8 13.1 5.9 14.2 7.3 14.2H11.3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.9" />
+                  </svg>
+                </span>
+                <span>Workflows</span>
+              </a>
+              <a class="dashboard-nav-item" href="/">
+                <span class="dashboard-nav-item__icon" aria-hidden="true">
+                  <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="9" cy="9" r="2.5" fill="currentColor" />
+                    <circle cx="9" cy="9" r="6.3" stroke="currentColor" stroke-width="1.8" stroke-dasharray="2.2 2.8" fill="none" opacity="0.72" />
+                  </svg>
+                </span>
+                <span>Templates</span>
+              </a>
+              <a class="dashboard-nav-item dashboard-nav-item--active" href="/">
+                <span class="dashboard-nav-item__icon" aria-hidden="true">
+                  <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="4" cy="13.8" r="2.1" fill="currentColor" />
+                    <circle cx="14" cy="4.2" r="2.1" fill="currentColor" />
+                    <path d="M6.7 13.8H10.7C12.1 13.8 13.2 12.7 13.2 11.3C13.2 9.9 12.1 8.8 10.7 8.8H7.3C5.9 8.8 4.8 7.7 4.8 6.3C4.8 4.9 5.9 3.8 7.3 3.8H11.3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.95" />
+                  </svg>
+                </span>
+                <span>Runs &amp; Logs</span>
+              </a>
+              <a class="dashboard-nav-item" href="/">
+                <span class="dashboard-nav-item__icon" aria-hidden="true">
+                  <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M2.8 14.2H15.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+                    <path d="M3.5 11.6L7.1 8L10 10.9L14.4 6.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+                    <circle cx="14.4" cy="6.5" r="2.05" fill="currentColor" />
+                  </svg>
+                </span>
+                <span>Analytics</span>
+              </a>
+            </div>
+
+            <div class="dashboard-sidebar__alert">
+              <div class="dashboard-sidebar__alert-title">
+                <span>Orders import failed</span>
+                <span class="dashboard-sidebar__alert-dot" aria-hidden="true"></span>
+              </div>
+              <div class="dashboard-sidebar__alert-meta">
+                TimeoutError at step 2. Review retries and downstream supplier status.
+              </div>
+            </div>
+
+            <div class="dashboard-sidebar__subnav">
+              <a class="dashboard-nav-item" href="/">
+                <span class="dashboard-nav-item__icon" aria-hidden="true">
+                  <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M5.2 12.8C5.2 10.5 6.9 8.8 9 8.8C11.1 8.8 12.8 10.5 12.8 12.8V13.7H5.2V12.8Z" fill="currentColor" opacity="0.88" />
+                    <path d="M9 4.3C10.3 4.3 11.3 5.3 11.3 6.6C11.3 7.9 10.3 8.9 9 8.9C7.7 8.9 6.7 7.9 6.7 6.6C6.7 5.3 7.7 4.3 9 4.3Z" fill="currentColor" />
+                    <path d="M12.9 5.8C14 6.2 14.8 7.2 14.8 8.4C14.8 9.1 14.5 9.8 14 10.3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none" opacity="0.7" />
+                  </svg>
+                </span>
+                <span>Notifications</span>
+              </a>
+              <a class="dashboard-nav-item" href="/">
+                <span class="dashboard-nav-item__icon" aria-hidden="true">
+                  <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="6.2" cy="6.3" r="2.2" fill="currentColor" />
+                    <path d="M2.8 13.8C2.8 11.5 4.5 10 6.7 10C8.9 10 10.6 11.5 10.6 13.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none" />
+                    <path d="M13.3 6.2V12.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+                    <path d="M10 9.5H16.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+                  </svg>
+                </span>
+                <span>Invite teammates</span>
+              </a>
+              <a class="dashboard-nav-item" href="/">
+                <span class="dashboard-nav-item__icon" aria-hidden="true">
+                  <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="9" cy="9" r="2.2" fill="currentColor" />
+                    <path d="M9 3.2V4.9M9 13.1V14.8M14.8 9H13.1M4.9 9H3.2M13.3 4.7L12.1 5.9M5.9 12.1L4.7 13.3M13.3 13.3L12.1 12.1M5.9 5.9L4.7 4.7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+                    <circle cx="9" cy="9" r="5.2" stroke="currentColor" stroke-width="1.4" fill="none" opacity="0.5" />
+                  </svg>
+                </span>
+                <span>Settings</span>
+              </a>
+            </div>
+          </div>
+
+          <div class="dashboard-sidebar__footer">
+            <div class="dashboard-profile">
+              <span class="dashboard-profile__avatar">L</span>
+              <span class="dashboard-profile__meta">
+                <span class="dashboard-profile__name">Luyanda M.</span>
+                <span class="dashboard-profile__role">Workspace owner</span>
+              </span>
+            </div>
+          </div>
+        </aside>
+
+        <div class="dashboard-shell__main">
+          <div class="dashboard-main-card">
+            <div class="dashboard-main-card__inner">
+              <div class="dashboard-main-card__topbar">
+                <div class="dashboard-main-card__title">
+                  <span class="dashboard-main-card__eyebrow">Runs &amp; Logs</span>
+                  <h1 class="dashboard-main-card__heading">Monitor workflow execution with clarity.</h1>
+                  <span class="dashboard-main-card__subcopy">
+                    A contained, table-first shell for reviewing run history, failures, retries,
+                    and workflow health outside the immersive canvas.
+                  </span>
+                </div>
+
+                <div class="dashboard-toolbar">
+                  <span class="dashboard-pill dashboard-pill--strong">Export</span>
+                </div>
+              </div>
+
+              <div class="dashboard-toolbar">
+                <span class="dashboard-pill">All</span>
+                <span class="dashboard-pill dashboard-pill--ghost">Success</span>
+                <span class="dashboard-pill dashboard-pill--ghost">Failed</span>
+                <span class="dashboard-pill dashboard-pill--ghost">Running</span>
+                <span class="dashboard-pill">Workflows</span>
+                <span class="dashboard-pill">Last 24h</span>
+                <span class="dashboard-pill">More filters</span>
+                <span class="dashboard-pill dashboard-pill--ghost dashboard-toolbar__search">
+                  <span>Name, ID, errors...</span>
+                  <span>⌕</span>
+                </span>
+              </div>
+
+              <div class="dashboard-kpis">
+                <div class="dashboard-kpi">
+                  <span class="dashboard-kpi__label">Total runs</span>
+                  <span class="dashboard-kpi__value">
+                    <span>237</span>
+                    <span class="dashboard-kpi__divider">|</span>
+                    <span class="dashboard-kpi__group">
+                      <span class="dashboard-kpi__icon dashboard-kpi__icon--success">✓</span>
+                      <span>230</span>
+                    </span>
+                    <span class="dashboard-kpi__group">
+                      <span class="dashboard-kpi__icon dashboard-kpi__icon--running">•</span>
+                      <span>2</span>
+                    </span>
+                    <span class="dashboard-kpi__group">
+                      <span class="dashboard-kpi__icon dashboard-kpi__icon--failed">×</span>
+                      <span>5</span>
+                    </span>
+                  </span>
+                </div>
+                <div class="dashboard-kpi">
+                  <span class="dashboard-kpi__label">Workflow success</span>
+                  <span class="dashboard-kpi__value">
+                    <span>98.7%</span>
+                    <span class="dashboard-kpi__group">
+                      <span class="dashboard-kpi__icon dashboard-kpi__icon--success">↗</span>
+                      <span class="dashboard-kpi__delta dashboard-kpi__delta--up">2%</span>
+                    </span>
+                  </span>
+                </div>
+                <div class="dashboard-kpi">
+                  <span class="dashboard-kpi__label">Average lag</span>
+                  <span class="dashboard-kpi__value">38s</span>
+                </div>
+                <div class="dashboard-kpi">
+                  <span class="dashboard-kpi__label">Avg latency</span>
+                  <span class="dashboard-kpi__value">1.8s</span>
+                </div>
+              </div>
+
+              <div class="dashboard-table-shell">
+                <div class="dashboard-table-header">
+                  <span class="dashboard-table-header__lead">
+                    <span class="dashboard-table-check dashboard-table-check--header" aria-hidden="true"></span>
+                    <span>Run ID</span>
+                  </span>
+                  <span>Started</span>
+                  <span>Workflow</span>
+                  <span>Duration</span>
+                  <span>Status</span>
+                  <span>Error</span>
+                  <span>Retries</span>
+                </div>
+
+                <div class="dashboard-table-row">
+                  <span class="dashboard-table-row__lead">
+                    <span class="dashboard-table-check" aria-hidden="true"></span>
+                    <span>6734</span>
+                  </span>
+                  <span class="dashboard-cell--muted">22 Jun 2025, 11:02:48</span>
+                  <span class="dashboard-cell--truncate">Product Catalog Sync</span>
+                  <span>45.2s</span>
+                  <span class="dashboard-status"><span class="dashboard-status__dot dashboard-status__dot--running">i</span>Running</span>
+                  <span class="dashboard-cell--truncate">TimeoutError: Supplier API timed out</span>
+                  <span>0 / 0</span>
+                </div>
+
+                <div class="dashboard-table-row">
+                  <span class="dashboard-table-row__lead">
+                    <span class="dashboard-table-check" aria-hidden="true"></span>
+                    <span>6733</span>
+                  </span>
+                  <span class="dashboard-cell--muted">22 Jun 2025, 11:05:12</span>
+                  <span class="dashboard-cell--truncate">Customer Webhook Listener</span>
+                  <span>30.1s</span>
+                  <span class="dashboard-status"><span class="dashboard-status__dot dashboard-status__dot--running">i</span>Running</span>
+                  <span class="dashboard-cell--muted">None</span>
+                  <span>0 / 0</span>
+                </div>
+
+                <div class="dashboard-table-row">
+                  <span class="dashboard-table-row__lead">
+                    <span class="dashboard-table-check" aria-hidden="true"></span>
+                    <span>6732</span>
+                  </span>
+                  <span class="dashboard-cell--muted">22 Jun 2025, 11:07:42</span>
+                  <span class="dashboard-cell--truncate">Data Enrichment</span>
+                  <span>10.4s</span>
+                  <span class="dashboard-status"><span class="dashboard-status__dot dashboard-status__dot--success">✓</span>Success</span>
+                  <span class="dashboard-cell--muted">None</span>
+                  <span>0 / 1</span>
+                </div>
+
+                <div class="dashboard-table-row">
+                  <span class="dashboard-table-row__lead">
+                    <span class="dashboard-table-check" aria-hidden="true"></span>
+                    <span>6729</span>
+                  </span>
+                  <span class="dashboard-cell--muted">22 Jun 2025, 11:15:45</span>
+                  <span class="dashboard-cell--truncate">Inventory Level Sync</span>
+                  <span>8.2s</span>
+                  <span class="dashboard-status dashboard-status--failed"><span class="dashboard-status__dot dashboard-status__dot--failed">×</span>Failed</span>
+                  <span class="dashboard-cell--truncate">HTTPError 404: Not Found</span>
+                  <span>2 / 4</span>
+                </div>
+
+                <div class="dashboard-table-row">
+                  <span class="dashboard-table-row__lead">
+                    <span class="dashboard-table-check" aria-hidden="true"></span>
+                    <span>6723</span>
+                  </span>
+                  <span class="dashboard-cell--muted">22 Jun 2025, 11:32:32</span>
+                  <span class="dashboard-cell--truncate">Real-Time Event Stream</span>
+                  <span>7.6s</span>
+                  <span class="dashboard-status"><span class="dashboard-status__dot dashboard-status__dot--success">✓</span>Success</span>
+                  <span class="dashboard-cell--muted">None</span>
+                  <span>0 / 0</span>
+                </div>
+
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <span class="dashboard-floating-action">Actions <span class="dashboard-floating-action__trail">/</span></span>
+      </section>
+    </main>
+  </body>
+</html>

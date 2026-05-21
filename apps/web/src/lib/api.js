@@ -10,6 +10,7 @@ function buildUrl(pathname) {
 
 async function request(pathname, options = {}) {
   const response = await fetch(buildUrl(pathname), {
+    credentials: 'include',
     headers: {
       'content-type': 'application/json',
       ...(options.headers ?? {})
@@ -25,6 +26,36 @@ async function request(pathname, options = {}) {
   }
 
   return payload;
+}
+
+export function getSession() {
+  return request('/api/auth/session', {
+    headers: {}
+  });
+}
+
+export function login(email, password) {
+  return request('/api/auth/login', {
+    body: JSON.stringify({ email, password }),
+    method: 'POST'
+  });
+}
+
+export function logout() {
+  return request('/api/auth/logout', {
+    method: 'POST'
+  });
+}
+
+export function getWorkspaces() {
+  return request('/api/workspaces');
+}
+
+export function createWorkspace(name) {
+  return request('/api/workspaces', {
+    body: JSON.stringify({ name }),
+    method: 'POST'
+  });
 }
 
 export function getNodeDefinitions() {
@@ -68,4 +99,3 @@ export function subscribeToRun(runId, { onEvent, onError }) {
 
   return () => source.close();
 }
-

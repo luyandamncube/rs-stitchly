@@ -1,0 +1,112 @@
+{
+  "symbol": {
+    "source_svg": "/brand/symbol/377F33E9-851A-4D95-8D94-A47C5BF52B70.svg",
+    "master": {
+      "current": "/brand/symbol/stitchly-symbol-current.svg",
+      "white": "/brand/symbol/stitchly-symbol-white.svg",
+      "black": "/brand/symbol/stitchly-symbol-black.svg"
+    },
+    "sizes": [
+      16,
+      24,
+      32,
+      48,
+      64,
+      128,
+      180,
+      192,
+      256,
+      512
+    ],
+    "variants": {
+      "white": [
+        {
+          "size": 16,
+          "path": "/brand/symbol/white/stitchly-symbol-16.svg"
+        },
+        {
+          "size": 24,
+          "path": "/brand/symbol/white/stitchly-symbol-24.svg"
+        },
+        {
+          "size": 32,
+          "path": "/brand/symbol/white/stitchly-symbol-32.svg"
+        },
+        {
+          "size": 48,
+          "path": "/brand/symbol/white/stitchly-symbol-48.svg"
+        },
+        {
+          "size": 64,
+          "path": "/brand/symbol/white/stitchly-symbol-64.svg"
+        },
+        {
+          "size": 128,
+          "path": "/brand/symbol/white/stitchly-symbol-128.svg"
+        },
+        {
+          "size": 180,
+          "path": "/brand/symbol/white/stitchly-symbol-180.svg"
+        },
+        {
+          "size": 192,
+          "path": "/brand/symbol/white/stitchly-symbol-192.svg"
+        },
+        {
+          "size": 256,
+          "path": "/brand/symbol/white/stitchly-symbol-256.svg"
+        },
+        {
+          "size": 512,
+          "path": "/brand/symbol/white/stitchly-symbol-512.svg"
+        }
+      ],
+      "black": [
+        {
+          "size": 16,
+          "path": "/brand/symbol/black/stitchly-symbol-16.svg"
+        },
+        {
+          "size": 24,
+          "path": "/brand/symbol/black/stitchly-symbol-24.svg"
+        },
+        {
+          "size": 32,
+          "path": "/brand/symbol/black/stitchly-symbol-32.svg"
+        },
+        {
+          "size": 48,
+          "path": "/brand/symbol/black/stitchly-symbol-48.svg"
+        },
+        {
+          "size": 64,
+          "path": "/brand/symbol/black/stitchly-symbol-64.svg"
+        },
+        {
+          "size": 128,
+          "path": "/brand/symbol/black/stitchly-symbol-128.svg"
+        },
+        {
+          "size": 180,
+          "path": "/brand/symbol/black/stitchly-symbol-180.svg"
+        },
+        {
+          "size": 192,
+          "path": "/brand/symbol/black/stitchly-symbol-192.svg"
+        },
+        {
+          "size": 256,
+          "path": "/brand/symbol/black/stitchly-symbol-256.svg"
+        },
+        {
+          "size": 512,
+          "path": "/brand/symbol/black/stitchly-symbol-512.svg"
+        }
+      ]
+    },
+    "notes": [
+      "SVG-first design pack for direct app use and easy scaling.",
+      "Black variants are intended for light-mode surfaces."
+    ]
+  }
+}

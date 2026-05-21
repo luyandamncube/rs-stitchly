@@ -1,1092 +1,1344 @@
-import { startTransition, useEffect, useRef, useState, useDeferredValue } from 'react';
-import starterWorkflowFixture from '../../../tests/fixtures/workflows/basic_text_preview.json';
-import connectionFixture from '../../../tests/fixtures/api/connections.json';
-import nodeDefinitionFixture from '../../../tests/fixtures/api/node_definitions.json';
-import WorkflowCanvas from './components/WorkflowCanvas';
-import { createRun, getConnections, getNodeDefinitions, getRunSnapshot, subscribeToRun, validateWorkflow } from './lib/api';
+import { useEffect, useState } from 'react';
 import {
-  buildProblemItems,
-  buildSearchResults,
-  groupNodeDefinitions,
-  humanizeToken,
-  SHELL_SECTIONS
-} from './lib/shell';
-import { cloneWorkflow, updateNodeConfig, updateNodeLabel } from './lib/workflow';
+  BrowserRouter,
+  Link,
+  Navigate,
+  NavLink,
+  Route,
+  Routes,
+  useNavigate,
+  useParams
+} from 'react-router-dom';
+import CanvasWorkspace from './components/CanvasWorkspace';
+import { createWorkspace, getSession, login, logout } from './lib/api';
 
-const DEFAULT_SANDBOX_STATE = {
-  connection: 'none',
-  interaction: {
-    dragging: false,
-    forceFocused: false,
-    forceHovered: false,
-    forcePressed: false,
-    selected: false
+const APP_SCREENS = [
+  {
+    id: 'overview',
+    icon: 'O',
+    label: 'Overview',
+    description: 'Launch workflows, review the product shell, and jump into the canvas.'
   },
-  runtime: 'idle',
-  validation: 'valid'
-};
+  {
+    id: 'canvas',
+    icon: 'C',
+    label: 'Canvas',
+    description: 'The main workflow workspace with the current canvas and debug-aware shell.'
+  },
+  {
+    id: 'runs',
+    icon: 'R',
+    label: 'Runs',
+    description: 'Execution history, run lifecycle visibility, and operator-facing activity.'
+  },
+  {
+    id: 'connections',
+    icon: 'K',
+    label: 'Connections',
+    description: 'Reusable source and destination credentials, adapters, and environment bindings.'
+  },
+  {
+    id: 'settings',
+    icon: 'S',
+    label: 'Settings',
+    description: 'Workspace preferences, responsive mode, and shell-level product controls.'
+  }
+];
 
-const SANDBOX_CONNECTION_STATES = ['none', 'source-active', 'target-valid', 'target-invalid', 'preview'];
-const SANDBOX_RUNTIME_STATES = ['idle', 'queued', 'running', 'succeeded', 'failed', 'skipped'];
-const SANDBOX_VALIDATION_STATES = ['valid', 'warning', 'error'];
+const VIEW_MODES = [
+  { id: 'desktop', label: 'Desktop' },
+  { id: 'mobile', label: 'Mobile' }
+];
 
-const EMPTY_CANVAS_DEBUG_STATE = {
-  blockerElement: null,
-  pointer: null,
-  sandboxId: null,
-  sandboxConnectionState: 'none',
-  sandboxDraggingState: false,
-  pointerInsideSandbox: false,
-  sandboxFocusMatch: false,
-  sandboxHoverMatch: false,
-  sandboxPressedState: false,
-  sandboxSelectedState: false,
-  sandboxRect: null,
-  sandboxResolvedState: null,
-  stack: [],
-  topElement: null,
-  viewport: null
+const VIEW_MODE_STORAGE_KEY = 'stitchly.view-mode.v1';
+const SIDEBAR_COLLAPSE_STORAGE_KEY = 'stitchly.dashboard.sidebar-collapsed.v1';
+const ATTENTION_COLLAPSE_STORAGE_KEY = 'stitchly.dashboard.attention-collapsed.v1';
+const UNAUTHENTICATED_SESSION = {
+  authenticated: false,
+  workspaces: [],
+  active_workspace_id: null,
+  user: null
 };
 
 export default function App() {
-  const showCanvasDebug = import.meta.env.DEV;
-  const [workflow, setWorkflow] = useState(() => cloneWorkflow(starterWorkflowFixture));
-  const [nodeDefinitions, setNodeDefinitions] = useState(nodeDefinitionFixture.node_definitions);
-  const [connections, setConnections] = useState(connectionFixture.connections);
-  const [validation, setValidation] = useState(null);
-  const [runSnapshot, setRunSnapshot] = useState(null);
-  const [runHistory, setRunHistory] = useState([]);
-  const [events, setEvents] = useState([]);
-  const [selectedNodeId, setSelectedNodeId] = useState(null);
-  const [configDraft, setConfigDraft] = useState('{}');
-  const [configError, setConfigError] = useState('');
-  const [backendStatus, setBackendStatus] = useState('connecting');
-  const [busyState, setBusyState] = useState({ validate: false, run: false });
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [activeSection, setActiveSection] = useState('canvas');
-  const [drawerQuery, setDrawerQuery] = useState('');
-  const [floatingCard, setFloatingCard] = useState(null);
-  const [canvasDebugState, setCanvasDebugState] = useState(EMPTY_CANVAS_DEBUG_STATE);
-  const [sandboxState, setSandboxState] = useState(() => cloneSandboxState());
-  const [sandboxResetKey, setSandboxResetKey] = useState(0);
-  const closeStreamRef = useRef(null);
-  const deferredEvents = useDeferredValue(events);
-
-  const selectedNode = workflow.nodes.find((node) => node.node_id === selectedNodeId) ?? null;
-  const selectedDefinition = nodeDefinitions.find((definition) => definition.type_id === selectedNode?.type_id) ?? null;
-  const problemItems = buildProblemItems(validation);
-  const activeSectionMeta = SHELL_SECTIONS.find((section) => section.id === activeSection) ?? SHELL_SECTIONS[0];
-  const groupedNodeDefinitions = groupNodeDefinitions(
-    nodeDefinitions,
-    activeSection === 'nodes' ? drawerQuery : ''
-  );
-  const searchResults = buildSearchResults({
-    query: activeSection === 'search' ? drawerQuery : '',
-    workflow,
-    nodeDefinitions,
-    connections,
-    runHistory,
-    validation
+  const [sessionState, setSessionState] = useState({
+    status: 'loading',
+    session: UNAUTHENTICATED_SESSION
   });
-  const activeProblem =
-    floatingCard?.type === 'problem-detail'
-      ? problemItems.find((problem) => problem.id === floatingCard.problemId) ?? null
-      : null;
-  const activeRun =
-    floatingCard?.type === 'run-detail'
-      ? runHistory.find((run) => run.run_id === floatingCard.runId) ?? runSnapshot
-      : runSnapshot;
+  const [viewMode, setViewMode] = useState(() => readStoredViewMode());
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() =>
+    readStoredSidebarCollapsed()
+  );
+  const [isAttentionCollapsed, setIsAttentionCollapsed] = useState(() =>
+    readStoredAttentionCollapsed()
+  );
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function loadMetadata() {
-      try {
-        const [definitionResponse, connectionResponse] = await Promise.all([
-          getNodeDefinitions(),
-          getConnections()
-        ]);
-
-        if (!cancelled) {
-          setNodeDefinitions(definitionResponse.node_definitions);
-          setConnections(connectionResponse.connections);
-          setBackendStatus('connected');
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setBackendStatus('offline');
-        }
-      }
-    }
-
-    loadMetadata();
-
-    return () => {
-      cancelled = true;
-    };
+    void refreshSession(setSessionState);
   }, []);
 
   useEffect(() => {
-    if (!selectedNode) {
-      setConfigDraft('{}');
-      setConfigError('');
+    if (typeof window === 'undefined') {
       return;
     }
 
-    setConfigDraft(JSON.stringify(selectedNode.config, null, 2));
-    setConfigError('');
-  }, [selectedNode]);
+    window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
+  }, [viewMode]);
 
   useEffect(() => {
-    return () => {
-      closeStreamRef.current?.();
-    };
-  }, []);
-
-  function applyWorkflowChange(nextWorkflow) {
-    setWorkflow(nextWorkflow);
-    setValidation(null);
-
-    if (floatingCard?.type === 'problem-detail') {
-      setFloatingCard(null);
-    }
-  }
-
-  async function refreshRun(runId) {
-    try {
-      const snapshot = await getRunSnapshot(runId);
-      setRunSnapshot(snapshot);
-      upsertRunHistory(snapshot);
-    } catch (error) {
-      setBackendStatus('stream-error');
-    }
-  }
-
-  async function handleValidate() {
-    setBusyState((current) => ({ ...current, validate: true }));
-
-    try {
-      const response = await validateWorkflow(workflow);
-      setValidation(response);
-      setBackendStatus('connected');
-
-      if (!response.valid) {
-        const nextProblems = buildProblemItems(response);
-        setActiveSection('problems');
-        setDrawerOpen(true);
-        if (nextProblems[0]) {
-          setFloatingCard({ type: 'problem-detail', problemId: nextProblems[0].id });
-        }
-      }
-    } catch (error) {
-      setValidation(error.payload?.validation ?? null);
-      setBackendStatus('offline');
-    } finally {
-      setBusyState((current) => ({ ...current, validate: false }));
-    }
-  }
-
-  async function handleRun() {
-    setBusyState((current) => ({ ...current, run: true }));
-    closeStreamRef.current?.();
-    setEvents([]);
-
-    try {
-      const response = await createRun(workflow);
-      const seededRun = {
-        run_id: response.run_id,
-        workflow_id: workflow.workflow_id,
-        workflow_version: workflow.version,
-        status: response.status,
-        node_runs: [],
-        logs: []
-      };
-
-      upsertRunHistory(seededRun);
-      setActiveSection('runs');
-      setDrawerOpen(true);
-      setFloatingCard({ type: 'run-detail', runId: response.run_id });
-      setBackendStatus('connected');
-      await refreshRun(response.run_id);
-
-      closeStreamRef.current = subscribeToRun(response.run_id, {
-        onEvent(event) {
-          startTransition(() => {
-            setEvents((current) => [...current, event]);
-          });
-          refreshRun(response.run_id);
-        },
-        onError() {
-          setBackendStatus('stream-error');
-        }
-      });
-    } catch (error) {
-      setValidation(error.payload?.validation ?? null);
-      setBackendStatus('offline');
-    } finally {
-      setBusyState((current) => ({ ...current, run: false }));
-    }
-  }
-
-  function handleApplyConfig() {
-    if (!selectedNode) {
+    if (typeof window === 'undefined') {
       return;
     }
 
-    try {
-      const parsed = JSON.parse(configDraft);
-      applyWorkflowChange(updateNodeConfig(workflow, selectedNode.node_id, parsed));
-      setConfigError('');
-    } catch (error) {
-      setConfigError(error.message);
-    }
-  }
+    window.localStorage.setItem(
+      SIDEBAR_COLLAPSE_STORAGE_KEY,
+      JSON.stringify(isSidebarCollapsed)
+    );
+  }, [isSidebarCollapsed]);
 
-  function handleReset() {
-    closeStreamRef.current?.();
-    setWorkflow(cloneWorkflow(starterWorkflowFixture));
-    setValidation(null);
-    setRunSnapshot(null);
-    setRunHistory([]);
-    setEvents([]);
-    setSelectedNodeId(null);
-    setConfigDraft('{}');
-    setConfigError('');
-    setDrawerOpen(false);
-    setActiveSection('canvas');
-    setDrawerQuery('');
-    setFloatingCard(null);
-  }
-
-  function handleRailSelect(sectionId) {
-    if (sectionId === activeSection && drawerOpen) {
-      setDrawerOpen(false);
-      setFloatingCard(null);
+  useEffect(() => {
+    if (typeof window === 'undefined') {
       return;
     }
 
-    setActiveSection(sectionId);
-    setDrawerOpen(true);
-    setDrawerQuery('');
+    window.localStorage.setItem(
+      ATTENTION_COLLAPSE_STORAGE_KEY,
+      JSON.stringify(isAttentionCollapsed)
+    );
+  }, [isAttentionCollapsed]);
 
-    if (sectionId === 'runs') {
-      setFloatingCard(runSnapshot ? { type: 'run-detail', runId: runSnapshot.run_id } : { type: 'run-control' });
-      return;
-    }
-
-    if (sectionId === 'nodes') {
-      setFloatingCard(selectedNodeId ? { type: 'node-inspector', nodeId: selectedNodeId } : null);
-      return;
-    }
-
-    setFloatingCard(null);
+  async function handleLogin(email, password) {
+    const session = normalizeSession(await login(email, password));
+    setSessionState({ status: 'ready', session });
+    return session;
   }
 
-  function handleDrawerToggle() {
-    setDrawerOpen((current) => {
-      const next = !current;
-      if (!next) {
-        setFloatingCard(null);
-      }
-      return next;
-    });
+  async function handleLogout() {
+    await logout();
+    setSessionState({ status: 'ready', session: UNAUTHENTICATED_SESSION });
   }
 
-  function openNodeInspector(nodeId) {
-    setSelectedNodeId(nodeId);
-    setActiveSection('nodes');
-    setDrawerOpen(true);
-    setFloatingCard({ type: 'node-inspector', nodeId });
+  async function handleRefreshSession() {
+    return refreshSession(setSessionState);
   }
 
-  function handleCanvasSelection(nodeId) {
-    if (!nodeId) {
-      setSelectedNodeId(null);
-      if (floatingCard?.type === 'node-inspector') {
-        setFloatingCard(null);
-      }
-      return;
-    }
-
-    setSelectedNodeId(nodeId);
-
-    if (floatingCard?.type === 'node-inspector') {
-      setFloatingCard({ type: 'node-inspector', nodeId });
-    }
-  }
-
-  function handleCanvasNodeOpen(nodeId) {
-    if (!nodeId) {
-      return;
-    }
-
-    openNodeInspector(nodeId);
-  }
-
-  function openProblemDetail(problemId) {
-    const problem = problemItems.find((item) => item.id === problemId) ?? null;
-    setActiveSection('problems');
-    setDrawerOpen(true);
-    setFloatingCard({ type: 'problem-detail', problemId });
-
-    if (problem?.target?.nodeId) {
-      setSelectedNodeId(problem.target.nodeId);
-    }
-  }
-
-  function openRunControl() {
-    setActiveSection('runs');
-    setDrawerOpen(true);
-    setFloatingCard({ type: 'run-control' });
-  }
-
-  function openRunDetail(runId) {
-    setActiveSection('runs');
-    setDrawerOpen(true);
-    setFloatingCard({ type: 'run-detail', runId });
-  }
-
-  function handleSearchResult(result) {
-    if (result.kind === 'workflow') {
-      setActiveSection('canvas');
-      setDrawerOpen(true);
-      setFloatingCard(null);
-      return;
-    }
-
-    if (result.kind === 'workflow-node') {
-      openNodeInspector(result.nodeId);
-      return;
-    }
-
-    if (result.kind === 'node-definition') {
-      setActiveSection('nodes');
-      setDrawerOpen(true);
-      setDrawerQuery(result.title);
-      setFloatingCard(null);
-      return;
-    }
-
-    if (result.kind === 'problem') {
-      openProblemDetail(result.problemId);
-      return;
-    }
-
-    if (result.kind === 'run') {
-      openRunDetail(result.runId);
-      return;
-    }
-
-    if (result.kind === 'connection') {
-      setActiveSection('settings');
-      setDrawerOpen(true);
-      setFloatingCard(null);
-    }
-  }
-
-  function closeFloatingCard() {
-    if (floatingCard?.type === 'node-inspector') {
-      setSelectedNodeId(null);
-    }
-
-    setFloatingCard(null);
-  }
-
-  function focusProblemTarget(problem) {
-    if (problem?.target?.nodeId) {
-      openNodeInspector(problem.target.nodeId);
-    }
-  }
-
-  function upsertRunHistory(nextRun) {
-    setRunHistory((current) => {
-      const withoutCurrent = current.filter((run) => run.run_id !== nextRun.run_id);
-      return [nextRun, ...withoutCurrent].slice(0, 8);
-    });
-  }
-
-  function toggleSandboxInteractionState(key) {
-    setSandboxState((current) => ({
-      ...current,
-      interaction: {
-        ...current.interaction,
-        [key]: !current.interaction[key]
-      }
-    }));
-  }
-
-  function setSandboxConnectionState(value) {
-    setSandboxState((current) => ({
-      ...current,
-      connection: value
-    }));
-  }
-
-  function setSandboxValidationState(value) {
-    setSandboxState((current) => ({
-      ...current,
-      validation: value
-    }));
-  }
-
-  function setSandboxRuntimeState(value) {
-    setSandboxState((current) => ({
-      ...current,
-      runtime: value
-    }));
-  }
-
-  function resetSandboxState() {
-    setSandboxState(cloneSandboxState());
-    setSandboxResetKey((current) => current + 1);
+  if (sessionState.status === 'loading') {
+    return <LoadingScreen />;
   }
 
   return (
-    <div className="app-shell">
-      <WorkflowCanvas
-        onDebugStateChange={showCanvasDebug ? setCanvasDebugState : undefined}
-        sandboxResetKey={sandboxResetKey}
-        sandboxState={sandboxState}
+    <BrowserRouter>
+      <AppRoutes
+        onCreateWorkspaceComplete={handleRefreshSession}
+        onLogin={handleLogin}
+        onLogout={handleLogout}
+        onRefreshSession={handleRefreshSession}
+        onToggleAttentionCollapsed={setIsAttentionCollapsed}
+        onToggleSidebarCollapsed={setIsSidebarCollapsed}
+        isAttentionCollapsed={isAttentionCollapsed}
+        isSidebarCollapsed={isSidebarCollapsed}
+        session={sessionState.session}
+        setViewMode={setViewMode}
+        viewMode={viewMode}
       />
+    </BrowserRouter>
+  );
+}
 
-      <div className="shell-overlay">
-        {floatingCard ? (
-          <section className={`floating-card floating-card--${floatingCard.type}`}>
-            <CardHeader
-              eyebrow={cardEyebrowFor(floatingCard.type)}
-              title={cardTitleFor({
-                floatingCard,
-                activeProblem,
-                activeRun,
-                selectedNode
-              })}
-              onClose={closeFloatingCard}
+function AppRoutes({
+  onCreateWorkspaceComplete,
+  onLogin,
+  onLogout,
+  onRefreshSession,
+  onToggleAttentionCollapsed,
+  onToggleSidebarCollapsed,
+  isAttentionCollapsed,
+  isSidebarCollapsed,
+  session,
+  setViewMode,
+  viewMode
+}) {
+  return (
+    <Routes>
+      <Route
+        path="/login"
+        element={
+          session.authenticated ? (
+            <Navigate replace to={getDefaultAppPath(session)} />
+          ) : (
+            <LoginRoute onLogin={onLogin} />
+          )
+        }
+      />
+      <Route
+        path="/workspaces/new"
+        element={
+          <ProtectedRoute allowEmptyWorkspaces session={session}>
+            <CreateWorkspaceRoute
+              onCreateWorkspaceComplete={onCreateWorkspaceComplete}
+              session={session}
             />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/w/:workspaceSlug"
+        element={
+          <ProtectedRoute session={session}>
+            <WorkspaceIndexRedirect session={session} />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/w/:workspaceSlug/:screenId"
+        element={
+          <ProtectedRoute session={session}>
+            <WorkspaceScreenRoute
+              onLogout={onLogout}
+              onRefreshSession={onRefreshSession}
+              onToggleAttentionCollapsed={onToggleAttentionCollapsed}
+              onToggleSidebarCollapsed={onToggleSidebarCollapsed}
+              isAttentionCollapsed={isAttentionCollapsed}
+              isSidebarCollapsed={isSidebarCollapsed}
+              session={session}
+              setViewMode={setViewMode}
+              viewMode={viewMode}
+            />
+          </ProtectedRoute>
+        }
+      />
+      <Route path="*" element={<Navigate replace to={getDefaultAppPath(session)} />} />
+    </Routes>
+  );
+}
 
-            <div className="floating-card__body">
-              {floatingCard.type === 'node-inspector' ? (
-                <div className="card-stack">
-                  <CardMetricGrid
-                    metrics={[
-                      { label: 'Node', value: selectedNode?.node_id ?? 'None' },
-                      { label: 'Type', value: selectedDefinition?.display_name ?? 'Unknown' },
-                      { label: 'Category', value: humanizeToken(selectedDefinition?.category) },
-                      { label: 'Ports', value: `${selectedDefinition?.inputs?.length ?? 0}/${selectedDefinition?.outputs?.length ?? 0}` }
-                    ]}
-                  />
+function ProtectedRoute({ allowEmptyWorkspaces = false, children, session }) {
+  if (!session.authenticated) {
+    return <Navigate replace to="/login" />;
+  }
 
-                  <label className="shell-field">
-                    <span>Label</span>
-                    <input
-                      value={selectedNode?.label ?? ''}
-                      onChange={(event) => {
-                        if (!selectedNode) {
-                          return;
-                        }
+  if (!allowEmptyWorkspaces && !session.workspaces.length) {
+    return <Navigate replace to="/workspaces/new" />;
+  }
 
-                        applyWorkflowChange(
-                          updateNodeLabel(workflow, selectedNode.node_id, event.target.value)
-                        );
-                      }}
-                    />
-                  </label>
+  return children;
+}
 
-                  <label className="shell-field">
-                    <span>Config JSON</span>
-                    <textarea
-                      rows={9}
-                      value={configDraft}
-                      onChange={(event) => setConfigDraft(event.target.value)}
-                    />
-                  </label>
+function WorkspaceIndexRedirect({ session }) {
+  const { workspaceSlug } = useParams();
+  const workspace = session.workspaces.find((candidate) => candidate.slug === workspaceSlug);
 
-                  {configError ? <p className="shell-error-text">{configError}</p> : null}
+  if (!workspace) {
+    return <Navigate replace to={getDefaultAppPath(session)} />;
+  }
 
-                  <div className="drawer-action-grid">
-                    <button className="accent-button" onClick={handleApplyConfig} type="button">
-                      Apply Config
-                    </button>
-                    <button
-                      className="secondary-button"
-                      onClick={() => setConfigDraft(JSON.stringify(selectedNode?.config ?? {}, null, 2))}
-                      type="button"
-                    >
-                      Reset Draft
-                    </button>
-                  </div>
-                </div>
-              ) : null}
+  return <Navigate replace to={`/w/${workspace.slug}/overview`} />;
+}
 
-              {floatingCard.type === 'run-control' ? (
-                <div className="card-stack">
-                  <CardMetricGrid
-                    metrics={[
-                      { label: 'Backend', value: humanizeToken(backendStatus) },
-                      { label: 'Validation', value: validation ? (validation.valid ? 'Valid' : 'Issues') : 'Idle' },
-                      { label: 'Runs', value: String(runHistory.length) },
-                      { label: 'Events', value: String(deferredEvents.length) }
-                    ]}
-                  />
+function WorkspaceScreenRoute({
+  onLogout,
+  onRefreshSession,
+  onToggleAttentionCollapsed,
+  onToggleSidebarCollapsed,
+  isAttentionCollapsed,
+  isSidebarCollapsed,
+  session,
+  setViewMode,
+  viewMode
+}) {
+  const { screenId, workspaceSlug } = useParams();
+  const activeWorkspace = session.workspaces.find((workspace) => workspace.slug === workspaceSlug);
 
-                  <div className="drawer-action-grid">
-                    <button className="accent-button" onClick={handleValidate} type="button" disabled={busyState.validate}>
-                      {busyState.validate ? 'Validating…' : 'Validate Workflow'}
-                    </button>
-                    <button className="secondary-button" onClick={handleRun} type="button" disabled={busyState.run}>
-                      {busyState.run ? 'Starting…' : 'Run Workflow'}
-                    </button>
-                  </div>
+  if (!activeWorkspace) {
+    return <Navigate replace to={getDefaultAppPath(session)} />;
+  }
 
-                  <SectionBlock title="Latest Activity">
-                    {deferredEvents.length ? (
-                      <div className="drawer-list">
-                        {deferredEvents.slice(-4).reverse().map((event) => (
-                          <DrawerItemButton
-                            key={event.event_id}
-                            icon=">"
-                            subtitle={event.target.node_id ?? 'run'}
-                            title={humanizeToken(event.event_type)}
-                            onClick={() => {
-                              if (runSnapshot?.run_id) {
-                                openRunDetail(runSnapshot.run_id);
-                              }
-                            }}
-                          />
-                        ))}
-                      </div>
-                    ) : (
-                      <EmptyState message="No live events yet. Start a run to stream lifecycle activity here." />
-                    )}
-                  </SectionBlock>
-                </div>
-              ) : null}
+  const activeScreen = APP_SCREENS.find((screen) => screen.id === screenId);
+  if (!activeScreen) {
+    return <Navigate replace to={`/w/${activeWorkspace.slug}/overview`} />;
+  }
 
-              {floatingCard.type === 'run-detail' ? (
-                <div className="card-stack">
-                  <CardMetricGrid
-                    metrics={[
-                      { label: 'Run', value: activeRun?.run_id ?? 'Unknown' },
-                      { label: 'Status', value: humanizeToken(activeRun?.status) },
-                      { label: 'Nodes', value: String(activeRun?.node_runs?.length ?? 0) },
-                      { label: 'Logs', value: String(activeRun?.logs?.length ?? 0) }
-                    ]}
-                  />
+  return (
+    <ProductShell
+      activeScreen={activeScreen}
+      activeWorkspace={activeWorkspace}
+      isAttentionCollapsed={isAttentionCollapsed}
+      isSidebarCollapsed={isSidebarCollapsed}
+      onLogout={onLogout}
+      onRefreshSession={onRefreshSession}
+      onToggleAttentionCollapsed={onToggleAttentionCollapsed}
+      onToggleSidebarCollapsed={onToggleSidebarCollapsed}
+      session={session}
+      setViewMode={setViewMode}
+      viewMode={viewMode}
+    />
+  );
+}
 
-                  <SectionBlock title="Node States">
-                    {activeRun?.node_runs?.length ? (
-                      <div className="drawer-list">
-                        {activeRun.node_runs.map((nodeRun) => (
-                          <DrawerItemButton
-                            key={nodeRun.node_id}
-                            icon="N"
-                            subtitle={nodeRun.type_id}
-                            title={nodeRun.node_id}
-                            badge={humanizeToken(nodeRun.status)}
-                            onClick={() => openNodeInspector(nodeRun.node_id)}
-                          />
-                        ))}
-                      </div>
-                    ) : (
-                      <EmptyState message="Node state will populate once the run begins planning and execution." />
-                    )}
-                  </SectionBlock>
+function ProductShell({
+  activeScreen,
+  activeWorkspace,
+  isAttentionCollapsed,
+  isSidebarCollapsed,
+  onLogout,
+  onRefreshSession,
+  onToggleAttentionCollapsed,
+  onToggleSidebarCollapsed,
+  session,
+  setViewMode,
+  viewMode
+}) {
+  const isCanvasRoute = activeScreen.id === 'canvas';
+  const [isCanvasSidebarExpanded, setIsCanvasSidebarExpanded] = useState(false);
+  const isSidebarCollapsedEffective = isCanvasRoute
+    ? !isCanvasSidebarExpanded
+    : isSidebarCollapsed;
 
-                  <SectionBlock title="Recent Events">
-                    {deferredEvents.length ? (
-                      <div className="drawer-list">
-                        {deferredEvents.slice(-5).reverse().map((event) => (
-                          <DrawerItemButton
-                            key={event.event_id}
-                            icon=">"
-                            subtitle={event.target.node_id ?? 'run'}
-                            title={humanizeToken(event.event_type)}
-                            badge={event.sequence}
-                          />
-                        ))}
-                      </div>
-                    ) : (
-                      <EmptyState message="Event replay appears here once the backend emits lifecycle updates." />
-                    )}
-                  </SectionBlock>
+  useEffect(() => {
+    if (isCanvasRoute) {
+      setIsCanvasSidebarExpanded(false);
+    }
+  }, [activeWorkspace.workspace_id, isCanvasRoute]);
 
-                  <SectionBlock title="Recent Logs">
-                    {activeRun?.logs?.length ? (
-                      <div className="drawer-list">
-                        {activeRun.logs.slice(-4).reverse().map((entry, index) => (
-                          <DrawerItemButton
-                            key={`${entry.timestamp}-${index}`}
-                            icon="L"
-                            subtitle={entry.node_id ?? 'run'}
-                            title={entry.message}
-                          />
-                        ))}
-                      </div>
-                    ) : (
-                      <EmptyState message="Structured logs remain separate from events and will appear here when available." />
-                    )}
-                  </SectionBlock>
-                </div>
-              ) : null}
+  function handleSidebarToggle() {
+    if (isCanvasRoute) {
+      setIsCanvasSidebarExpanded((current) => !current);
+      return;
+    }
 
-              {floatingCard.type === 'problem-detail' ? (
-                <div className="card-stack">
-                  <CardMetricGrid
-                    metrics={[
-                      { label: 'Severity', value: humanizeToken(activeProblem?.severity) },
-                      { label: 'Code', value: humanizeToken(activeProblem?.code) },
-                      { label: 'Target', value: activeProblem?.target?.label ?? 'Workflow' },
-                      { label: 'Path', value: activeProblem?.path ?? 'Workflow' }
-                    ]}
-                  />
+    onToggleSidebarCollapsed((current) => !current);
+  }
 
-                  <section className="card-callout">
-                    <p>{activeProblem?.message ?? 'Issue detail unavailable.'}</p>
-                  </section>
+  return (
+    <div
+      className={`dashboard-app dashboard-app--${viewMode}${
+        isCanvasRoute ? ' dashboard-app--canvas' : ''
+      }${
+        isSidebarCollapsedEffective ? ' dashboard-app--sidebar-collapsed' : ''
+      }`}
+    >
+      <div className="dashboard-app__shell">
+        <aside
+          className={`dashboard-app__sidebar${
+            isSidebarCollapsedEffective ? ' dashboard-app__sidebar--collapsed' : ''
+          }${isCanvasRoute ? ' dashboard-app__sidebar--overlay' : ''}${
+            isCanvasRoute && isSidebarCollapsedEffective
+              ? ' dashboard-app__sidebar--overlay-collapsed'
+              : ''
+          }`}
+        >
+          <div className="dashboard-sidebar__control-row">
+            <button
+              aria-label={isSidebarCollapsedEffective ? 'Expand sidebar' : 'Collapse sidebar'}
+              className="dashboard-sidebar__collapse-button"
+              onClick={handleSidebarToggle}
+              type="button"
+            >
+              <span aria-hidden="true">
+                {isSidebarCollapsedEffective ? '↗' : '←'}
+              </span>
+            </button>
+          </div>
 
-                  {activeProblem?.target?.nodeId ? (
-                    <button className="accent-button" onClick={() => focusProblemTarget(activeProblem)} type="button">
-                      Open Node Inspector
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
+          {/* <div className="dashboard-sidebar__brand">
+            <span className="dashboard-brand-chip">
+              <img
+                alt=""
+                className="dashboard-brand-chip__symbol"
+                src="/brand/symbol/stitchly-symbol-white.svg"
+              />
+              <span className="dashboard-brand-chip__label">Contained shell</span>
+            </span>
+            <span className="dashboard-brand-orb" aria-hidden="true">
+              <img
+                alt=""
+                className="dashboard-brand-orb__symbol"
+                src="/brand/symbol/stitchly-symbol-white.svg"
+              />
+            </span>
+            <span className="dashboard-brand-name">Stitchly</span>
+            <span className="dashboard-brand-label">Operations workspace</span>
+          </div> */}
+
+          <div className="dashboard-sidebar__nav">
+            <div className="dashboard-nav-group">
+              {APP_SCREENS.map((screen) => (
+                <NavLink
+                  key={screen.id}
+                  className={({ isActive }) =>
+                    `dashboard-nav-item${isActive ? ' dashboard-nav-item--active' : ''}`
+                  }
+                  aria-label={screen.label}
+                  to={`/w/${activeWorkspace.slug}/${screen.id}`}
+                  title={screen.label}
+                >
+                  <span className="dashboard-nav-item__icon" aria-hidden="true">
+                    <DashboardNavIcon screenId={screen.id} />
+                  </span>
+                  <span className="dashboard-nav-item__label">{screen.label}</span>
+                </NavLink>
+              ))}
             </div>
-          </section>
-        ) : null}
-      </div>
 
-      {showCanvasDebug ? (
-        <CanvasDebugPanel
-          debugState={canvasDebugState}
-          onResetSandboxState={resetSandboxState}
-          onSetConnectionState={setSandboxConnectionState}
-          onSetRuntimeState={setSandboxRuntimeState}
-          onSetValidationState={setSandboxValidationState}
-          onToggleInteractionState={toggleSandboxInteractionState}
-          sandboxState={sandboxState}
-        />
-      ) : null}
+            <span className="dashboard-sidebar__rail-divider" aria-hidden="true" />
+
+            <div className="dashboard-sidebar__subnav">
+              <button
+                aria-label="Refresh session"
+                className="dashboard-nav-item dashboard-nav-item--utility"
+                onClick={() => void onRefreshSession()}
+                title="Refresh session"
+                type="button"
+              >
+                <span className="dashboard-nav-item__icon" aria-hidden="true">
+                  <UtilityIcon kind="refresh" />
+                </span>
+                <span className="dashboard-nav-item__label">Refresh session</span>
+              </button>
+              <button
+                aria-label="Sign out"
+                className="dashboard-nav-item dashboard-nav-item--utility"
+                onClick={onLogout}
+                title="Sign out"
+                type="button"
+              >
+                <span className="dashboard-nav-item__icon" aria-hidden="true">
+                  <UtilityIcon kind="logout" />
+                </span>
+                <span className="dashboard-nav-item__label">Sign out</span>
+              </button>
+            </div>
+
+            <div
+              className={`dashboard-sidebar__utility-card${
+                isAttentionCollapsed ? ' dashboard-sidebar__utility-card--collapsed' : ''
+              }`}
+            >
+              <div className="dashboard-sidebar__utility-card-header">
+                <span className="dashboard-sidebar__utility-card-title">Attention</span>
+                <span className="dashboard-sidebar__utility-card-header-actions">
+                  <span className="dashboard-sidebar__utility-card-count">3</span>
+                  <button
+                    aria-label={isAttentionCollapsed ? 'Expand attention panel' : 'Collapse attention panel'}
+                    className="dashboard-sidebar__utility-card-toggle"
+                    onClick={() => onToggleAttentionCollapsed((current) => !current)}
+                    type="button"
+                  >
+                    <span aria-hidden="true">{isAttentionCollapsed ? '▾' : '▴'}</span>
+                  </button>
+                </span>
+              </div>
+
+              {isAttentionCollapsed ? (
+                <div className="dashboard-sidebar__utility-card-summary">
+                  <span>Orders import failed</span>
+                  <span>3 active items</span>
+                </div>
+              ) : (
+                <>
+                  <div className="dashboard-sidebar__alert">
+                    <div className="dashboard-sidebar__alert-title">
+                      <span>Orders import failed</span>
+                      <span className="dashboard-sidebar__alert-dot" aria-hidden="true" />
+                    </div>
+                    <div className="dashboard-sidebar__alert-meta">
+                      TimeoutError at step 2. Review supplier retries and stale workflow state.
+                    </div>
+                  </div>
+
+                  <div className="dashboard-sidebar__list">
+                    <div className="dashboard-sidebar__mini-item">
+                      <span className="dashboard-sidebar__mini-item-label">
+                        <span className="dashboard-sidebar__mini-item-dot dashboard-sidebar__mini-item-dot--accent" />
+                        <span>Notifications</span>
+                      </span>
+                      <span className="dashboard-sidebar__mini-item-value">3 new</span>
+                    </div>
+                    <div className="dashboard-sidebar__mini-item">
+                      <span className="dashboard-sidebar__mini-item-label">
+                        <span className="dashboard-sidebar__mini-item-dot" />
+                        <span>Pending approvals</span>
+                      </span>
+                      <span className="dashboard-sidebar__mini-item-value">5 items</span>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className="dashboard-sidebar__footer">
+            <div className="dashboard-profile">
+              <span className="dashboard-profile__avatar dashboard-profile__avatar--symbol">
+                <img alt="" src="/brand/symbol/stitchly-symbol-white.svg" />
+              </span>
+              <span className="dashboard-profile__meta">
+                <span className="dashboard-profile__name">
+                  {session.user?.display_name ?? 'Builder'}
+                </span>
+                <span className="dashboard-profile__role">
+                  {activeWorkspace.role} · {activeWorkspace.name}
+                </span>
+              </span>
+            </div>
+          </div>
+        </aside>
+
+        {isCanvasRoute ? (
+          <div className="dashboard-canvas-shell">
+            <div className="dashboard-canvas-shell__toolbar">
+              <span className="dashboard-pill">{activeWorkspace.name}</span>
+            </div>
+            <main className="dashboard-canvas-shell__stage">
+              <CanvasScreen isFullScreen />
+            </main>
+          </div>
+        ) : (
+          <div className="dashboard-app__main">
+            <div className="dashboard-main-card">
+              <div className="dashboard-main-card__inner">
+                <div className="dashboard-main-card__topbar">
+                  <div className="dashboard-main-card__title">
+                    <span className="dashboard-main-card__eyebrow">{activeScreen.label}</span>
+                    <h1 className="dashboard-main-card__heading">{activeScreen.label}</h1>
+                    <span className="dashboard-main-card__subcopy">
+                      {activeScreen.description}
+                    </span>
+                  </div>
+
+                  <div className="dashboard-toolbar">
+                    <span className="dashboard-pill">{activeWorkspace.name}</span>
+                    <span className="dashboard-pill dashboard-pill--ghost">{session.user?.email}</span>
+                    <ViewModeToggle currentMode={viewMode} onSelect={setViewMode} />
+                  </div>
+                </div>
+
+                <WorkspaceSwitcher
+                  activeWorkspace={activeWorkspace}
+                  variant="topbar"
+                  workspaces={session.workspaces}
+                />
+
+                <main className="dashboard-main-card__stage" data-screen={activeScreen.id}>
+                  {activeScreen.id === 'overview' ? (
+                    <OverviewScreen activeWorkspace={activeWorkspace} viewMode={viewMode} />
+                  ) : null}
+                  {activeScreen.id === 'runs' ? <RunsScreen /> : null}
+                  {activeScreen.id === 'connections' ? <ConnectionsScreen /> : null}
+                  {activeScreen.id === 'settings' ? (
+                    <SettingsScreen
+                      activeWorkspace={activeWorkspace}
+                      onSelectViewMode={setViewMode}
+                      viewMode={viewMode}
+                    />
+                  ) : null}
+                </main>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-function DrawerHeader({ description, onClose, title }) {
+function WorkspaceSwitcher({ activeWorkspace, variant = 'sidebar', workspaces }) {
   return (
-    <header className="shell-drawer__header">
-      <div className="shell-drawer__brand">
-        <div className="shell-drawer__mark">S</div>
-        <div>
-          <strong>Stitchly</strong>
-          <span>{title}</span>
-        </div>
-      </div>
-
-      <button className="shell-circle-button" onClick={onClose} type="button">
-        <span>&lt;</span>
-      </button>
-
-      <p className="shell-drawer__description">{description}</p>
-    </header>
-  );
-}
-
-function CardHeader({ eyebrow, title, onClose }) {
-  return (
-    <header className="floating-card__header">
-      <div>
-        <p className="floating-card__eyebrow">{eyebrow}</p>
-        <h2>{title}</h2>
-      </div>
-      <button className="shell-circle-button" onClick={onClose} type="button">
-        <span>x</span>
-      </button>
-    </header>
-  );
-}
-
-function RailButton({ active, badge, icon, label, onClick }) {
-  return (
-    <button
-      aria-label={label}
-      className={`shell-rail__button${active ? ' is-active' : ''}`}
-      onClick={onClick}
-      title={label}
-      type="button"
+    <section
+      className={`dashboard-workspace-switcher${
+        variant === 'topbar' ? ' dashboard-workspace-switcher--topbar' : ''
+      }`}
     >
-      <span className="shell-rail__icon">{icon}</span>
-      {badge ? <span className="shell-rail__badge">{badge}</span> : null}
-    </button>
-  );
-}
-
-function SectionBlock({ children, title }) {
-  return (
-    <section className="drawer-section">
-      <div className="drawer-section__heading">
-        <span>{title}</span>
+      <div className="dashboard-workspace-switcher__header">
+        <span>Workspaces</span>
+        <Link to="/workspaces/new">New</Link>
       </div>
-      {children}
+
+      <div className="dashboard-workspace-switcher__list">
+        {workspaces.map((workspace) => (
+          <Link
+            key={workspace.workspace_id}
+            className={`dashboard-workspace-link${
+              workspace.workspace_id === activeWorkspace.workspace_id ? ' is-active' : ''
+            }`}
+            to={`/w/${workspace.slug}/overview`}
+          >
+            <strong>{workspace.name}</strong>
+            <span>{workspace.role}</span>
+          </Link>
+        ))}
+      </div>
     </section>
   );
 }
 
-function DrawerItemButton({ active = false, badge, icon, onClick, subtitle, title }) {
+function LoginRoute({ onLogin }) {
+  const navigate = useNavigate();
+  const [authDraft, setAuthDraft] = useState({
+    email: 'builder@stitchly.dev',
+    password: 'stitchly'
+  });
+  const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setError('');
+    setIsSubmitting(true);
+
+    try {
+      const session = await onLogin(authDraft.email, authDraft.password);
+      navigate(getDefaultAppPath(session), { replace: true });
+    } catch (requestError) {
+      setError(requestError.message ?? 'Unable to sign in.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   return (
-    <button
-      className={`drawer-item${active ? ' is-active' : ''}`}
-      onClick={onClick}
-      type="button"
-    >
-      <span className="drawer-item__icon">{icon}</span>
-      <span className="drawer-item__content">
-        <strong>{title}</strong>
-        {subtitle ? <span>{subtitle}</span> : null}
-      </span>
-      {badge ? <span className="drawer-item__badge">{badge}</span> : null}
-    </button>
+    <AuthShellLayout>
+      <section className="auth-shell__panel auth-brand-panel">
+        <div className="auth-brand-panel__guides" aria-hidden="true" />
+
+        <header className="auth-brand-panel__header">
+          <div className="auth-wordmark" aria-label="Stitchly brand">
+            <span className="auth-wordmark__brand">Stitchly</span>
+            <span className="auth-wordmark__label">Workflow Studio</span>
+          </div>
+        </header>
+
+        <div className="auth-brand-panel__stage">
+          <div className="auth-brand-monument" aria-hidden="true">
+            <img
+              alt=""
+              className="auth-brand-monument__symbol"
+              src="/brand/symbol/stitchly-symbol-white.svg"
+            />
+          </div>
+        </div>
+
+        <footer className="auth-brand-panel__footer">
+          <span>Build and orchestrate AI workflows with clarity.</span>
+          <span>Seeded demo access</span>
+        </footer>
+      </section>
+
+      <section className="auth-shell__panel auth-form-panel">
+        <div className="auth-form-card">
+          <div className="auth-form-card__topbar">
+            <span className="auth-form-card__topmeta">builder@stitchly.dev / stitchly</span>
+          </div>
+
+          <div className="auth-form-card__content auth-form-card__content--login">
+            <div className="auth-form-card__intro">
+              <p className="auth-form-card__eyebrow">Backend session login</p>
+              <h1 className="auth-form-card__title">Log in</h1>
+              <p className="auth-form-card__summary">
+                Real backend sessions are now part of the app shell. Sign in to enter the
+                protected workspace routes.
+              </p>
+            </div>
+
+            <form className="auth-login-form" onSubmit={handleSubmit}>
+              <div className="auth-login-form__row">
+                <label className="auth-login-field">
+                  <span className="auth-login-field__label">Email</span>
+                  <span className="auth-login-field__track">
+                    <input
+                      autoComplete="username"
+                      className="auth-login-field__input"
+                      onChange={(event) =>
+                        setAuthDraft((current) => ({ ...current, email: event.target.value }))
+                      }
+                      type="email"
+                      value={authDraft.email}
+                    />
+                  </span>
+                </label>
+
+                <label className="auth-login-field">
+                  <span className="auth-login-field__label">Password</span>
+                  <span className="auth-login-field__track auth-login-field__track--password">
+                    <input
+                      autoComplete="current-password"
+                      className="auth-login-field__input auth-login-field__input--password"
+                      onChange={(event) =>
+                        setAuthDraft((current) => ({
+                          ...current,
+                          password: event.target.value
+                        }))
+                      }
+                      type="password"
+                      value={authDraft.password}
+                    />
+                    <span aria-hidden="true" className="auth-login-field__icon" />
+                  </span>
+                </label>
+              </div>
+
+              <div className="auth-login-form__helpers">
+                <label className="auth-login-check">
+                  <input
+                    checked={rememberMe}
+                    onChange={(event) => setRememberMe(event.target.checked)}
+                    type="checkbox"
+                  />
+                  <span className="auth-login-check__circle" aria-hidden="true" />
+                  <span>Remember me</span>
+                </label>
+
+                <span className="auth-login-link">Forgot?</span>
+              </div>
+
+              {error ? <p className="auth-card__error">{error}</p> : null}
+
+              <div className="auth-login-form__spacer" aria-hidden="true" />
+
+              <button className="auth-form-card__cta" disabled={isSubmitting} type="submit">
+                {isSubmitting ? 'Signing in…' : 'Sign in'}
+              </button>
+            </form>
+          </div>
+        </div>
+      </section>
+    </AuthShellLayout>
   );
 }
 
-function CardMetricGrid({ metrics }) {
+function CreateWorkspaceRoute({ onCreateWorkspaceComplete, session }) {
+  const navigate = useNavigate();
+  const [name, setName] = useState('Default Workspace');
+  const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (session.workspaces.length > 0) {
+      navigate(getDefaultAppPath(session), { replace: true });
+    }
+  }, [navigate, session]);
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setError('');
+    setIsSubmitting(true);
+
+    try {
+      const response = await createWorkspace(name);
+      await onCreateWorkspaceComplete();
+      navigate(`/w/${response.workspace.slug}/overview`, { replace: true });
+    } catch (requestError) {
+      setError(requestError.message ?? 'Unable to create workspace.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   return (
-    <div className="card-metric-grid">
-      {metrics.map((metric) => (
-        <div key={metric.label} className="card-metric">
-          <span>{metric.label}</span>
-          <strong>{metric.value}</strong>
+    <div className="auth-screen">
+      <div className="auth-screen__backdrop" />
+      <section className="auth-card">
+        <div className="auth-card__brand">
+          <div className="auth-card__mark">W</div>
+          <div>
+            <p>Workspace Setup</p>
+            <h1>Create your first workspace</h1>
+          </div>
+        </div>
+
+        <p className="auth-card__summary">
+          Workspaces are now real persisted containers for Stitchly. Create one before entering the
+          protected app shell.
+        </p>
+
+        <form className="auth-card__form" onSubmit={handleSubmit}>
+          <label className="shell-field">
+            <span>Workspace name</span>
+            <input onChange={(event) => setName(event.target.value)} type="text" value={name} />
+          </label>
+
+          {error ? <p className="auth-card__error">{error}</p> : null}
+
+          <button className="accent-button accent-button--wide" disabled={isSubmitting} type="submit">
+            {isSubmitting ? 'Creating…' : 'Create Workspace'}
+          </button>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function LoadingScreen() {
+  return (
+    <AuthShellLayout>
+      <section className="auth-shell__panel auth-brand-panel">
+        <div className="auth-brand-panel__guides" aria-hidden="true" />
+        <header className="auth-brand-panel__header">
+          <div className="auth-wordmark">
+            <span className="auth-wordmark__brand">Stitchly</span>
+            <span className="auth-wordmark__label">Workflow Studio</span>
+          </div>
+        </header>
+        <div className="auth-brand-panel__stage">
+          <div className="auth-brand-monument" aria-hidden="true">
+            <img
+              alt=""
+              className="auth-brand-monument__symbol"
+              src="/brand/symbol/stitchly-symbol-white.svg"
+            />
+          </div>
+        </div>
+      </section>
+
+      <section className="auth-shell__panel auth-form-panel">
+        <div className="auth-form-card">
+          <div className="auth-form-card__content auth-form-card__content--loading-state">
+            <div className="auth-form-card__intro">
+              <p className="auth-form-card__eyebrow">Session bootstrap</p>
+              <h1 className="auth-form-card__title">Checking session…</h1>
+              <p className="auth-form-card__summary">
+                Restoring your backend-authenticated Stitchly shell.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </AuthShellLayout>
+  );
+}
+
+function AuthShellLayout({ children }) {
+  return (
+    <div className="auth-shell-page">
+      <div className="auth-shell-page__backdrop" />
+      <main className="auth-shell">{children}</main>
+    </div>
+  );
+}
+
+function OverviewScreen({ activeWorkspace, viewMode }) {
+  const navigate = useNavigate();
+
+  return (
+    <div className="dashboard-overview">
+      <div className="dashboard-kpis">
+        <div className="dashboard-kpi">
+          <span className="dashboard-kpi__label">Workspace</span>
+          <span className="dashboard-kpi__value">{activeWorkspace.name}</span>
+        </div>
+        <div className="dashboard-kpi">
+          <span className="dashboard-kpi__label">Shell status</span>
+          <span className="dashboard-kpi__value">
+            <span className="dashboard-kpi__group">
+              <span className="dashboard-kpi__icon dashboard-kpi__icon--success">✓</span>
+              <span>Protected</span>
+            </span>
+          </span>
+        </div>
+        <div className="dashboard-kpi">
+          <span className="dashboard-kpi__label">Viewport mode</span>
+          <span className="dashboard-kpi__value">{viewMode}</span>
+        </div>
+        <div className="dashboard-kpi">
+          <span className="dashboard-kpi__label">Next slice</span>
+          <span className="dashboard-kpi__value">Persist workflows</span>
+        </div>
+      </div>
+
+      <div className="dashboard-overview__grid">
+        <section className="dashboard-section-card">
+          <div className="dashboard-section-card__header">
+            <span className="dashboard-section-card__eyebrow">Launch</span>
+            <h2>Start in the canvas</h2>
+            <p>
+              Jump into the current workflow workspace and keep iterating on node, edge, and shell
+              behavior.
+            </p>
+          </div>
+          <div className="dashboard-section-card__actions">
+            <button
+              className="accent-button"
+              onClick={() => navigate(`/w/${activeWorkspace.slug}/canvas`)}
+              type="button"
+            >
+              Open Canvas
+            </button>
+          </div>
+        </section>
+
+        <section className="dashboard-section-card">
+          <div className="dashboard-section-card__header">
+            <span className="dashboard-section-card__eyebrow">Platform</span>
+            <h2>Real shell is now active</h2>
+            <p>
+              This workspace lives behind backend session checks and URL-driven routing instead of
+              local-only gate state.
+            </p>
+          </div>
+          <SimpleList
+            items={[
+              'Backend-owned session bootstrap',
+              'Protected workspace routes',
+              'Persisted workspace membership',
+              'Real login, logout, and workspace creation'
+            ]}
+          />
+        </section>
+
+        <section className="dashboard-section-card">
+          <div className="dashboard-section-card__header">
+            <span className="dashboard-section-card__eyebrow">Next</span>
+            <h2>Natural follow-on work</h2>
+            <p>
+              Now that the shell is real, we can connect workflow save/load and runs to the active
+              workspace.
+            </p>
+          </div>
+          <SimpleList
+            items={[
+              'Persist workflow definitions by workspace',
+              'Route the runs screen to backend workspace data',
+              'Add workspace switch persistence',
+              'Introduce detail routes and shareable deep links'
+            ]}
+          />
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function CanvasScreen({ isFullScreen = false, viewMode = 'desktop' }) {
+  const viewportVariant = isFullScreen ? 'canvas-route' : viewMode;
+
+  return (
+    <div
+      className={`workspace-stage workspace-stage--${isFullScreen ? 'canvas-route' : viewMode}`}
+    >
+      <div className={`workspace-stage__viewport workspace-stage__viewport--${viewportVariant}`}>
+        <CanvasWorkspace />
+      </div>
+    </div>
+  );
+}
+
+function RunsScreen() {
+  return (
+    <div className="dashboard-runs">
+      <div className="dashboard-toolbar">
+        <span className="dashboard-pill">All</span>
+        <span className="dashboard-pill dashboard-pill--ghost">Success</span>
+        <span className="dashboard-pill dashboard-pill--ghost">Failed</span>
+        <span className="dashboard-pill dashboard-pill--ghost">In progress</span>
+        <span className="dashboard-pill">Workflows</span>
+        <span className="dashboard-pill">Last 24h</span>
+        <span className="dashboard-pill">More filters</span>
+        <span className="dashboard-pill dashboard-pill--ghost dashboard-toolbar__search">
+          <span>Name, ID, errors...</span>
+          <span>⌕</span>
+        </span>
+      </div>
+
+      <div className="dashboard-kpis">
+        <div className="dashboard-kpi">
+          <span className="dashboard-kpi__label">Total runs</span>
+          <span className="dashboard-kpi__value">
+            <span>237</span>
+            <span className="dashboard-kpi__divider">|</span>
+            <span className="dashboard-kpi__group">
+              <span className="dashboard-kpi__icon dashboard-kpi__icon--success">✓</span>
+              <span>230</span>
+            </span>
+            <span className="dashboard-kpi__group">
+              <span className="dashboard-kpi__icon dashboard-kpi__icon--running">•</span>
+              <span>2</span>
+            </span>
+            <span className="dashboard-kpi__group">
+              <span className="dashboard-kpi__icon dashboard-kpi__icon--failed">×</span>
+              <span>5</span>
+            </span>
+          </span>
+        </div>
+        <div className="dashboard-kpi">
+          <span className="dashboard-kpi__label">Workflow success</span>
+          <span className="dashboard-kpi__value">
+            <span>98.7%</span>
+            <span className="dashboard-kpi__group">
+              <span className="dashboard-kpi__icon dashboard-kpi__icon--success">↗</span>
+              <span className="dashboard-kpi__delta dashboard-kpi__delta--up">2%</span>
+            </span>
+          </span>
+        </div>
+        <div className="dashboard-kpi">
+          <span className="dashboard-kpi__label">Average lag</span>
+          <span className="dashboard-kpi__value">38s</span>
+        </div>
+        <div className="dashboard-kpi">
+          <span className="dashboard-kpi__label">Avg latency</span>
+          <span className="dashboard-kpi__value">1.8s</span>
+        </div>
+      </div>
+
+      <div className="dashboard-table-shell">
+        <div className="dashboard-table-header">
+          <span className="dashboard-table-header__lead">
+            <span className="dashboard-table-check dashboard-table-check--header" aria-hidden="true" />
+            <span>Run ID</span>
+          </span>
+          <span>Started</span>
+          <span>Workflow</span>
+          <span>Duration</span>
+          <span>Status</span>
+          <span>Error</span>
+          <span>Errors / Retries</span>
+        </div>
+
+        {RUN_ROWS.map((row) => (
+          <div className="dashboard-table-row" key={row.runId}>
+            <span className="dashboard-table-row__lead">
+              <span className="dashboard-table-check" aria-hidden="true" />
+              <span>{row.runId}</span>
+            </span>
+            <span className="dashboard-cell--muted">{row.started}</span>
+            <span className="dashboard-cell--truncate">{row.workflow}</span>
+            <span>{row.duration}</span>
+            <span className={`dashboard-status dashboard-status--${row.status}`}>
+              <span className={`dashboard-status__dot dashboard-status__dot--${row.status}`}>
+                {row.status === 'success' ? '✓' : row.status === 'failed' ? '×' : 'i'}
+              </span>
+              {row.statusLabel}
+            </span>
+            <span className={row.error === 'None' ? 'dashboard-cell--muted' : 'dashboard-cell--truncate'}>
+              {row.error}
+            </span>
+            <span>{row.retries}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ConnectionsScreen() {
+  return (
+    <div className="dashboard-overview__grid">
+      <section className="dashboard-section-card">
+        <div className="dashboard-section-card__header">
+          <span className="dashboard-section-card__eyebrow">Connections</span>
+          <h2>Connection management scaffold</h2>
+          <p>
+            This screen gives us a future home for secure references, adapter capabilities, and
+            environment-specific bindings.
+          </p>
+        </div>
+        <SimpleList
+          items={[
+            'Warehouse and database connections',
+            'Object store and file staging targets',
+            'Notification channel destinations',
+            'Capability and permission summaries'
+          ]}
+        />
+      </section>
+
+      <section className="dashboard-section-card">
+        <div className="dashboard-section-card__header">
+          <span className="dashboard-section-card__eyebrow">Security</span>
+          <h2>Frontend-safe surface</h2>
+          <p>
+            The UI here should only show safe metadata and references. Secrets stay in the backend
+            and never enter browser state.
+          </p>
+        </div>
+        <MetricGrid
+          items={[
+            { label: 'Secrets', value: 'Backend only' },
+            { label: 'Refs', value: 'Visible' },
+            { label: 'Adapters', value: 'Planned' }
+          ]}
+        />
+      </section>
+    </div>
+  );
+}
+
+function SettingsScreen({ activeWorkspace, onSelectViewMode, viewMode }) {
+  return (
+    <div className="dashboard-overview__grid">
+      <section className="dashboard-section-card">
+        <div className="dashboard-section-card__header">
+          <span className="dashboard-section-card__eyebrow">Responsive</span>
+          <h2>Viewport mode</h2>
+          <p>
+            The shell can now switch between desktop and mobile preview modes. This is still a
+            scaffold for the responsive pass, not the final mobile UX.
+          </p>
+        </div>
+        <ViewModeToggle currentMode={viewMode} onSelect={onSelectViewMode} />
+      </section>
+
+      <section className="dashboard-section-card">
+        <div className="dashboard-section-card__header">
+          <span className="dashboard-section-card__eyebrow">Workspace</span>
+          <h2>Current workspace</h2>
+          <p>
+            Workspaces are now persisted in the backend and attached to the authenticated session.
+          </p>
+        </div>
+        <MetricGrid
+          items={[
+            { label: 'Name', value: activeWorkspace.name },
+            { label: 'Slug', value: activeWorkspace.slug },
+            { label: 'Role', value: activeWorkspace.role }
+          ]}
+        />
+      </section>
+    </div>
+  );
+}
+
+function ScreenPanel({ actions = null, children, description, eyebrow, title }) {
+  return (
+    <section className="screen-panel">
+      <div className="screen-panel__header">
+        <p>{eyebrow}</p>
+        <h2>{title}</h2>
+        <span>{description}</span>
+      </div>
+
+      <div className="screen-panel__body">{children}</div>
+
+      {actions ? <div className="screen-panel__actions">{actions}</div> : null}
+    </section>
+  );
+}
+
+function MetricGrid({ items }) {
+  return (
+    <div className="screen-metric-grid">
+      {items.map((item) => (
+        <div key={item.label} className="screen-metric">
+          <span>{item.label}</span>
+          <strong>{item.value}</strong>
         </div>
       ))}
     </div>
   );
 }
 
-function KeyValueRow({ label, value }) {
+function SimpleList({ items }) {
   return (
-    <div className="drawer-kv">
-      <span>{label}</span>
-      <strong>{value}</strong>
+    <ul className="screen-list">
+      {items.map((item) => (
+        <li key={item}>{item}</li>
+      ))}
+    </ul>
+  );
+}
+
+function ViewModeToggle({ currentMode, onSelect }) {
+  return (
+    <div className="view-mode-toggle" role="group" aria-label="Viewport mode">
+      {VIEW_MODES.map((mode) => (
+        <button
+          key={mode.id}
+          className={`view-mode-toggle__button${currentMode === mode.id ? ' is-active' : ''}`}
+          onClick={() => onSelect(mode.id)}
+          type="button"
+        >
+          {mode.label}
+        </button>
+      ))}
     </div>
   );
 }
 
-function EmptyState({ message }) {
-  return <p className="drawer-empty">{message}</p>;
+function DashboardNavIcon({ screenId }) {
+  switch (screenId) {
+    case 'overview':
+      return (
+        <svg viewBox="0 0 18 18" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="4" cy="4" r="2.2" />
+          <circle cx="14" cy="4" r="2.2" />
+          <circle cx="4" cy="14" r="2.2" />
+          <circle cx="14" cy="14" r="2.2" />
+        </svg>
+      );
+    case 'canvas':
+      return (
+        <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="4" cy="4.2" r="2.1" fill="currentColor" />
+          <circle cx="14" cy="13.8" r="2.1" fill="currentColor" />
+          <path d="M6.7 4.2H10.7C12.1 4.2 13.2 5.3 13.2 6.7C13.2 8.1 12.1 9.2 10.7 9.2H7.3C5.9 9.2 4.8 10.3 4.8 11.7C4.8 13.1 5.9 14.2 7.3 14.2H11.3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" fill="none" opacity="0.9" />
+        </svg>
+      );
+    case 'runs':
+      return (
+        <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="4" cy="13.8" r="2.1" fill="currentColor" />
+          <circle cx="14" cy="4.2" r="2.1" fill="currentColor" />
+          <path d="M6.7 13.8H10.7C12.1 13.8 13.2 12.7 13.2 11.3C13.2 9.9 12.1 8.8 10.7 8.8H7.3C5.9 8.8 4.8 7.7 4.8 6.3C4.8 4.9 5.9 3.8 7.3 3.8H11.3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" fill="none" opacity="0.95" />
+        </svg>
+      );
+    case 'connections':
+      return (
+        <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="9" cy="9" r="2.5" fill="currentColor" />
+          <circle cx="9" cy="9" r="6.3" stroke="currentColor" strokeWidth="1.8" strokeDasharray="2.2 2.8" fill="none" opacity="0.72" />
+        </svg>
+      );
+    case 'settings':
+      return (
+        <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="9" cy="9" r="2.2" fill="currentColor" />
+          <path d="M9 3.2V4.9M9 13.1V14.8M14.8 9H13.1M4.9 9H3.2M13.3 4.7L12.1 5.9M5.9 12.1L4.7 13.3M13.3 13.3L12.1 12.1M5.9 5.9L4.7 4.7" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+          <circle cx="9" cy="9" r="5.2" stroke="currentColor" strokeWidth="1.4" fill="none" opacity="0.5" />
+        </svg>
+      );
+    default:
+      return null;
+  }
 }
 
-function CanvasDebugPanel({
-  debugState,
-  onResetSandboxState,
-  onSetConnectionState,
-  onSetRuntimeState,
-  onSetValidationState,
-  onToggleInteractionState,
-  sandboxState
-}) {
-  return (
-    <aside className="canvas-debug-panel" aria-live="polite">
-      <div className="canvas-debug-panel__header">
-        <strong>Canvas Debug</strong>
-        <span>dev only</span>
-      </div>
-
-      <div className="canvas-debug-panel__grid">
-        <DebugValue label="Pointer" value={debugState.pointer ? `${debugState.pointer.x}, ${debugState.pointer.y}` : 'Idle'} />
-        <DebugValue label="Active Sandbox" value={humanizeToken(debugState.sandboxId ?? 'none')} />
-        <DebugValue
-          label="Viewport"
-          value={
-            debugState.viewport
-              ? `${debugState.viewport.width}×${debugState.viewport.height} ${debugState.viewport.breakpoint}`
-              : 'Unknown'
-          }
-        />
-        <DebugValue label="Sandbox :hover" value={debugState.sandboxHoverMatch ? 'yes' : 'no'} />
-        <DebugValue label="Sandbox :focus" value={debugState.sandboxFocusMatch ? 'yes' : 'no'} />
-        <DebugValue label="Sandbox Connection" value={humanizeToken(debugState.sandboxConnectionState ?? 'none')} />
-        <DebugValue label="Sandbox Dragging" value={debugState.sandboxDraggingState ? 'yes' : 'no'} />
-        <DebugValue label="Sandbox Pressed" value={debugState.sandboxPressedState ? 'yes' : 'no'} />
-        <DebugValue label="Sandbox Selected" value={debugState.sandboxSelectedState ? 'yes' : 'no'} />
-        <DebugValue label="Inside Sandbox" value={debugState.pointerInsideSandbox ? 'yes' : 'no'} />
-      </div>
-
-      <section className="canvas-debug-panel__section">
-        <p className="canvas-debug-panel__label">Resolved Sandbox State</p>
-        <div className="canvas-debug-panel__stack">
-          <DebugStateDescriptor
-            label="Interaction"
-            value={formatInteractionState(debugState.sandboxResolvedState?.interaction)}
-          />
-          <DebugStateDescriptor label="Connection" value={humanizeToken(debugState.sandboxResolvedState?.connection ?? 'none')} />
-          <DebugStateDescriptor label="Validation" value={humanizeToken(debugState.sandboxResolvedState?.validation ?? 'valid')} />
-          <DebugStateDescriptor label="Runtime" value={humanizeToken(debugState.sandboxResolvedState?.runtime ?? 'idle')} />
-        </div>
-      </section>
-
-      <section className="canvas-debug-panel__section">
-        <p className="canvas-debug-panel__label">Sandbox Rect</p>
-        <div className="canvas-debug-panel__stack">
-          <DebugRectDescriptor label="Sandbox Rect" rect={debugState.sandboxRect} />
-        </div>
-      </section>
-
-      <section className="canvas-debug-panel__section">
-        <div className="canvas-debug-panel__section-head">
-          <p className="canvas-debug-panel__label">State Controls</p>
-          <button className="canvas-debug-panel__reset" onClick={onResetSandboxState} type="button">
-            Reset
-          </button>
-        </div>
-
-        <div className="canvas-debug-panel__stack">
-          <DebugControlGroup label="Interaction">
-            <DebugToggleButton
-              active={sandboxState.interaction.forceHovered}
-              label="Force Hover"
-              onClick={() => onToggleInteractionState('forceHovered')}
-            />
-            <DebugToggleButton
-              active={sandboxState.interaction.selected}
-              label="Force Selected"
-              onClick={() => onToggleInteractionState('selected')}
-            />
-            <DebugToggleButton
-              active={sandboxState.interaction.dragging}
-              label="Dragging"
-              onClick={() => onToggleInteractionState('dragging')}
-            />
-            <DebugToggleButton
-              active={sandboxState.interaction.forceFocused}
-              label="Force Focus"
-              onClick={() => onToggleInteractionState('forceFocused')}
-            />
-            <DebugToggleButton
-              active={sandboxState.interaction.forcePressed}
-              label="Force Press"
-              onClick={() => onToggleInteractionState('forcePressed')}
-            />
-          </DebugControlGroup>
-
-          <DebugControlGroup label="Connection">
-            {SANDBOX_CONNECTION_STATES.map((value) => (
-              <DebugToggleButton
-                key={value}
-                active={sandboxState.connection === value}
-                label={humanizeToken(value)}
-                onClick={() => onSetConnectionState(value)}
-              />
-            ))}
-          </DebugControlGroup>
-
-          <DebugControlGroup label="Validation">
-            {SANDBOX_VALIDATION_STATES.map((value) => (
-              <DebugToggleButton
-                key={value}
-                active={sandboxState.validation === value}
-                label={humanizeToken(value)}
-                onClick={() => onSetValidationState(value)}
-              />
-            ))}
-          </DebugControlGroup>
-
-          <p className="canvas-debug-panel__empty">
-            Validation and runtime overrides follow the selected sandbox node.
-          </p>
-
-          <DebugControlGroup label="Runtime">
-            {SANDBOX_RUNTIME_STATES.map((value) => (
-              <DebugToggleButton
-                key={value}
-                active={sandboxState.runtime === value}
-                label={humanizeToken(value)}
-                onClick={() => onSetRuntimeState(value)}
-              />
-            ))}
-          </DebugControlGroup>
-        </div>
-      </section>
-
-      <section className="canvas-debug-panel__section">
-        <p className="canvas-debug-panel__label">Top Element</p>
-        {debugState.topElement ? (
-          <DebugElementDescriptor element={debugState.topElement} />
-        ) : (
-          <p className="canvas-debug-panel__empty">Move over the canvas to inspect the live stack.</p>
-        )}
-      </section>
-
-      <section className="canvas-debug-panel__section">
-        <p className="canvas-debug-panel__label">Element Stack</p>
-        {debugState.stack.length ? (
-          <div className="canvas-debug-panel__stack">
-            {debugState.stack.map((element, index) => (
-              <DebugElementDescriptor
-                key={`${element?.tag ?? 'unknown'}-${element?.className ?? 'empty'}-${index}`}
-                element={element}
-                index={index}
-              />
-            ))}
-          </div>
-        ) : (
-          <p className="canvas-debug-panel__empty">No canvas elements under the pointer yet.</p>
-        )}
-      </section>
-
-      <section className="canvas-debug-panel__section">
-        <p className="canvas-debug-panel__label">Possible Blocker</p>
-        {debugState.blockerElement ? (
-          <DebugElementDescriptor element={debugState.blockerElement} />
-        ) : (
-          <p className="canvas-debug-panel__empty">No top-level blocker detected outside the sandbox element.</p>
-        )}
-      </section>
-    </aside>
-  );
-}
-
-function DebugValue({ label, value }) {
-  return (
-    <div className="canvas-debug-panel__kv">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function DebugElementDescriptor({ element, index = null }) {
-  if (!element) {
-    return null;
+function UtilityIcon({ kind }) {
+  if (kind === 'refresh') {
+    return (
+      <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+        <path d="M14.2 9A5.2 5.2 0 1 1 12.7 5.3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" fill="none" />
+        <path d="M10.9 4.1H14.6V7.8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      </svg>
+    );
   }
 
   return (
-    <div className="canvas-debug-panel__item">
-      <div className="canvas-debug-panel__item-head">
-        <strong>
-          {index != null ? `${index}. ` : ''}
-          {element.tag}
-        </strong>
-        <span>{element.pointerEvents}</span>
-      </div>
-      <code>{element.className || '(no classes)'}</code>
-      <span className="canvas-debug-panel__meta">z-index {element.zIndex}</span>
-    </div>
+    <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+      <path d="M6.3 5.2H3.8V14.2H12.8V11.7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <path d="M8.4 9.6L14.6 3.4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M10.7 3.4H14.6V7.3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+    </svg>
   );
 }
 
-function DebugRectDescriptor({ label, meta = null, rect }) {
-  return (
-    <div className="canvas-debug-panel__item">
-      <div className="canvas-debug-panel__item-head">
-        <strong>{label}</strong>
-        <span>{meta?.pointerEvents ?? 'n/a'}</span>
-      </div>
-      {rect ? (
-        <code>{`x:${rect.left} y:${rect.top} w:${rect.width} h:${rect.height} r:${rect.right} b:${rect.bottom}`}</code>
-      ) : (
-        <p className="canvas-debug-panel__empty">No rect available.</p>
-      )}
-      {meta ? <span className="canvas-debug-panel__meta">{meta.className || '(no classes)'}</span> : null}
-    </div>
-  );
+const RUN_ROWS = [
+  {
+    runId: '6734',
+    started: '22 Jun 2025, 11:02:48',
+    workflow: 'Product Catalog Sync',
+    duration: '45.2s',
+    status: 'running',
+    statusLabel: 'Running',
+    error: 'TimeoutError: Supplier API timed out',
+    retries: '0 / 0'
+  },
+  {
+    runId: '6733',
+    started: '22 Jun 2025, 11:05:12',
+    workflow: 'Customer Webhook Listener',
+    duration: '30.1s',
+    status: 'running',
+    statusLabel: 'Running',
+    error: 'None',
+    retries: '0 / 0'
+  },
+  {
+    runId: '6732',
+    started: '22 Jun 2025, 11:07:42',
+    workflow: 'Data Enrichment',
+    duration: '10.4s',
+    status: 'success',
+    statusLabel: 'Success',
+    error: 'None',
+    retries: '0 / 1'
+  },
+  {
+    runId: '6729',
+    started: '22 Jun 2025, 11:15:45',
+    workflow: 'Inventory Level Sync',
+    duration: '8.2s',
+    status: 'failed',
+    statusLabel: 'Failed',
+    error: 'HTTPError 404: Not Found',
+    retries: '2 / 4'
+  },
+  {
+    runId: '6723',
+    started: '22 Jun 2025, 11:32:32',
+    workflow: 'Real-Time Event Stream',
+    duration: '7.6s',
+    status: 'success',
+    statusLabel: 'Success',
+    error: 'None',
+    retries: '0 / 0'
+  }
+];
+
+async function refreshSession(setSessionState) {
+  let session = UNAUTHENTICATED_SESSION;
+
+  try {
+    session = normalizeSession(await getSession());
+  } catch (error) {
+    session = UNAUTHENTICATED_SESSION;
+  }
+
+  setSessionState({ status: 'ready', session });
+  return session;
 }
 
-function DebugStateDescriptor({ label, value }) {
-  return (
-    <div className="canvas-debug-panel__item">
-      <div className="canvas-debug-panel__item-head">
-        <strong>{label}</strong>
-      </div>
-      <code>{value}</code>
-    </div>
-  );
+function normalizeSession(session) {
+  return {
+    authenticated: Boolean(session?.authenticated),
+    active_workspace_id: session?.active_workspace_id ?? null,
+    user: session?.user ?? null,
+    workspaces: Array.isArray(session?.workspaces) ? session.workspaces : []
+  };
 }
 
-function DebugControlGroup({ children, label }) {
-  return (
-    <div className="canvas-debug-panel__item">
-      <div className="canvas-debug-panel__item-head">
-        <strong>{label}</strong>
-      </div>
-      <div className="canvas-debug-panel__controls">{children}</div>
-    </div>
-  );
+function getDefaultAppPath(session) {
+  if (!session?.authenticated) {
+    return '/login';
+  }
+
+  if (!session.workspaces.length) {
+    return '/workspaces/new';
+  }
+
+  const activeWorkspace =
+    session.workspaces.find(
+      (workspace) => workspace.workspace_id === session.active_workspace_id
+    ) ?? session.workspaces[0];
+
+  return `/w/${activeWorkspace.slug}/overview`;
 }
 
-function DebugToggleButton({ active, label, onClick }) {
-  return (
-    <button
-      className={`canvas-debug-panel__toggle${active ? ' is-active' : ''}`}
-      onClick={onClick}
-      type="button"
-    >
-      {label}
-    </button>
-  );
+function readStoredViewMode() {
+  if (typeof window === 'undefined') {
+    return 'desktop';
+  }
+
+  try {
+    const raw = window.localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+    return raw === 'mobile' ? 'mobile' : 'desktop';
+  } catch (error) {
+    return 'desktop';
+  }
 }
 
-function toneFromStatus(status) {
-  if (status === 'connected' || status === 'succeeded' || status === 'valid') {
-    return 'good';
+function readStoredSidebarCollapsed() {
+  if (typeof window === 'undefined') {
+    return false;
   }
 
-  if (status === 'offline' || status === 'failed' || status === 'invalid' || status === 'stream-error') {
-    return 'alert';
-  }
-
-  return 'neutral';
+  const storedValue = window.localStorage.getItem(SIDEBAR_COLLAPSE_STORAGE_KEY);
+  return storedValue ? storedValue === 'true' : false;
 }
 
-function cardEyebrowFor(type) {
-  if (type === 'node-inspector') {
-    return 'Node Inspector';
+function readStoredAttentionCollapsed() {
+  if (typeof window === 'undefined') {
+    return false;
   }
 
-  if (type === 'run-control') {
-    return 'Run Control';
-  }
-
-  if (type === 'run-detail') {
-    return 'Run Detail';
-  }
-
-  if (type === 'problem-detail') {
-    return 'Problem Detail';
-  }
-
-  return 'Context';
-}
-
-function cardTitleFor({ floatingCard, activeProblem, activeRun, selectedNode }) {
-  if (floatingCard.type === 'node-inspector') {
-    return selectedNode?.label ?? selectedNode?.node_id ?? 'Node';
-  }
-
-  if (floatingCard.type === 'run-control') {
-    return 'Validate + Execute';
-  }
-
-  if (floatingCard.type === 'run-detail') {
-    return activeRun?.run_id ?? 'Latest Run';
-  }
-
-  if (floatingCard.type === 'problem-detail') {
-    return humanizeToken(activeProblem?.code);
-  }
-
-  return 'Context';
-}
-
-function cloneSandboxState() {
-  return structuredClone(DEFAULT_SANDBOX_STATE);
-}
-
-function formatInteractionState(interaction) {
-  if (!interaction) {
-    return 'Idle';
-  }
-
-  const activeStates = Object.entries(interaction)
-    .filter(([, enabled]) => enabled)
-    .map(([key]) => humanizeToken(key));
-
-  return activeStates.length ? activeStates.join(', ') : 'Idle';
+  const storedValue = window.localStorage.getItem(ATTENTION_COLLAPSE_STORAGE_KEY);
+  return storedValue ? storedValue === 'true' : false;
 }

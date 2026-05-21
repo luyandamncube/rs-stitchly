@@ -58,6 +58,43 @@ export function createWorkspace(name) {
   });
 }
 
+export function getWorkflows(workspaceId) {
+  return request(`/api/workspaces/${workspaceId}/workflows`);
+}
+
+export function getWorkflow(workspaceId, workflowId) {
+  return request(`/api/workspaces/${workspaceId}/workflows/${workflowId}`);
+}
+
+export function createWorkflow(workspaceId, workflow) {
+  return request(`/api/workspaces/${workspaceId}/workflows`, {
+    body: JSON.stringify({ workflow }),
+    method: 'POST'
+  });
+}
+
+export function updateWorkflow(workspaceId, workflowId, workflow) {
+  return request(`/api/workspaces/${workspaceId}/workflows/${workflowId}`, {
+    body: JSON.stringify({ workflow }),
+    method: 'PUT'
+  });
+}
+
+export function getWorkspaceRuns(workspaceId) {
+  return request(`/api/workspaces/${workspaceId}/runs`);
+}
+
+export function createWorkspaceRun(workspaceId, workflow) {
+  return request(`/api/workspaces/${workspaceId}/runs`, {
+    body: JSON.stringify({
+      workflow,
+      trigger: { kind: 'manual' },
+      params: {}
+    }),
+    method: 'POST'
+  });
+}
+
 export function getNodeDefinitions() {
   return request('/api/node-definitions');
 }

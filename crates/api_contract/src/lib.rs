@@ -284,6 +284,44 @@ pub struct WorkspaceResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct WorkflowSummary {
+    pub workflow_id: String,
+    pub workspace_id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub version: u32,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct WorkflowListResponse {
+    #[serde(default)]
+    pub workflows: Vec<WorkflowSummary>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct WorkflowResponse {
+    pub workflow: WorkflowSummary,
+    pub definition: WorkflowDefinition,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct CreateWorkflowRequest {
+    pub workflow: WorkflowDefinition,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct UpdateWorkflowRequest {
+    pub workflow: WorkflowDefinition,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct WorkspaceRunsResponse {
+    #[serde(default)]
+    pub runs: Vec<RunSnapshot>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ErrorResponse {
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

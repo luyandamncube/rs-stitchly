@@ -1,190 +1,104 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { Background, MiniMap, ReactFlow } from '@xyflow/react';
-
-const DRAG_THRESHOLD_PX = 6;
-const SANDBOX_NODE_DEFS = [
-  {
-    id: 'sandbox_a',
-    icon: '*',
-    label: 'Sandbox A',
-    rows: [
-      { icon: 'o', kind: 'pill', label: 'Surface', value: 'Node shell' },
-      { icon: '·', kind: 'plain', label: 'Scope', value: 'Phase 1A' }
-    ],
-    subtitle: 'Trigger shell',
-    topChip: 'Start',
-    footer: { icon: 'o', label: 'Status', value: 'Ready' },
-    left: 'clamp(24px, 12vw, 220px)',
-    top: 'clamp(132px, 24vh, 180px)'
-  },
-  {
-    id: 'sandbox_b',
-    icon: '<>',
-    label: 'Sandbox B',
-    rows: [
-      { icon: 'o', kind: 'pill', label: 'Surface', value: 'Node shell' },
-      { icon: '·', kind: 'plain', label: 'Scope', value: 'Phase 1A' }
-    ],
-    subtitle: 'Compute shell',
-    topChip: null,
-    footer: { icon: 'o', label: 'Status', value: 'Ready' },
-    left: 'clamp(280px, 48vw, 620px)',
-    top: 'clamp(236px, 42vh, 320px)'
-  }
-];
-const DEFAULT_SANDBOX_BROWSER_STATE = {
-  connection: 'none',
-  dragging: false,
-  focused: false,
-  hovered: false,
-  pressed: false,
-  selected: false
-};
+import { memo, useCallback, useMemo, useRef } from 'react'
+import {
+  applyNodeChanges,
+  Background,
+  Handle,
+  MiniMap,
+  Position,
+  ReactFlow
+} from '@xyflow/react'
+import {
+  canConnect,
+  connectWorkflowNodes,
+  createCanvasElements,
+  syncWorkflowNodes
+} from '../lib/workflow'
 
 const EMPTY_CANVAS_DEBUG_STATE = {
+  activeNodeId: null,
   blockerElement: null,
+  nodeFocusMatch: false,
+  nodeHoverMatch: false,
+  nodeRect: null,
+  nodeSelectedState: false,
   pointer: null,
-  sandboxId: null,
-  sandboxConnectionState: 'none',
-  sandboxDraggingState: false,
-  pointerInsideSandbox: false,
-  sandboxFocusMatch: false,
-  sandboxHoverMatch: false,
-  sandboxPressedState: false,
-  sandboxSelectedState: false,
-  sandboxRect: null,
-  sandboxResolvedState: null,
+  pointerInsideNode: false,
   stack: [],
   topElement: null,
   viewport: null
-};
+}
+
+const NODE_TYPES = {
+  send_email: memo(SendEmailNode),
+  stitchly: memo(StitchlyNode),
+  text_input: memo(TextInputNode)
+}
 
 function WorkflowCanvas({
+  nodeDefinitions = [],
   onDebugStateChange,
-  sandboxResetKey,
-  sandboxState
+  onNodeOpen,
+  onSelectionChange,
+  onWorkflowChange,
+  selectedNodeId = null,
+  workflow
 }) {
-  const [sandboxBrowserState, setSandboxBrowserState] = useState(buildInitialSandboxBrowserState);
-  const [sandboxOffsets, setSandboxOffsets] = useState(buildInitialSandboxOffsets);
-  const debugSignatureRef = useRef('');
-  const lastPointerRef = useRef(null);
-  const interactionModalityRef = useRef('pointer');
-  const dragSessionRef = useRef(null);
-  const connectionSessionRef = useRef(null);
+  const debugSignatureRef = useRef('')
 
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return undefined;
-    }
-
-    function handleWindowKeyDown() {
-      interactionModalityRef.current = 'keyboard';
-    }
-
-    function handleWindowPointerDown() {
-      interactionModalityRef.current = 'pointer';
-    }
-
-    window.addEventListener('keydown', handleWindowKeyDown, true);
-    window.addEventListener('pointerdown', handleWindowPointerDown, true);
-
-    return () => {
-      window.removeEventListener('keydown', handleWindowKeyDown, true);
-      window.removeEventListener('pointerdown', handleWindowPointerDown, true);
-    };
-  }, []);
+  const { edges, nodes } = useMemo(
+    () => createCanvasElements(workflow, nodeDefinitions, selectedNodeId, null),
+    [nodeDefinitions, selectedNodeId, workflow]
+  )
 
   const publishDebugState = useCallback(
     (nextState) => {
       if (!onDebugStateChange) {
-        return;
+        return
       }
 
-      const nextSignature = JSON.stringify(nextState);
+      const nextSignature = JSON.stringify(nextState)
       if (nextSignature === debugSignatureRef.current) {
-        return;
+        return
       }
 
-      debugSignatureRef.current = nextSignature;
-      onDebugStateChange(nextState);
+      debugSignatureRef.current = nextSignature
+      onDebugStateChange(nextState)
     },
     [onDebugStateChange]
-  );
-
-  useEffect(() => {
-    dragSessionRef.current = null;
-    connectionSessionRef.current = null;
-    lastPointerRef.current = null;
-    setSandboxOffsets(buildInitialSandboxOffsets());
-    setSandboxBrowserState(buildInitialSandboxBrowserState());
-    publishDebugState(EMPTY_CANVAS_DEBUG_STATE);
-  }, [publishDebugState, sandboxResetKey]);
-
-  const resolvedSandboxStates = Object.fromEntries(
-    SANDBOX_NODE_DEFS.map((sandboxNode) => {
-      const browserState = sandboxBrowserState[sandboxNode.id] ?? createSandboxBrowserState();
-
-      return [
-        sandboxNode.id,
-        resolveSandboxState(sandboxState, browserState, {
-          applyDataStates: browserState.selected
-        })
-      ];
-    })
-  );
+  )
 
   const inspectCanvas = useCallback(
-    (event, nextBrowserState = sandboxBrowserState) => {
+    (event, preferredNodeId = selectedNodeId) => {
       if (!onDebugStateChange || typeof document === 'undefined') {
-        return;
+        return
       }
 
-      const sandboxElements = Array.from(
-        document.querySelectorAll('.canvas-state-sandbox[data-sandbox-id]')
-      );
-      const eventPointer = pointForEvent(event);
-      const pointer = eventPointer ?? lastPointerRef.current;
-
-      if (eventPointer) {
-        lastPointerRef.current = eventPointer;
-      }
-
-      const stack = pointer ? document.elementsFromPoint(pointer.x, pointer.y).slice(0, 8) : [];
-      const topElement = stack[0] ?? null;
-      const activeSandboxId = findActiveSandboxId(stack, nextBrowserState);
-      const sandboxElement =
-        activeSandboxId != null
-          ? sandboxElements.find((element) => element.dataset.sandboxId === activeSandboxId) ?? null
-          : null;
-      const topElementInsideSandbox =
-        topElement instanceof Element && sandboxElement instanceof Element
-          ? sandboxElement.contains(topElement) || topElement === sandboxElement
-          : false;
-      const sandboxRect = describeRect(sandboxElement?.getBoundingClientRect?.() ?? null);
-      const activeBrowserState =
-        activeSandboxId != null
-          ? nextBrowserState[activeSandboxId] ?? createSandboxBrowserState()
-          : createSandboxBrowserState();
-      const nextResolvedState = resolveSandboxState(sandboxState, activeBrowserState, {
-        applyDataStates: activeBrowserState.selected
-      });
+      const pointer = pointForEvent(event)
+      const stack = pointer ? document.elementsFromPoint(pointer.x, pointer.y).slice(0, 8) : []
+      const topElement = stack[0] ?? null
+      const activeNodeId = findActiveNodeId(stack, preferredNodeId, selectedNodeId)
+      const nodeElement =
+        activeNodeId != null
+          ? document.querySelector(`.react-flow__node[data-id="${activeNodeId}"]`)
+          : null
+      const nodeRect = describeRect(nodeElement?.getBoundingClientRect?.() ?? null)
+      const topElementInsideNode =
+        topElement instanceof Element && nodeElement instanceof Element
+          ? nodeElement.contains(topElement) || topElement === nodeElement
+          : false
 
       publishDebugState({
+        activeNodeId,
         blockerElement:
-          sandboxElement instanceof Element && topElement instanceof Element && !topElementInsideSandbox
+          nodeElement instanceof Element && topElement instanceof Element && !topElementInsideNode
             ? describeCanvasElement(topElement)
             : null,
+        nodeFocusMatch: Boolean(nodeElement?.matches(':focus')),
+        nodeHoverMatch: Boolean(nodeElement?.matches(':hover')),
+        nodeRect,
+        nodeSelectedState: activeNodeId != null && activeNodeId === selectedNodeId,
         pointer: pointer ? { x: Math.round(pointer.x), y: Math.round(pointer.y) } : null,
-        sandboxId: activeSandboxId,
-        sandboxConnectionState: activeBrowserState.connection,
-        sandboxDraggingState: activeBrowserState.dragging,
-        pointerInsideSandbox: pointer ? isPointInsideRect(pointer.x, pointer.y, sandboxRect) : false,
-        sandboxFocusMatch: Boolean(sandboxElement?.matches(':focus')),
-        sandboxHoverMatch: Boolean(sandboxElement?.matches(':hover')),
-        sandboxPressedState: activeBrowserState.pressed,
-        sandboxSelectedState: activeBrowserState.selected,
-        sandboxRect,
-        sandboxResolvedState: nextResolvedState,
+        pointerInsideNode: pointer ? isPointInsideRect(pointer.x, pointer.y, nodeRect) : false,
         stack: stack.map(describeCanvasElement),
         topElement: describeCanvasElement(topElement),
         viewport:
@@ -195,420 +109,96 @@ function WorkflowCanvas({
                 height: Math.round(window.innerHeight),
                 width: Math.round(window.innerWidth)
               }
-      });
+      })
     },
-    [onDebugStateChange, publishDebugState, sandboxBrowserState, sandboxState]
-  );
-
-  const updateBrowserStateAndInspect = useCallback(
-    (event, updater) => {
-      setSandboxBrowserState((current) => {
-        const nextState = updater(current);
-
-        if (event) {
-          inspectCanvas(event, nextState);
-        }
-
-        return nextState;
-      });
-    },
-    [inspectCanvas]
-  );
-
-  const handleCanvasPointerLeave = useCallback(() => {
-    publishDebugState(EMPTY_CANVAS_DEBUG_STATE);
-  }, [publishDebugState]);
+    [onDebugStateChange, publishDebugState, selectedNodeId]
+  )
 
   const handleCanvasPointerMove = useCallback(
     (event) => {
-      inspectCanvas(event, sandboxBrowserState);
+      inspectCanvas(event)
     },
-    [inspectCanvas, sandboxBrowserState]
-  );
+    [inspectCanvas]
+  )
 
-  const handleCanvasPointerDownCapture = useCallback(
+  const handleCanvasPointerLeave = useCallback(() => {
+    publishDebugState(EMPTY_CANVAS_DEBUG_STATE)
+  }, [publishDebugState])
+
+  const handleNodeClick = useCallback(
+    (event, node) => {
+      onSelectionChange?.(node.id)
+      inspectCanvas(event, node.id)
+    },
+    [inspectCanvas, onSelectionChange]
+  )
+
+  const handleNodeDoubleClick = useCallback(
+    (_event, node) => {
+      onNodeOpen?.(node.id)
+    },
+    [onNodeOpen]
+  )
+
+  const handleNodeMouseEnter = useCallback(
+    (event, node) => {
+      inspectCanvas(event, node.id)
+    },
+    [inspectCanvas]
+  )
+
+  const handleNodeMouseLeave = useCallback(
+    (event, node) => {
+      inspectCanvas(event, selectedNodeId)
+    },
+    [inspectCanvas, selectedNodeId]
+  )
+
+  const handlePaneClick = useCallback(
     (event) => {
-      interactionModalityRef.current = 'pointer';
+      onSelectionChange?.(null)
+      inspectCanvas(event, null)
+    },
+    [inspectCanvas, onSelectionChange]
+  )
 
-      if (event.target instanceof Element && event.target.closest('.canvas-state-sandbox')) {
-        return;
+  const handleNodesChange = useCallback(
+    (changes) => {
+      if (!workflow || !onWorkflowChange) {
+        return
       }
 
-      dragSessionRef.current = null;
-      connectionSessionRef.current = null;
-      updateBrowserStateAndInspect(event, () => buildInitialSandboxBrowserState());
-    },
-    [updateBrowserStateAndInspect]
-  );
-
-  const handleSandboxPointerEnter = useCallback(
-    (nodeId, event) => {
-      updateBrowserStateAndInspect(event, (current) => {
-        const nextState = cloneSandboxBrowserStateMap(current);
-        const sourceNodeId = connectionSessionRef.current?.sourceNodeId;
-
-        nextState[nodeId] = {
-          ...nextState[nodeId],
-          hovered: true
-        };
-
-        if (
-          sourceNodeId &&
-          sourceNodeId !== nodeId &&
-          nextState[nodeId].connection === 'none'
-        ) {
-          nextState[sourceNodeId].connection = 'source-active';
-          nextState[nodeId].connection = candidateConnectionStateForTarget(sourceNodeId, nodeId);
-        }
-
-        return nextState;
-      });
-    },
-    [updateBrowserStateAndInspect]
-  );
-
-  const handleSandboxPointerLeave = useCallback(
-    (nodeId, event) => {
-      updateBrowserStateAndInspect(event, (current) => {
-        const nextState = cloneSandboxBrowserStateMap(current);
-        const sourceNodeId = connectionSessionRef.current?.sourceNodeId;
-
-        nextState[nodeId] = {
-          ...nextState[nodeId],
-          hovered: false,
-          pressed: false
-        };
-
-        if (sourceNodeId && nextState[nodeId].connection === 'preview') {
-          nextState[sourceNodeId].connection = 'source-active';
-          nextState[nodeId].connection = 'none';
-        }
-
-        return nextState;
-      });
-    },
-    [updateBrowserStateAndInspect]
-  );
-
-  const handleSandboxPointerDown = useCallback(
-    (nodeId, event) => {
-      const startPointer = pointForEvent(event);
-      const startOffset = sandboxOffsets[nodeId] ?? createSandboxOffset();
-
-      dragSessionRef.current = {
-        nodeId,
-        pointerId: event.pointerId,
-        startOffset,
-        startPointer
-      };
-      connectionSessionRef.current = null;
-
-      if (typeof event.currentTarget.setPointerCapture === 'function') {
-        try {
-          event.currentTarget.setPointerCapture(event.pointerId);
-        } catch {}
+      const positionChanges = changes.filter((change) => change.type === 'position')
+      if (!positionChanges.length) {
+        return
       }
 
-      updateBrowserStateAndInspect(event, (current) => {
-        const nextState = cloneSandboxBrowserStateMap(current);
-
-        for (const sandboxNode of SANDBOX_NODE_DEFS) {
-          if (sandboxNode.id !== nodeId) {
-            nextState[sandboxNode.id].connection = 'none';
-            nextState[sandboxNode.id].dragging = false;
-            nextState[sandboxNode.id].pressed = false;
-            nextState[sandboxNode.id].selected = false;
-          }
-        }
-
-        nextState[nodeId] = {
-          ...nextState[nodeId],
-          connection: 'none',
-          dragging: false,
-          pressed: true,
-          selected: true
-        };
-
-        return nextState;
-      });
+      const nextNodes = applyNodeChanges(positionChanges, nodes)
+      onWorkflowChange(syncWorkflowNodes(workflow, nextNodes))
     },
-    [sandboxOffsets, updateBrowserStateAndInspect]
-  );
+    [nodes, onWorkflowChange, workflow]
+  )
 
-  const handleSandboxPointerUp = useCallback(
-    (nodeId, event) => {
-      if (dragSessionRef.current?.nodeId === nodeId) {
-        dragSessionRef.current = null;
+  const handleConnect = useCallback(
+    (connection) => {
+      if (!workflow || !onWorkflowChange || !canConnect(connection, workflow, nodeDefinitions)) {
+        return
       }
 
-      if (typeof event.currentTarget.releasePointerCapture === 'function') {
-        try {
-          event.currentTarget.releasePointerCapture(event.pointerId);
-        } catch {}
-      }
-
-      updateBrowserStateAndInspect(event, (current) => ({
-        ...current,
-        [nodeId]: {
-          ...(current[nodeId] ?? createSandboxBrowserState()),
-          dragging: false,
-          pressed: false
-        }
-      }));
+      onWorkflowChange(connectWorkflowNodes(workflow, connection))
     },
-    [updateBrowserStateAndInspect]
-  );
-
-  const handleSandboxPointerCancel = useCallback(
-    (nodeId, event) => {
-      if (dragSessionRef.current?.nodeId === nodeId) {
-        dragSessionRef.current = null;
-      }
-
-      if (typeof event.currentTarget.releasePointerCapture === 'function') {
-        try {
-          event.currentTarget.releasePointerCapture(event.pointerId);
-        } catch {}
-      }
-
-      updateBrowserStateAndInspect(event, (current) => ({
-        ...current,
-        [nodeId]: {
-          ...(current[nodeId] ?? createSandboxBrowserState()),
-          dragging: false,
-          pressed: false
-        }
-      }));
-    },
-    [updateBrowserStateAndInspect]
-  );
-
-  const handleSandboxPointerMove = useCallback(
-    (nodeId, event) => {
-      const session = dragSessionRef.current;
-      const currentPointer = pointForEvent(event);
-      const sourceNodeId = connectionSessionRef.current?.sourceNodeId;
-
-      if (
-        sourceNodeId &&
-        sourceNodeId !== nodeId &&
-        !session &&
-        (sandboxBrowserState[nodeId]?.connection ?? 'none') === 'none'
-      ) {
-        updateBrowserStateAndInspect(event, (current) => {
-          const nextState = cloneSandboxBrowserStateMap(current);
-          nextState[sourceNodeId].connection = 'source-active';
-          nextState[nodeId].connection = candidateConnectionStateForTarget(sourceNodeId, nodeId);
-          return nextState;
-        });
-        return;
-      }
-
-      if (
-        !session ||
-        session.nodeId !== nodeId ||
-        !pointerIdsMatch(session.pointerId, event.pointerId) ||
-        !currentPointer
-      ) {
-        return;
-      }
-
-      if (!session.startPointer) {
-        dragSessionRef.current = {
-          ...session,
-          startPointer: currentPointer
-        };
-        return;
-      }
-
-      const dragFrame = buildDragFrame(session, currentPointer, sandboxBrowserState.dragging);
-
-      if (!dragFrame) {
-        return;
-      }
-
-      if (dragFrame.dragging) {
-        setSandboxOffsets((current) => ({
-          ...current,
-          [nodeId]: dragFrame.offset
-        }));
-      }
-
-      updateBrowserStateAndInspect(event, (current) => ({
-        ...current,
-        [nodeId]: {
-          ...(current[nodeId] ?? createSandboxBrowserState()),
-          dragging: dragFrame.dragging,
-          pressed: dragFrame.dragging ? false : true,
-          selected: true
-        }
-      }));
-    },
-    [sandboxBrowserState, updateBrowserStateAndInspect]
-  );
-
-  const handleSandboxFocus = useCallback(
-    (nodeId, event) => {
-      updateBrowserStateAndInspect(event, (current) => ({
-        ...current,
-        [nodeId]: {
-          ...(current[nodeId] ?? createSandboxBrowserState()),
-          focused: interactionModalityRef.current === 'keyboard'
-        }
-      }));
-    },
-    [updateBrowserStateAndInspect]
-  );
-
-  const handleSandboxBlur = useCallback(
-    (nodeId, event) => {
-      updateBrowserStateAndInspect(event, (current) => ({
-        ...current,
-        [nodeId]: {
-          ...(current[nodeId] ?? createSandboxBrowserState()),
-          focused: false,
-          pressed: false
-        }
-      }));
-    },
-    [updateBrowserStateAndInspect]
-  );
-
-  const handleConnectionHandlePointerDown = useCallback(
-    (nodeId, event) => {
-      interactionModalityRef.current = 'pointer';
-      event.preventDefault();
-      event.stopPropagation();
-      dragSessionRef.current = null;
-      connectionSessionRef.current = {
-        pointerId: event.pointerId,
-        sourceNodeId: nodeId
-      };
-      updateBrowserStateAndInspect(event, (current) => {
-        const nextState = cloneSandboxBrowserStateMap(current);
-
-        for (const sandboxNode of SANDBOX_NODE_DEFS) {
-          if (sandboxNode.id !== nodeId) {
-            nextState[sandboxNode.id].connection = 'none';
-            nextState[sandboxNode.id].dragging = false;
-            nextState[sandboxNode.id].pressed = false;
-            nextState[sandboxNode.id].selected = false;
-          }
-        }
-
-        nextState[nodeId] = {
-          ...nextState[nodeId],
-          connection: 'source-active',
-          dragging: false,
-          pressed: false,
-          selected: true
-        };
-
-        return nextState;
-      });
-    },
-    [updateBrowserStateAndInspect]
-  );
-
-  const handleConnectionTargetPointerDown = useCallback((event) => {
-    event.preventDefault();
-    event.stopPropagation();
-  }, []);
-
-  const handleConnectionTargetPointerEnter = useCallback(
-    (nodeId, event) => {
-      setSandboxBrowserState((current) => {
-        const sourceNodeId = connectionSessionRef.current?.sourceNodeId;
-
-        if (!sourceNodeId || sourceNodeId === nodeId) {
-          return current;
-        }
-
-        const nextState = cloneSandboxBrowserStateMap(current);
-        nextState[sourceNodeId].connection = 'source-active';
-        nextState[nodeId].connection = candidateConnectionStateForTarget(sourceNodeId, nodeId, 'handle');
-
-        inspectCanvas(event, nextState);
-        return nextState;
-      });
-    },
-    [inspectCanvas]
-  );
-
-  const handleConnectionTargetPointerLeave = useCallback(
-    (nodeId, event) => {
-      setSandboxBrowserState((current) => {
-        const sourceNodeId = connectionSessionRef.current?.sourceNodeId;
-
-        if (
-          !sourceNodeId ||
-          !['target-valid', 'target-invalid'].includes(current[nodeId]?.connection)
-        ) {
-          return current;
-        }
-
-        const nextState = cloneSandboxBrowserStateMap(current);
-        nextState[sourceNodeId].connection = 'source-active';
-        nextState[nodeId].connection = candidateConnectionStateForTarget(sourceNodeId, nodeId);
-
-        inspectCanvas(event, nextState);
-        return nextState;
-      });
-    },
-    [inspectCanvas]
-  );
-
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return undefined;
-    }
-
-    function handleWindowPointerEnd(event) {
-      setSandboxBrowserState((current) => {
-        const hasConnectionState = SANDBOX_NODE_DEFS.some(
-          (sandboxNode) => current[sandboxNode.id]?.connection !== 'none'
-        );
-
-        if (!hasConnectionState) {
-          return current;
-        }
-
-        connectionSessionRef.current = null;
-        const nextState = cloneSandboxBrowserStateMap(current);
-
-        for (const sandboxNode of SANDBOX_NODE_DEFS) {
-          nextState[sandboxNode.id].connection = 'none';
-        }
-
-        inspectCanvas(event, nextState);
-        return nextState;
-      });
-    }
-
-    window.addEventListener('pointerup', handleWindowPointerEnd, true);
-    window.addEventListener('pointercancel', handleWindowPointerEnd, true);
-
-    return () => {
-      window.removeEventListener('pointerup', handleWindowPointerEnd, true);
-      window.removeEventListener('pointercancel', handleWindowPointerEnd, true);
-    };
-  }, [inspectCanvas]);
+    [nodeDefinitions, onWorkflowChange, workflow]
+  )
 
   return (
     <div
       className="canvas-surface"
-      onPointerDownCapture={handleCanvasPointerDownCapture}
       onPointerLeave={handleCanvasPointerLeave}
       onPointerMove={handleCanvasPointerMove}
     >
       <ReactFlow
         className="workflow-flow"
         colorMode="dark"
-        defaultViewport={{
-          x: 0,
-          y: 0,
-          zoom: 1
-        }}
         defaultEdgeOptions={{
           animated: false,
           pathOptions: {
@@ -621,10 +211,24 @@ function WorkflowCanvas({
           },
           type: 'smoothstep'
         }}
-        edges={[]}
+        defaultViewport={{
+          x: 0,
+          y: 0,
+          zoom: 1
+        }}
+        edges={edges}
+        isValidConnection={(connection) => canConnect(connection, workflow, nodeDefinitions)}
         maxZoom={1}
         minZoom={1}
-        nodes={[]}
+        nodeTypes={NODE_TYPES}
+        nodes={nodes}
+        onConnect={handleConnect}
+        onNodeClick={handleNodeClick}
+        onNodeDoubleClick={handleNodeDoubleClick}
+        onNodeMouseEnter={handleNodeMouseEnter}
+        onNodeMouseLeave={handleNodeMouseLeave}
+        onNodesChange={handleNodesChange}
+        onPaneClick={handlePaneClick}
         panOnDrag={false}
         proOptions={{ hideAttribution: true }}
         zoomOnDoubleClick={false}
@@ -639,212 +243,275 @@ function WorkflowCanvas({
           variant="dots"
         />
       </ReactFlow>
-
-      {SANDBOX_NODE_DEFS.map((sandboxNode) => (
-        <div
-          key={sandboxNode.id}
-          className="canvas-state-sandbox-shell"
-          style={{
-            left: sandboxNode.left,
-            top: sandboxNode.top,
-            transform: `translate3d(${(sandboxOffsets[sandboxNode.id] ?? createSandboxOffset()).x}px, ${(sandboxOffsets[sandboxNode.id] ?? createSandboxOffset()).y}px, 0)`
-          }}
-        >
-          <CanvasStateSandbox
-            footer={sandboxNode.footer}
-            icon={sandboxNode.icon}
-            label={sandboxNode.label}
-            onConnectionHandlePointerDown={(event) =>
-              handleConnectionHandlePointerDown(sandboxNode.id, event)
-            }
-            onConnectionTargetPointerDown={handleConnectionTargetPointerDown}
-            onConnectionTargetPointerEnter={(event) =>
-              handleConnectionTargetPointerEnter(sandboxNode.id, event)
-            }
-            onConnectionTargetPointerLeave={(event) =>
-              handleConnectionTargetPointerLeave(sandboxNode.id, event)
-            }
-            onBlur={(event) => handleSandboxBlur(sandboxNode.id, event)}
-            onFocus={(event) => handleSandboxFocus(sandboxNode.id, event)}
-            onPointerCancel={(event) => handleSandboxPointerCancel(sandboxNode.id, event)}
-            onPointerDown={(event) => handleSandboxPointerDown(sandboxNode.id, event)}
-            onPointerEnter={(event) => handleSandboxPointerEnter(sandboxNode.id, event)}
-            onPointerLeave={(event) => handleSandboxPointerLeave(sandboxNode.id, event)}
-            onPointerMove={(event) => handleSandboxPointerMove(sandboxNode.id, event)}
-            onPointerUp={(event) => handleSandboxPointerUp(sandboxNode.id, event)}
-            resolvedState={resolvedSandboxStates[sandboxNode.id]}
-            rows={sandboxNode.rows}
-            sandboxId={sandboxNode.id}
-            subtitle={sandboxNode.subtitle}
-            topChip={sandboxNode.topChip}
-          />
-        </div>
-      ))}
     </div>
-  );
+  )
 }
 
-export function CanvasStateSandbox({
-  footer = DEFAULT_SANDBOX_FOOTER,
-  icon = '*',
-  label = 'State Sandbox',
-  onConnectionHandlePointerDown,
-  onConnectionTargetPointerDown,
-  onConnectionTargetPointerEnter,
-  onConnectionTargetPointerLeave,
-  onBlur,
-  onFocus,
-  onPointerCancel,
-  onPointerDown,
-  onPointerEnter,
-  onPointerLeave,
-  onPointerMove,
-  onPointerUp,
-  resolvedState,
-  rows = DEFAULT_SANDBOX_ROWS,
-  sandboxId = 'sandbox',
-  subtitle = 'State sandbox',
-  topChip = 'Start'
-}) {
+function TextInputNode({ data, dragging, selected }) {
+  const nodeLabel = data.node?.label ?? data.label ?? 'Text input'
+  const textValue = data.node?.config?.text ?? '--'
+  const charCount = typeof textValue === 'string' ? textValue.length : 0
+
   return (
     <div
-      aria-label={label}
-      className={buildSandboxClassName(resolvedState)}
-      aria-selected={resolvedState.interaction.selected}
-      data-sandbox-id={sandboxId}
-      data-connection-state={resolvedState.connection}
-      data-runtime-state={resolvedState.runtime}
-      data-validation-state={resolvedState.validation}
-      onBlur={onBlur}
-      onFocus={onFocus}
-      onPointerCancel={onPointerCancel}
-      onPointerDown={onPointerDown}
-      onPointerEnter={onPointerEnter}
-      onPointerLeave={onPointerLeave}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      tabIndex={0}
-      title="State sandbox. Use the debug panel to toggle interaction, connection, validation, and runtime states."
+      className={buildTextInputClassName({
+        dragging,
+        hovered: Boolean(data.uiState?.interaction?.hovered),
+        selected
+      })}
+      title="Click to select. Drag to move. Double-click to inspect."
     >
-      <button
-        aria-label={`${label} target handle`}
-        className="canvas-state-sandbox__handle canvas-state-sandbox__handle--target"
-        onPointerDown={onConnectionTargetPointerDown}
-        onPointerEnter={onConnectionTargetPointerEnter}
-        onPointerLeave={onConnectionTargetPointerLeave}
-        tabIndex={-1}
-        type="button"
-      />
-      {topChip ? <span className="canvas-state-sandbox__top-chip">{topChip}</span> : null}
-      <div className="canvas-state-sandbox__frame">
-        <div className="canvas-state-sandbox__header">
-          <div className="canvas-state-sandbox__heading">
-            <span className="canvas-state-sandbox__icon" aria-hidden="true">
-              {icon}
-            </span>
-            <div className="canvas-state-sandbox__heading-copy">
-              <strong className="canvas-state-sandbox__title">{label}</strong>
-              <span className="canvas-state-sandbox__subtitle">{subtitle}</span>
-            </div>
-          </div>
-          <span className="canvas-state-sandbox__menu" aria-hidden="true">
-            ...
+      <header className="workflow-node-card__header">
+        <div className="workflow-node-card__heading">
+          <span className="workflow-node-card__icon" aria-hidden="true">
+            T
           </span>
+          <strong>{nodeLabel}</strong>
+        </div>
+        <span className="workflow-node-card__menu" aria-hidden="true">
+          ...
+        </span>
+      </header>
+
+      <section className="workflow-node-card__body">
+        <div className="workflow-node-card__row workflow-node-card__row--primary">
+          <span className="workflow-node-card__label">Text</span>
+          <strong className="workflow-node-card__value workflow-node-card__value--multiline">
+            {textValue}
+          </strong>
+        </div>
+      </section>
+
+      <footer className="workflow-node-card__footer">
+        <span className="workflow-node-card__footer-meta">
+          <span className="workflow-node-card__footer-icon" aria-hidden="true">
+            #
+          </span>
+          <span>Length</span>
+        </span>
+        <strong>{charCount} chars</strong>
+      </footer>
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="text"
+        position={Position.Right}
+        type="source"
+      />
+    </div>
+  )
+}
+
+function SendEmailNode({ data, dragging, selected }) {
+  const nodeLabel = data.node?.label ?? data.label ?? 'Send Email'
+  const recipient = data.node?.config?.to ?? '--'
+  const subject = data.node?.config?.subject ?? '--'
+
+  return (
+    <div
+      className={buildWorkflowNodeCardClassName('workflow-node-card--output-result', {
+        dragging,
+        hovered: Boolean(data.uiState?.interaction?.hovered),
+        selected
+      })}
+      title="Click to select. Drag to move. Double-click to inspect."
+    >
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="body"
+        position={Position.Left}
+        type="target"
+      />
+
+      <span className="workflow-node-card__top-chip">Notify</span>
+
+      <header className="workflow-node-card__header">
+        <div className="workflow-node-card__heading">
+          <span className="workflow-node-card__icon" aria-hidden="true">
+            @
+          </span>
+          <strong>{nodeLabel}</strong>
+        </div>
+        <span className="workflow-node-card__menu" aria-hidden="true">
+          ...
+        </span>
+      </header>
+
+      <section className="workflow-node-card__body">
+        <div className="workflow-node-card__row workflow-node-card__row--kv">
+          <span className="workflow-node-card__label">
+            <span className="workflow-node-card__label-icon" aria-hidden="true">
+              T
+            </span>
+            <span>To</span>
+          </span>
+          <strong className="workflow-node-card__value">{recipient}</strong>
         </div>
 
-        <div className="canvas-state-sandbox__body">
-          {rows.map((row) => (
-            <div
-              key={row.label}
-              className={`canvas-state-sandbox__row canvas-state-sandbox__row--${row.kind ?? 'plain'}`}
-            >
-              <span className="canvas-state-sandbox__row-label">
-                {row.icon ? (
-                  <span className="canvas-state-sandbox__row-icon" aria-hidden="true">
-                    {row.icon}
+        <div className="workflow-node-card__row workflow-node-card__row--primary">
+          <span className="workflow-node-card__label">Subject</span>
+          <strong className="workflow-node-card__value workflow-node-card__value--truncate">
+            {subject}
+          </strong>
+        </div>
+      </section>
+
+      <footer className="workflow-node-card__footer">
+        <span className="workflow-node-card__footer-meta">
+          <span className="workflow-node-card__footer-icon" aria-hidden="true">
+            S
+          </span>
+          <span>Last send</span>
+        </span>
+        <strong>Idle</strong>
+      </footer>
+    </div>
+  )
+}
+
+function StitchlyNode({ data, dragging, selected }) {
+  const card = data.card
+  const hovered = Boolean(data.uiState?.interaction?.hovered)
+
+  return (
+    <div
+      className={buildSchemaNodeClassName(card?.variant, {
+        dragging,
+        hovered,
+        selected
+      })}
+      title="Click to select. Drag to move. Double-click to inspect."
+    >
+      {card?.handles?.inputs?.map((handle) => (
+        <Handle
+          key={`input-${handle.id}`}
+          className="schema-node__handle"
+          id={handle.id}
+          position={Position.Left}
+          style={{ top: handle.top }}
+          type="target"
+        />
+      ))}
+
+      {card?.topChip ? <span className="schema-node__top-chip">{card.topChip}</span> : null}
+
+      <div className="schema-node__header">
+        <div className="schema-node__heading">
+          <span className="schema-node__icon" aria-hidden="true">
+            {card?.iconLabel ?? 'N'}
+          </span>
+          <strong>{card?.title ?? data.label}</strong>
+        </div>
+
+        <div className="schema-node__header-tools">
+          {card?.showOverflowMenu ? (
+            <span className="schema-node__menu" aria-hidden="true">
+              ...
+            </span>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="schema-node__body">
+        {(card?.rows ?? []).map((row) =>
+          row.kind === 'text_block' ? (
+            <div key={row.id} className="schema-node__row schema-node__row--stacked">
+              <div className="schema-node__row-meta">
+                <span>{row.label}</span>
+              </div>
+              <strong className={row.truncate ? 'is-truncated' : ''}>{row.value}</strong>
+            </div>
+          ) : (
+            <div key={row.id} className="schema-node__row schema-node__row--kv">
+              <div className="schema-node__row-meta">
+                {row.iconLabel ? (
+                  <span className="schema-node__row-icon" aria-hidden="true">
+                    {row.iconLabel}
                   </span>
                 ) : null}
                 <span>{row.label}</span>
-              </span>
-              <strong className="canvas-state-sandbox__row-value">{row.value}</strong>
+              </div>
+              <strong className={row.truncate ? 'is-truncated' : ''}>{row.value}</strong>
             </div>
-          ))}
-        </div>
+          )
+        )}
+      </div>
 
-        <div className="canvas-state-sandbox__footer">
-          <span className="canvas-state-sandbox__footer-label">
-            {footer.icon ? (
-              <span className="canvas-state-sandbox__footer-icon" aria-hidden="true">
-                {footer.icon}
+      {card?.footer ? (
+        <div className="schema-node__footer">
+          <div className="schema-node__footer-meta">
+            {card.footer.iconLabel ? (
+              <span className="schema-node__footer-icon" aria-hidden="true">
+                {card.footer.iconLabel}
               </span>
             ) : null}
-            <span>{footer.label}</span>
-          </span>
-          <strong className="canvas-state-sandbox__footer-value">{footer.value}</strong>
+            <span>{card.footer.label}</span>
+          </div>
+          <strong>{card.footer.value}</strong>
         </div>
-      </div>
-      <button
-        aria-label={`${label} source handle`}
-        className="canvas-state-sandbox__handle canvas-state-sandbox__handle--source"
-        onPointerDown={onConnectionHandlePointerDown}
-        tabIndex={-1}
-        type="button"
-      />
+      ) : null}
+
+      {card?.handles?.outputs?.map((handle) => (
+        <Handle
+          key={`output-${handle.id}`}
+          className="schema-node__handle"
+          id={handle.id}
+          position={Position.Right}
+          style={{ top: handle.top }}
+          type="source"
+        />
+      ))}
     </div>
-  );
+  )
 }
 
-const DEFAULT_SANDBOX_ROWS = [
-  { icon: 'o', kind: 'pill', label: 'Surface', value: 'Node shell' },
-  { icon: '·', kind: 'plain', label: 'Scope', value: 'Sandbox' }
-];
+function buildSchemaNodeClassName(variant = 'node', { dragging, hovered, selected }) {
+  const classes = ['schema-node', `schema-node--${variant}`]
 
-const DEFAULT_SANDBOX_FOOTER = { icon: 'o', label: 'Status', value: 'Ready' };
-
-export function buildSandboxClassName(resolvedState) {
-  const classes = ['canvas-state-sandbox'];
-
-  if (resolvedState.interaction.hovered) {
-    classes.push('is-hovered');
+  if (hovered) {
+    classes.push('is-hovered')
   }
 
-  if (resolvedState.interaction.selected) {
-    classes.push('is-selected');
+  if (selected) {
+    classes.push('selected')
   }
 
-  if (resolvedState.interaction.dragging) {
-    classes.push('is-dragging');
+  if (dragging) {
+    classes.push('is-dragging')
   }
 
-  if (resolvedState.interaction.focused) {
-    classes.push('is-focused');
-  }
-
-  if (resolvedState.interaction.pressed) {
-    classes.push('is-pressed');
-  }
-
-  return classes.join(' ');
+  return classes.join(' ')
 }
 
-function resolveSandboxState(sandboxState, browserState, { applyDataStates = false } = {}) {
-  return {
-    connection: sandboxState.connection !== 'none' ? sandboxState.connection : browserState.connection,
-    interaction: {
-      dragging: sandboxState.interaction.dragging || browserState.dragging,
-      focused: sandboxState.interaction.forceFocused || browserState.focused,
-      hovered: sandboxState.interaction.forceHovered || browserState.hovered,
-      pressed: sandboxState.interaction.forcePressed || browserState.pressed,
-      selected: sandboxState.interaction.selected || browserState.selected
-    },
-    runtime: applyDataStates ? sandboxState.runtime : 'idle',
-    validation: applyDataStates ? sandboxState.validation : 'valid'
-  };
+function buildTextInputClassName({ dragging, hovered, selected }) {
+  return buildWorkflowNodeCardClassName('workflow-node-card--input-literal', {
+    dragging,
+    hovered,
+    selected
+  })
+}
+
+function buildWorkflowNodeCardClassName(variantClassName, { dragging, hovered, selected }) {
+  const classes = ['workflow-node-card', variantClassName]
+
+  if (hovered) {
+    classes.push('is-hovered')
+  }
+
+  if (selected) {
+    classes.push('is-selected')
+  }
+
+  if (dragging) {
+    classes.push('is-dragging')
+  }
+
+  return classes.join(' ')
 }
 
 function describeCanvasElement(element) {
   if (!(element instanceof Element)) {
-    return null;
+    return null
   }
 
   return {
@@ -855,12 +522,12 @@ function describeCanvasElement(element) {
     pointerEvents: getComputedStyle(element).pointerEvents,
     tag: element.tagName.toLowerCase(),
     zIndex: getComputedStyle(element).zIndex
-  };
+  }
 }
 
 function describeRect(rect) {
   if (!rect) {
-    return null;
+    return null
   }
 
   return {
@@ -870,161 +537,62 @@ function describeRect(rect) {
     right: Math.round(rect.right),
     top: Math.round(rect.top),
     width: Math.round(rect.width)
-  };
+  }
+}
+
+function findActiveNodeId(stack, preferredNodeId, selectedNodeId) {
+  for (const element of stack) {
+    if (!(element instanceof Element)) {
+      continue
+    }
+
+    const nodeElement = element.closest('.react-flow__node[data-id]')
+
+    if (nodeElement instanceof HTMLElement) {
+      return nodeElement.dataset.id ?? null
+    }
+  }
+
+  return preferredNodeId ?? selectedNodeId ?? null
 }
 
 function isPointInsideRect(x, y, rect) {
   if (!rect) {
-    return false;
+    return false
   }
 
-  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
 }
 
 function pointForEvent(event) {
   if (!event) {
-    return null;
+    return null
   }
 
-  const x = Number(event.clientX);
-  const y = Number(event.clientY);
+  const x = Number(event.clientX)
+  const y = Number(event.clientY)
 
   if (!Number.isFinite(x) || !Number.isFinite(y)) {
-    return null;
+    return null
   }
 
-  return { x, y };
-}
-
-function buildInitialSandboxBrowserState() {
-  return Object.fromEntries(
-    SANDBOX_NODE_DEFS.map((sandboxNode) => [sandboxNode.id, createSandboxBrowserState()])
-  );
-}
-
-function buildInitialSandboxOffsets() {
-  return Object.fromEntries(
-    SANDBOX_NODE_DEFS.map((sandboxNode) => [sandboxNode.id, createSandboxOffset()])
-  );
-}
-
-function cloneSandboxBrowserStateMap(current) {
-  return Object.fromEntries(
-    SANDBOX_NODE_DEFS.map((sandboxNode) => [
-      sandboxNode.id,
-      {
-        ...(current[sandboxNode.id] ?? createSandboxBrowserState())
-      }
-    ])
-  );
-}
-
-function createSandboxBrowserState() {
-  return {
-    ...DEFAULT_SANDBOX_BROWSER_STATE
-  };
-}
-
-function createSandboxOffset() {
-  return {
-    x: 0,
-    y: 0
-  };
-}
-
-function findActiveSandboxId(stack, browserStateMap) {
-  for (const element of stack) {
-    if (!(element instanceof Element)) {
-      continue;
-    }
-
-    const sandboxElement = element.closest('.canvas-state-sandbox[data-sandbox-id]');
-
-    if (sandboxElement instanceof HTMLElement) {
-      return sandboxElement.dataset.sandboxId ?? null;
-    }
-  }
-
-  for (const sandboxNode of SANDBOX_NODE_DEFS) {
-    if (browserStateMap[sandboxNode.id]?.hovered) {
-      return sandboxNode.id;
-    }
-  }
-
-  for (const sandboxNode of SANDBOX_NODE_DEFS) {
-    if (browserStateMap[sandboxNode.id]?.selected) {
-      return sandboxNode.id;
-    }
-  }
-
-  return SANDBOX_NODE_DEFS[0]?.id ?? null;
-}
-
-function isSandboxConnectionValid(sourceNodeId, targetNodeId) {
-  return sourceNodeId === 'sandbox_a' && targetNodeId === 'sandbox_b';
-}
-
-export function candidateConnectionStateForTarget(sourceNodeId, targetNodeId, targetPhase = 'node') {
-  if (!sourceNodeId || sourceNodeId === targetNodeId) {
-    return 'none';
-  }
-
-  if (targetPhase !== 'handle') {
-    return 'preview';
-  }
-
-  return isSandboxConnectionValid(sourceNodeId, targetNodeId)
-    ? 'target-valid'
-    : 'target-invalid';
-}
-
-export function buildDragFrame(session, currentPointer, wasDragging = false) {
-  if (!session?.startPointer || !session?.startOffset || !currentPointer) {
-    return null;
-  }
-
-  const deltaX = currentPointer.x - session.startPointer.x;
-  const deltaY = currentPointer.y - session.startPointer.y;
-  const dragging = wasDragging || Math.hypot(deltaX, deltaY) >= DRAG_THRESHOLD_PX;
-
-  return {
-    deltaX,
-    deltaY,
-    dragging,
-    offset: dragging
-      ? {
-          x: session.startOffset.x + deltaX,
-          y: session.startOffset.y + deltaY
-        }
-      : session.startOffset
-  };
-}
-
-function pointerIdsMatch(sessionPointerId, eventPointerId) {
-  const sessionId = Number(sessionPointerId);
-  const eventId = Number(eventPointerId);
-
-  if (!Number.isFinite(sessionId) || !Number.isFinite(eventId)) {
-    return true;
-  }
-
-  return sessionId === eventId;
+  return { x, y }
 }
 
 function breakpointForWidth(width) {
   if (width <= 720) {
-    return '<=720';
+    return '<=720'
   }
 
   if (width <= 920) {
-    return '<=920';
+    return '<=920'
   }
 
   if (width <= 1180) {
-    return '<=1180';
+    return '<=1180'
   }
 
-  return '>1180';
+  return '>1180'
 }
 
-export default memo(WorkflowCanvas);
+export default memo(WorkflowCanvas)

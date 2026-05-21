@@ -1,9 +1,11 @@
 use std::convert::Infallible;
 
 use api_contract::{
-    AuthSessionResponse, ConnectionsResponse, CreateRunRequest, CreateWorkspaceRequest,
-    ErrorResponse, LoginRequest, NodeDefinitionsResponse, RunSnapshot, ValidateWorkflowRequest,
-    ValidateWorkflowResponse, WorkspaceListResponse, WorkspaceResponse,
+    AuthSessionResponse, ConnectionsResponse, CreateRunRequest, CreateWorkflowRequest,
+    CreateWorkspaceRequest, ErrorResponse, LoginRequest, NodeDefinitionsResponse, RunSnapshot,
+    UpdateWorkflowRequest, ValidateWorkflowRequest, ValidateWorkflowResponse,
+    WorkflowListResponse, WorkflowResponse, WorkspaceListResponse, WorkspaceResponse,
+    WorkspaceRunsResponse,
 };
 use axum::{
     extract::{Path, State},
@@ -35,6 +37,18 @@ pub fn app(runtime: RuntimeService, platform: PlatformStore) -> Router {
         .route("/api/auth/session", get(get_session))
         .route("/api/workspaces", get(list_workspaces).post(create_workspace))
         .route("/api/workspaces/:workspace_id", get(get_workspace))
+        .route(
+            "/api/workspaces/:workspace_id/workflows",
+            get(list_workflows).post(create_workflow),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/workflows/:workflow_id",
+            get(get_workflow).put(update_workflow),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/runs",
+            get(list_workspace_runs).post(create_workspace_run),
+        )
         .route("/api/workflows/validate", post(validate_workflow))
         .route("/api/runs", post(create_run))
         .route("/api/runs/:run_id", get(get_run))
@@ -124,6 +138,133 @@ async fn get_workspace(
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found(format!("Workspace `{workspace_id}` was not found.")))?;
     Ok(Json(WorkspaceResponse { workspace }))
+}
+
+async fn list_workflows(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<String>,
+) -> Result<Json<WorkflowListResponse>, ApiError> {
+    let session = require_session(&state, &headers)?;
+    let workflows = state
+        .platform
+        .list_workflows(&session.user_id, &workspace_id)
+        .map_err(map_workflow_persistence_error)?;
+    Ok(Json(workflows))
+}
+
+async fn create_workflow(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<String>,
+    Json(request): Json<CreateWorkflowRequest>,
+) -> Result<(StatusCode, Json<WorkflowResponse>), ApiError> {
+    let session = require_session(&state, &headers)?;
+    let workflow = state
+        .platform
+        .create_workflow(&session.user_id, &workspace_id, &request.workflow)
+        .map_err(map_workflow_persistence_error)?;
+    Ok((StatusCode::CREATED, Json(workflow)))
+}
+
+async fn get_workflow(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((workspace_id, workflow_id)): Path<(String, String)>,
+) -> Result<Json<WorkflowResponse>, ApiError> {
+    let session = require_session(&state, &headers)?;
+    let workflow = state
+        .platform
+        .get_workflow(&session.user_id, &workspace_id, &workflow_id)
+        .map_err(map_workflow_persistence_error)?
+        .ok_or_else(|| {
+            ApiError::not_found(format!(
+                "Workflow `{workflow_id}` was not found in workspace `{workspace_id}`."
+            ))
+        })?;
+    Ok(Json(workflow))
+}
+
+async fn update_workflow(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((workspace_id, workflow_id)): Path<(String, String)>,
+    Json(request): Json<UpdateWorkflowRequest>,
+) -> Result<Json<WorkflowResponse>, ApiError> {
+    let session = require_session(&state, &headers)?;
+    let workflow = state
+        .platform
+        .update_workflow(&session.user_id, &workspace_id, &workflow_id, &request.workflow)
+        .map_err(map_workflow_persistence_error)?
+        .ok_or_else(|| {
+            ApiError::not_found(format!(
+                "Workflow `{workflow_id}` was not found in workspace `{workspace_id}`."
+            ))
+        })?;
+    Ok(Json(workflow))
+}
+
+async fn list_workspace_runs(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<String>,
+) -> Result<Json<WorkspaceRunsResponse>, ApiError> {
+    let session = require_session(&state, &headers)?;
+    let stored_runs = state
+        .platform
+        .list_workspace_run_records(&session.user_id, &workspace_id)
+        .map_err(ApiError::internal)?;
+
+    let mut runs = Vec::with_capacity(stored_runs.len());
+    for stored in stored_runs {
+        if let Some(snapshot) = state.runtime.get_run(&stored.run_id).await {
+            state
+                .platform
+                .save_run_snapshot(&session.user_id, &workspace_id, &snapshot)
+                .map_err(ApiError::internal)?;
+            runs.push(snapshot);
+        } else {
+            let snapshot: RunSnapshot = serde_json::from_str(&stored.snapshot_json)
+                .map_err(ApiError::internal)?;
+            runs.push(snapshot);
+        }
+    }
+
+    Ok(Json(WorkspaceRunsResponse { runs }))
+}
+
+async fn create_workspace_run(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<String>,
+    Json(request): Json<CreateRunRequest>,
+) -> Result<(StatusCode, Json<api_contract::CreateRunResponse>), ApiError> {
+    let session = require_session(&state, &headers)?;
+    state
+        .platform
+        .get_workflow(&session.user_id, &workspace_id, &request.workflow.workflow_id)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| {
+            ApiError::not_found(format!(
+                "Workflow `{}` was not found in workspace `{workspace_id}`.",
+                request.workflow.workflow_id
+            ))
+        })?;
+
+    let response = state
+        .runtime
+        .create_run(request)
+        .await
+        .map_err(ApiError::from)?;
+
+    if let Some(snapshot) = state.runtime.get_run(&response.run_id).await {
+        state
+            .platform
+            .save_run_snapshot(&session.user_id, &workspace_id, &snapshot)
+            .map_err(ApiError::internal)?;
+    }
+
+    Ok((StatusCode::ACCEPTED, Json(response)))
 }
 
 async fn validate_workflow(
@@ -276,6 +417,14 @@ impl ApiError {
         }
     }
 
+    fn conflict(message: String) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
+            message,
+            validation: None,
+        }
+    }
+
     fn unauthorized(message: String) -> Self {
         Self {
             status: StatusCode::UNAUTHORIZED,
@@ -325,6 +474,19 @@ fn map_workspace_create_error(error: anyhow::Error) -> ApiError {
     let message = error.to_string();
     if message.contains("cannot be empty") {
         ApiError::bad_request(message)
+    } else {
+        ApiError::internal(error)
+    }
+}
+
+fn map_workflow_persistence_error(error: anyhow::Error) -> ApiError {
+    let message = error.to_string();
+    if message.contains("cannot be empty") {
+        ApiError::bad_request(message)
+    } else if message.contains("already exists") {
+        ApiError::conflict(message)
+    } else if message.contains("was not found") {
+        ApiError::not_found(message)
     } else {
         ApiError::internal(error)
     }
@@ -527,5 +689,323 @@ mod tests {
         assert!(session.authenticated);
         assert_eq!(session.workspaces.len(), 1);
         assert_eq!(session.active_workspace_id, Some(workspace.workspace.workspace_id));
+    }
+
+    #[tokio::test]
+    async fn workspace_workflow_round_trip_supports_create_get_and_update() {
+        let router = app(
+            runtime_core::RuntimeService::default(),
+            PlatformStore::for_tests().expect("platform store"),
+        );
+
+        let login_request = Request::builder()
+            .method("POST")
+            .uri("/api/auth/login")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&json!({
+                    "email": "builder@stitchly.dev",
+                    "password": "stitchly"
+                }))
+                .expect("login request body"),
+            ))
+            .expect("request builds");
+        let login_response = router
+            .clone()
+            .oneshot(login_request)
+            .await
+            .expect("login response");
+        let cookie = login_response
+            .headers()
+            .get("set-cookie")
+            .expect("set-cookie header")
+            .to_str()
+            .expect("header utf8")
+            .split(';')
+            .next()
+            .expect("cookie pair")
+            .to_string();
+
+        let create_workspace_request = Request::builder()
+            .method("POST")
+            .uri("/api/workspaces")
+            .header("content-type", "application/json")
+            .header("cookie", &cookie)
+            .body(Body::from(
+                serde_json::to_vec(&json!({ "name": "Canvas Ops" }))
+                    .expect("workspace body"),
+            ))
+            .expect("request builds");
+        let create_workspace_response = router
+            .clone()
+            .oneshot(create_workspace_request)
+            .await
+            .expect("workspace response");
+        let workspace_payload = create_workspace_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let workspace: api_contract::WorkspaceResponse =
+            serde_json::from_slice(&workspace_payload).expect("workspace payload");
+
+        let mut workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+        workflow.name = "Persisted Canvas Flow".to_string();
+
+        let create_workflow_request = Request::builder()
+            .method("POST")
+            .uri(format!(
+                "/api/workspaces/{}/workflows",
+                workspace.workspace.workspace_id
+            ))
+            .header("content-type", "application/json")
+            .header("cookie", &cookie)
+            .body(Body::from(
+                serde_json::to_vec(&json!({ "workflow": workflow })).expect("workflow body"),
+            ))
+            .expect("request builds");
+        let create_workflow_response = router
+            .clone()
+            .oneshot(create_workflow_request)
+            .await
+            .expect("workflow response");
+        assert_eq!(create_workflow_response.status(), StatusCode::CREATED);
+
+        let create_workflow_body = create_workflow_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let created: api_contract::WorkflowResponse =
+            serde_json::from_slice(&create_workflow_body).expect("workflow payload");
+        assert_eq!(created.workflow.version, 1);
+        assert_eq!(created.definition.name, "Persisted Canvas Flow");
+
+        let get_workflow_request = Request::builder()
+            .method("GET")
+            .uri(format!(
+                "/api/workspaces/{}/workflows/{}",
+                workspace.workspace.workspace_id, created.workflow.workflow_id
+            ))
+            .header("cookie", &cookie)
+            .body(Body::empty())
+            .expect("request builds");
+        let get_workflow_response = router
+            .clone()
+            .oneshot(get_workflow_request)
+            .await
+            .expect("get workflow response");
+        assert_eq!(get_workflow_response.status(), StatusCode::OK);
+
+        let list_workflows_request = Request::builder()
+            .method("GET")
+            .uri(format!(
+                "/api/workspaces/{}/workflows",
+                workspace.workspace.workspace_id
+            ))
+            .header("cookie", &cookie)
+            .body(Body::empty())
+            .expect("request builds");
+        let list_workflows_response = router
+            .clone()
+            .oneshot(list_workflows_request)
+            .await
+            .expect("list workflows response");
+        let list_workflows_body = list_workflows_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let listed: api_contract::WorkflowListResponse =
+            serde_json::from_slice(&list_workflows_body).expect("workflow list payload");
+        assert_eq!(listed.workflows.len(), 1);
+
+        let mut updated_workflow = created.definition.clone();
+        updated_workflow.name = "Persisted Canvas Flow v2".to_string();
+        updated_workflow.description = Some("Updated in round-trip test.".to_string());
+
+        let update_workflow_request = Request::builder()
+            .method("PUT")
+            .uri(format!(
+                "/api/workspaces/{}/workflows/{}",
+                workspace.workspace.workspace_id, created.workflow.workflow_id
+            ))
+            .header("content-type", "application/json")
+            .header("cookie", &cookie)
+            .body(Body::from(
+                serde_json::to_vec(&json!({ "workflow": updated_workflow }))
+                    .expect("workflow body"),
+            ))
+            .expect("request builds");
+        let update_workflow_response = router
+            .oneshot(update_workflow_request)
+            .await
+            .expect("update workflow response");
+        assert_eq!(update_workflow_response.status(), StatusCode::OK);
+
+        let update_workflow_body = update_workflow_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let updated: api_contract::WorkflowResponse =
+            serde_json::from_slice(&update_workflow_body).expect("updated workflow payload");
+        assert_eq!(updated.workflow.version, 2);
+        assert_eq!(updated.definition.version, 2);
+        assert_eq!(updated.definition.name, "Persisted Canvas Flow v2");
+        assert_eq!(
+            updated.definition.description.as_deref(),
+            Some("Updated in round-trip test.")
+        );
+    }
+
+    #[tokio::test]
+    async fn workspace_run_route_creates_and_lists_runs_for_the_workspace() {
+        let router = app(
+            runtime_core::RuntimeService::default(),
+            PlatformStore::for_tests().expect("platform store"),
+        );
+
+        let login_request = Request::builder()
+            .method("POST")
+            .uri("/api/auth/login")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&json!({
+                    "email": "builder@stitchly.dev",
+                    "password": "stitchly"
+                }))
+                .expect("login request body"),
+            ))
+            .expect("request builds");
+        let login_response = router
+            .clone()
+            .oneshot(login_request)
+            .await
+            .expect("login response");
+        let cookie = login_response
+            .headers()
+            .get("set-cookie")
+            .expect("set-cookie header")
+            .to_str()
+            .expect("header utf8")
+            .split(';')
+            .next()
+            .expect("cookie pair")
+            .to_string();
+
+        let create_workspace_request = Request::builder()
+            .method("POST")
+            .uri("/api/workspaces")
+            .header("content-type", "application/json")
+            .header("cookie", &cookie)
+            .body(Body::from(
+                serde_json::to_vec(&json!({ "name": "Run Ops" }))
+                    .expect("workspace body"),
+            ))
+            .expect("request builds");
+        let create_workspace_response = router
+            .clone()
+            .oneshot(create_workspace_request)
+            .await
+            .expect("workspace response");
+        let workspace_payload = create_workspace_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let workspace: api_contract::WorkspaceResponse =
+            serde_json::from_slice(&workspace_payload).expect("workspace payload");
+
+        let workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+        let create_workflow_request = Request::builder()
+            .method("POST")
+            .uri(format!(
+                "/api/workspaces/{}/workflows",
+                workspace.workspace.workspace_id
+            ))
+            .header("content-type", "application/json")
+            .header("cookie", &cookie)
+            .body(Body::from(
+                serde_json::to_vec(&json!({ "workflow": workflow })).expect("workflow body"),
+            ))
+            .expect("request builds");
+        let create_workflow_response = router
+            .clone()
+            .oneshot(create_workflow_request)
+            .await
+            .expect("workflow response");
+        let workflow_payload = create_workflow_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let persisted_workflow: api_contract::WorkflowResponse =
+            serde_json::from_slice(&workflow_payload).expect("workflow payload");
+
+        let create_run_request = Request::builder()
+            .method("POST")
+            .uri(format!(
+                "/api/workspaces/{}/runs",
+                workspace.workspace.workspace_id
+            ))
+            .header("content-type", "application/json")
+            .header("cookie", &cookie)
+            .body(Body::from(
+                serde_json::to_vec(&json!({
+                    "workflow": persisted_workflow.definition,
+                    "trigger": { "kind": "manual" },
+                    "params": {}
+                }))
+                .expect("run body"),
+            ))
+            .expect("request builds");
+        let create_run_response = router
+            .clone()
+            .oneshot(create_run_request)
+            .await
+            .expect("run response");
+        assert_eq!(create_run_response.status(), StatusCode::ACCEPTED);
+
+        let list_runs_request = Request::builder()
+            .method("GET")
+            .uri(format!(
+                "/api/workspaces/{}/runs",
+                workspace.workspace.workspace_id
+            ))
+            .header("cookie", &cookie)
+            .body(Body::empty())
+            .expect("request builds");
+        let list_runs_response = router
+            .oneshot(list_runs_request)
+            .await
+            .expect("list runs response");
+        assert_eq!(list_runs_response.status(), StatusCode::OK);
+
+        let list_runs_body = list_runs_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let runs: api_contract::WorkspaceRunsResponse =
+            serde_json::from_slice(&list_runs_body).expect("workspace runs payload");
+        assert_eq!(runs.runs.len(), 1);
+        assert_eq!(
+            runs.runs[0].workflow_id,
+            persisted_workflow.workflow.workflow_id
+        );
     }
 }

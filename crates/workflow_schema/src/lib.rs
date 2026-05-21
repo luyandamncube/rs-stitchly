@@ -117,7 +117,7 @@ mod tests {
             serde_json::from_str(fixture).expect("fixture should parse");
 
         assert_eq!(workflow.workflow_id, "wf_text_preview");
-        assert_eq!(workflow.nodes.len(), 3);
-        assert_eq!(workflow.edges.len(), 2);
+        assert_eq!(workflow.nodes.len(), 1);
+        assert_eq!(workflow.edges.len(), 0);
     }
 }

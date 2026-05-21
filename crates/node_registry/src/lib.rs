@@ -468,6 +468,94 @@ pub fn builtin_node_definitions() -> Vec<NodeDefinition> {
             },
         },
         NodeDefinition {
+            type_id: "send_email".to_string(),
+            version: 1,
+            display_name: "Send Email".to_string(),
+            category: "output".to_string(),
+            description: "Queues an email-style notification from the workflow.".to_string(),
+            inputs: vec![PortDefinition {
+                port_id: "body".to_string(),
+                display_name: "Body".to_string(),
+                direction: PortDirection::Input,
+                data_type: DataType::Text,
+                required: false,
+                multiple: false,
+                description: Some("Optional upstream message body.".to_string()),
+            }],
+            outputs: vec![],
+            config_schema: json!({
+                "type": "object",
+                "required": ["to", "subject"],
+                "properties": {
+                    "to": {
+                        "type": "string"
+                    },
+                    "subject": {
+                        "type": "string"
+                    },
+                    "body": {
+                        "type": "string"
+                    }
+                }
+            }),
+            runtime: RuntimeBinding {
+                executor_kind: ExecutorKind::RustNative,
+                adapter_id: None,
+                isolation_mode: IsolationMode::InProcess,
+            },
+            capabilities: NodeCapabilities {
+                writes_external_state: true,
+                requires_connection: false,
+                may_emit_structured_logs: true,
+                ..NodeCapabilities::default()
+            },
+            ui: NodeUi {
+                icon: "email".to_string(),
+                color_token: "var(--node-output)".to_string(),
+                default_width: 392,
+                default_height: 176,
+                help_text: Some("Deliver a simple email-style notification from the flow.".to_string()),
+                node_card: Some(NodeCardUi {
+                    variant: "output".to_string(),
+                    icon_key: "send_email".to_string(),
+                    top_chip: visible_top_chip("Notify"),
+                    header: standard_header(),
+                    rows: vec![
+                        node_card_row(
+                            "to",
+                            "kv",
+                            "To",
+                            "config",
+                            "to",
+                            "text",
+                            Some("label"),
+                            false,
+                        ),
+                        node_card_row(
+                            "subject",
+                            "text_block",
+                            "Subject",
+                            "config",
+                            "subject",
+                            "text",
+                            None,
+                            true,
+                        ),
+                    ],
+                    footer: Some(node_card_footer(
+                        "metric",
+                        "Last send",
+                        "runtime",
+                        "last_status",
+                        "status",
+                        Some("status"),
+                    )),
+                    handles: node_card_handles("single_left", "none"),
+                    size: node_card_size(392),
+                }),
+            },
+        },
+        NodeDefinition {
             type_id: "preview_output".to_string(),
             version: 1,
             display_name: "Preview Output".to_string(),

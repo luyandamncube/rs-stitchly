@@ -1,6 +1,122 @@
 {
   "node_definitions": [
     {
+      "type_id": "send_email",
+      "version": 1,
+      "display_name": "Send Email",
+      "category": "output",
+      "description": "Simulates delivering a notification email with optional body content.",
+      "inputs": [
+        {
+          "port_id": "body",
+          "display_name": "Body",
+          "direction": "input",
+          "data_type": "text",
+          "required": false,
+          "multiple": false,
+          "description": "Optional upstream message body."
+        }
+      ],
+      "outputs": [],
+      "config_schema": {
+        "type": "object",
+        "required": [
+          "to",
+          "subject"
+        ],
+        "properties": {
+          "to": {
+            "type": "string",
+            "title": "Recipient"
+          },
+          "subject": {
+            "type": "string",
+            "title": "Subject"
+          },
+          "body": {
+            "type": "string",
+            "title": "Body"
+          }
+        }
+      },
+      "runtime": {
+        "executor_kind": "rust_native",
+        "isolation_mode": "in_process"
+      },
+      "capabilities": {
+        "reads_external_state": false,
+        "writes_external_state": true,
+        "produces_durable_artifacts": false,
+        "supports_preview": true,
+        "requires_connection": false,
+        "may_emit_structured_logs": true
+      },
+      "ui": {
+        "icon": "email",
+        "color_token": "var(--node-output)",
+        "default_width": 392,
+        "default_height": 176,
+        "help_text": "Deliver a notification-style email from the workflow canvas.",
+        "node_card": {
+          "variant": "output",
+          "icon_key": "send_email",
+          "top_chip": {
+            "visible": true,
+            "text": "Notify"
+          },
+          "header": {
+            "title_source": "instance_label_or_display_name",
+            "show_overflow_menu": true
+          },
+          "rows": [
+            {
+              "row_id": "recipient",
+              "kind": "kv",
+              "label": "To",
+              "value": {
+                "source": "config",
+                "path": "to"
+              },
+              "formatter": "text",
+              "icon_key": "label",
+              "truncate": false
+            },
+            {
+              "row_id": "subject",
+              "kind": "text_block",
+              "label": "Subject",
+              "value": {
+                "source": "config",
+                "path": "subject"
+              },
+              "formatter": "text",
+              "truncate": true
+            }
+          ],
+          "footer": {
+            "kind": "metric",
+            "label": "Last send",
+            "value": {
+              "source": "runtime",
+              "path": "last_status"
+            },
+            "formatter": "status",
+            "icon_key": "status"
+          },
+          "handles": {
+            "input_layout": "single_left",
+            "output_layout": "none",
+            "show_labels": "never",
+            "align_to_rows": true
+          },
+          "size": {
+            "width": 392,
+            "density": "comfortable"
+          }
+        }
+      }
+    },
+    {
       "type_id": "preview_output",
       "version": 1,
       "display_name": "Preview Output",

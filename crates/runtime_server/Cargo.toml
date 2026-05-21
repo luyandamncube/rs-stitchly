@@ -17,8 +17,8 @@ serde_json = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
 uuid = { workspace = true }
+workflow_schema = { path = "../workflow_schema" }
 
 [dev-dependencies]
 http-body-util = { workspace = true }
 tower = { workspace = true }
-workflow_schema = { path = "../workflow_schema" }

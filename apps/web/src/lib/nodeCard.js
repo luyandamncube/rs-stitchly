@@ -1,4 +1,52 @@
 const BUILTIN_NODE_CARD_FALLBACKS = {
+  send_email: {
+    variant: 'output',
+    icon_key: 'send_email',
+    top_chip: {
+      visible: true,
+      text: 'Notify'
+    },
+    header: {
+      title_source: 'instance_label_or_display_name',
+      show_overflow_menu: true
+    },
+    rows: [
+      {
+        row_id: 'recipient',
+        kind: 'kv',
+        label: 'To',
+        value: { source: 'config', path: 'to' },
+        formatter: 'text',
+        icon_key: 'label',
+        truncate: false
+      },
+      {
+        row_id: 'subject',
+        kind: 'text_block',
+        label: 'Subject',
+        value: { source: 'config', path: 'subject' },
+        formatter: 'text',
+        truncate: true
+      }
+    ],
+    footer: {
+      kind: 'metric',
+      label: 'Last send',
+      value: { source: 'runtime', path: 'last_status' },
+      formatter: 'status',
+      icon_key: 'status'
+    },
+    handles: {
+      input_layout: 'single_left',
+      output_layout: 'none',
+      show_labels: 'never',
+      align_to_rows: true
+    },
+    size: {
+      width: 392,
+      density: 'comfortable'
+    }
+  },
   text_input: {
     variant: 'trigger',
     icon_key: 'text_input',
@@ -146,10 +194,12 @@ const BUILTIN_NODE_CARD_FALLBACKS = {
 
 const ICON_LABELS = {
   duration: 'D',
+  email: '@',
   label: 'T',
   logic: '</>',
   metric: '#',
   preview_output: 'O',
+  send_email: '@',
   sparkles: 'O',
   status: 'S',
   text_input: 'T',

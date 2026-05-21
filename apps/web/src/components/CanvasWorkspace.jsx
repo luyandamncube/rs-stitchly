@@ -3,7 +3,19 @@ import starterWorkflowFixture from '../../../../tests/fixtures/workflows/basic_t
 import connectionFixture from '../../../../tests/fixtures/api/connections.json';
 import nodeDefinitionFixture from '../../../../tests/fixtures/api/node_definitions.json';
 import WorkflowCanvas from './WorkflowCanvas';
-import { createRun, getConnections, getNodeDefinitions, getRunSnapshot, subscribeToRun, validateWorkflow } from '../lib/api';
+import {
+  createRun,
+  createWorkspaceRun,
+  createWorkflow,
+  getConnections,
+  getNodeDefinitions,
+  getRunSnapshot,
+  getWorkflow,
+  getWorkflows,
+  subscribeToRun,
+  updateWorkflow,
+  validateWorkflow
+} from '../lib/api';
 import {
   buildProblemItems,
   buildSearchResults,
@@ -13,43 +25,23 @@ import {
 } from '../lib/shell';
 import { cloneWorkflow, updateNodeConfig, updateNodeLabel } from '../lib/workflow';
 
-const DEFAULT_SANDBOX_STATE = {
-  connection: 'none',
-  interaction: {
-    dragging: false,
-    forceFocused: false,
-    forceHovered: false,
-    forcePressed: false,
-    selected: false
-  },
-  runtime: 'idle',
-  validation: 'valid'
-};
-
-const SANDBOX_CONNECTION_STATES = ['none', 'source-active', 'target-valid', 'target-invalid', 'preview'];
-const SANDBOX_RUNTIME_STATES = ['idle', 'queued', 'running', 'succeeded', 'failed', 'skipped'];
-const SANDBOX_VALIDATION_STATES = ['valid', 'warning', 'error'];
 const CANVAS_DEBUG_COLLAPSE_STORAGE_KEY = 'stitchly.canvas.debug-panel-collapsed.v1';
 
 const EMPTY_CANVAS_DEBUG_STATE = {
+  activeNodeId: null,
   blockerElement: null,
+  nodeFocusMatch: false,
+  nodeHoverMatch: false,
+  nodeRect: null,
+  nodeSelectedState: false,
   pointer: null,
-  sandboxId: null,
-  sandboxConnectionState: 'none',
-  sandboxDraggingState: false,
-  pointerInsideSandbox: false,
-  sandboxFocusMatch: false,
-  sandboxHoverMatch: false,
-  sandboxPressedState: false,
-  sandboxSelectedState: false,
-  sandboxRect: null,
-  sandboxResolvedState: null,
+  pointerInsideNode: false,
   stack: [],
   topElement: null,
   viewport: null
 };
 
-export default function CanvasWorkspace() {
+export default function CanvasWorkspace({ workspaceId = null }) {
   const showCanvasDebug = import.meta.env.DEV;
   const [workflow, setWorkflow] = useState(() => cloneWorkflow(starterWorkflowFixture));
   const [nodeDefinitions, setNodeDefinitions] = useState(nodeDefinitionFixture.node_definitions);
@@ -71,9 +63,16 @@ export default function CanvasWorkspace() {
   const [isCanvasDebugCollapsed, setIsCanvasDebugCollapsed] = useState(() =>
     readStoredCanvasDebugCollapsed()
   );
-  const [sandboxState, setSandboxState] = useState(() => cloneSandboxState());
-  const [sandboxResetKey, setSandboxResetKey] = useState(0);
+  const [workflowSyncState, setWorkflowSyncState] = useState(
+    workspaceId ? 'loading' : 'local'
+  );
+  const [activeWorkflowId, setActiveWorkflowId] = useState(
+    starterWorkflowFixture.workflow_id
+  );
   const closeStreamRef = useRef(null);
+  const persistedWorkflowSignatureRef = useRef(
+    workflowSignature(starterWorkflowFixture)
+  );
   const deferredEvents = useDeferredValue(events);
 
   const selectedNode = workflow.nodes.find((node) => node.node_id === selectedNodeId) ?? null;
@@ -158,6 +157,102 @@ export default function CanvasWorkspace() {
     );
   }, [isCanvasDebugCollapsed]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadWorkspaceWorkflow() {
+      if (!workspaceId) {
+        const localWorkflow = buildCanvasStarterWorkflow();
+        persistedWorkflowSignatureRef.current = workflowSignature(localWorkflow);
+        setWorkflow(localWorkflow);
+        setActiveWorkflowId(localWorkflow.workflow_id);
+        setWorkflowSyncState('local');
+        return;
+      }
+
+      setWorkflowSyncState('loading');
+
+      try {
+        const workflowList = await getWorkflows(workspaceId);
+        const workflowResponse = workflowList.workflows[0]
+          ? await getWorkflow(workspaceId, workflowList.workflows[0].workflow_id)
+          : await createWorkflow(workspaceId, buildCanvasStarterWorkflow());
+
+        if (cancelled) {
+          return;
+        }
+
+        const persistedWorkflow = cloneWorkflow(workflowResponse.definition);
+        const nextWorkflow = prepareCanvasWorkflow(persistedWorkflow);
+        persistedWorkflowSignatureRef.current = workflowSignature(persistedWorkflow);
+        setWorkflow(nextWorkflow);
+        setActiveWorkflowId(workflowResponse.workflow.workflow_id);
+        setWorkflowSyncState('synced');
+        setValidation(null);
+        setRunSnapshot(null);
+        setRunHistory([]);
+        setEvents([]);
+        setSelectedNodeId(null);
+        setConfigDraft('{}');
+        setConfigError('');
+      } catch (error) {
+        if (!cancelled) {
+          setWorkflowSyncState('offline');
+          setBackendStatus('offline');
+        }
+      }
+    }
+
+    void loadWorkspaceWorkflow();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId || !activeWorkflowId || workflowSyncState === 'loading') {
+      return;
+    }
+
+    const nextSignature = workflowSignature(workflow);
+    if (nextSignature === persistedWorkflowSignatureRef.current) {
+      return;
+    }
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(async () => {
+      setWorkflowSyncState('saving');
+
+      try {
+        const workflowResponse = await updateWorkflow(
+          workspaceId,
+          activeWorkflowId,
+          workflow
+        );
+
+        if (cancelled) {
+          return;
+        }
+
+        const nextWorkflow = cloneWorkflow(workflowResponse.definition);
+        persistedWorkflowSignatureRef.current = workflowSignature(nextWorkflow);
+        setActiveWorkflowId(workflowResponse.workflow.workflow_id);
+        setWorkflow(nextWorkflow);
+        setWorkflowSyncState('synced');
+      } catch (error) {
+        if (!cancelled) {
+          setWorkflowSyncState('offline');
+        }
+      }
+    }, 500);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [activeWorkflowId, workflow, workspaceId]);
+
   function applyWorkflowChange(nextWorkflow) {
     setWorkflow(nextWorkflow);
     setValidation(null);
@@ -207,7 +302,9 @@ export default function CanvasWorkspace() {
     setEvents([]);
 
     try {
-      const response = await createRun(workflow);
+      const response = workspaceId
+        ? await createWorkspaceRun(workspaceId, workflow)
+        : await createRun(workflow);
       const seededRun = {
         run_id: response.run_id,
         workflow_id: workflow.workflow_id,
@@ -259,7 +356,8 @@ export default function CanvasWorkspace() {
 
   function handleReset() {
     closeStreamRef.current?.();
-    setWorkflow(cloneWorkflow(starterWorkflowFixture));
+    const nextWorkflow = buildCanvasStarterWorkflow();
+    setWorkflow(nextWorkflow);
     setValidation(null);
     setRunSnapshot(null);
     setRunHistory([]);
@@ -420,48 +518,16 @@ export default function CanvasWorkspace() {
     });
   }
 
-  function toggleSandboxInteractionState(key) {
-    setSandboxState((current) => ({
-      ...current,
-      interaction: {
-        ...current.interaction,
-        [key]: !current.interaction[key]
-      }
-    }));
-  }
-
-  function setSandboxConnectionState(value) {
-    setSandboxState((current) => ({
-      ...current,
-      connection: value
-    }));
-  }
-
-  function setSandboxValidationState(value) {
-    setSandboxState((current) => ({
-      ...current,
-      validation: value
-    }));
-  }
-
-  function setSandboxRuntimeState(value) {
-    setSandboxState((current) => ({
-      ...current,
-      runtime: value
-    }));
-  }
-
-  function resetSandboxState() {
-    setSandboxState(cloneSandboxState());
-    setSandboxResetKey((current) => current + 1);
-  }
-
   return (
     <div className="app-shell">
       <WorkflowCanvas
+        nodeDefinitions={nodeDefinitions}
         onDebugStateChange={showCanvasDebug ? setCanvasDebugState : undefined}
-        sandboxResetKey={sandboxResetKey}
-        sandboxState={sandboxState}
+        onNodeOpen={handleCanvasNodeOpen}
+        onSelectionChange={handleCanvasSelection}
+        onWorkflowChange={applyWorkflowChange}
+        selectedNodeId={selectedNodeId}
+        workflow={workflow}
       />
 
       <div className="shell-overlay">
@@ -537,17 +603,27 @@ export default function CanvasWorkspace() {
                   <CardMetricGrid
                     metrics={[
                       { label: 'Backend', value: humanizeToken(backendStatus) },
+                      { label: 'Workflow', value: humanizeToken(workflowSyncState) },
                       { label: 'Validation', value: validation ? (validation.valid ? 'Valid' : 'Issues') : 'Idle' },
-                      { label: 'Runs', value: String(runHistory.length) },
-                      { label: 'Events', value: String(deferredEvents.length) }
+                      { label: 'Runs', value: String(runHistory.length) }
                     ]}
                   />
 
                   <div className="drawer-action-grid">
-                    <button className="accent-button" onClick={handleValidate} type="button" disabled={busyState.validate}>
+                    <button
+                      className="accent-button"
+                      onClick={handleValidate}
+                      type="button"
+                      disabled={busyState.validate || workflowSyncState === 'loading'}
+                    >
                       {busyState.validate ? 'Validating…' : 'Validate Workflow'}
                     </button>
-                    <button className="secondary-button" onClick={handleRun} type="button" disabled={busyState.run}>
+                    <button
+                      className="secondary-button"
+                      onClick={handleRun}
+                      type="button"
+                      disabled={busyState.run || workflowSyncState === 'loading'}
+                    >
                       {busyState.run ? 'Starting…' : 'Run Workflow'}
                     </button>
                   </div>
@@ -674,13 +750,7 @@ export default function CanvasWorkspace() {
         <CanvasDebugPanel
           collapsed={isCanvasDebugCollapsed}
           debugState={canvasDebugState}
-          onResetSandboxState={resetSandboxState}
-          onSetConnectionState={setSandboxConnectionState}
-          onSetRuntimeState={setSandboxRuntimeState}
-          onSetValidationState={setSandboxValidationState}
           onToggleCollapsed={() => setIsCanvasDebugCollapsed((current) => !current)}
-          onToggleInteractionState={toggleSandboxInteractionState}
-          sandboxState={sandboxState}
         />
       ) : null}
     </div>
@@ -793,13 +863,7 @@ function EmptyState({ message }) {
 function CanvasDebugPanel({
   collapsed = false,
   debugState,
-  onResetSandboxState,
-  onSetConnectionState,
-  onSetRuntimeState,
-  onSetValidationState,
-  onToggleCollapsed,
-  onToggleInteractionState,
-  sandboxState
+  onToggleCollapsed
 }) {
   return (
     <aside
@@ -824,8 +888,8 @@ function CanvasDebugPanel({
       {collapsed ? (
         <div className="canvas-debug-panel__stack">
           <DebugValue
-            label="Sandbox"
-            value={humanizeToken(debugState.sandboxId ?? 'none')}
+            label="Node"
+            value={humanizeToken(debugState.activeNodeId ?? 'none')}
           />
           <DebugValue
             label="Pointer"
@@ -836,7 +900,7 @@ function CanvasDebugPanel({
         <>
           <div className="canvas-debug-panel__grid">
             <DebugValue label="Pointer" value={debugState.pointer ? `${debugState.pointer.x}, ${debugState.pointer.y}` : 'Idle'} />
-            <DebugValue label="Active Sandbox" value={humanizeToken(debugState.sandboxId ?? 'none')} />
+            <DebugValue label="Active Node" value={humanizeToken(debugState.activeNodeId ?? 'none')} />
             <DebugValue
               label="Viewport"
               value={
@@ -845,108 +909,16 @@ function CanvasDebugPanel({
                   : 'Unknown'
               }
             />
-            <DebugValue label="Sandbox :hover" value={debugState.sandboxHoverMatch ? 'yes' : 'no'} />
-            <DebugValue label="Sandbox :focus" value={debugState.sandboxFocusMatch ? 'yes' : 'no'} />
-            <DebugValue label="Sandbox Connection" value={humanizeToken(debugState.sandboxConnectionState ?? 'none')} />
-            <DebugValue label="Sandbox Dragging" value={debugState.sandboxDraggingState ? 'yes' : 'no'} />
-            <DebugValue label="Sandbox Pressed" value={debugState.sandboxPressedState ? 'yes' : 'no'} />
-            <DebugValue label="Sandbox Selected" value={debugState.sandboxSelectedState ? 'yes' : 'no'} />
-            <DebugValue label="Inside Sandbox" value={debugState.pointerInsideSandbox ? 'yes' : 'no'} />
+            <DebugValue label="Node :hover" value={debugState.nodeHoverMatch ? 'yes' : 'no'} />
+            <DebugValue label="Node :focus" value={debugState.nodeFocusMatch ? 'yes' : 'no'} />
+            <DebugValue label="Node Selected" value={debugState.nodeSelectedState ? 'yes' : 'no'} />
+            <DebugValue label="Inside Node" value={debugState.pointerInsideNode ? 'yes' : 'no'} />
           </div>
 
-          <section className="canvas-debug-panel__section">
-            <p className="canvas-debug-panel__label">Resolved Sandbox State</p>
+          {/* <section className="canvas-debug-panel__section">
+            <p className="canvas-debug-panel__label">Node Rect</p>
             <div className="canvas-debug-panel__stack">
-              <DebugStateDescriptor
-                label="Interaction"
-                value={formatInteractionState(debugState.sandboxResolvedState?.interaction)}
-              />
-              <DebugStateDescriptor label="Connection" value={humanizeToken(debugState.sandboxResolvedState?.connection ?? 'none')} />
-              <DebugStateDescriptor label="Validation" value={humanizeToken(debugState.sandboxResolvedState?.validation ?? 'valid')} />
-              <DebugStateDescriptor label="Runtime" value={humanizeToken(debugState.sandboxResolvedState?.runtime ?? 'idle')} />
-            </div>
-          </section>
-
-          <section className="canvas-debug-panel__section">
-            <p className="canvas-debug-panel__label">Sandbox Rect</p>
-            <div className="canvas-debug-panel__stack">
-              <DebugRectDescriptor label="Sandbox Rect" rect={debugState.sandboxRect} />
-            </div>
-          </section>
-
-          <section className="canvas-debug-panel__section">
-            <div className="canvas-debug-panel__section-head">
-              <p className="canvas-debug-panel__label">State Controls</p>
-              <button className="canvas-debug-panel__reset" onClick={onResetSandboxState} type="button">
-                Reset
-              </button>
-            </div>
-
-            <div className="canvas-debug-panel__stack">
-              <DebugControlGroup label="Interaction">
-                <DebugToggleButton
-                  active={sandboxState.interaction.forceHovered}
-                  label="Force Hover"
-                  onClick={() => onToggleInteractionState('forceHovered')}
-                />
-                <DebugToggleButton
-                  active={sandboxState.interaction.selected}
-                  label="Force Selected"
-                  onClick={() => onToggleInteractionState('selected')}
-                />
-                <DebugToggleButton
-                  active={sandboxState.interaction.dragging}
-                  label="Dragging"
-                  onClick={() => onToggleInteractionState('dragging')}
-                />
-                <DebugToggleButton
-                  active={sandboxState.interaction.forceFocused}
-                  label="Force Focus"
-                  onClick={() => onToggleInteractionState('forceFocused')}
-                />
-                <DebugToggleButton
-                  active={sandboxState.interaction.forcePressed}
-                  label="Force Press"
-                  onClick={() => onToggleInteractionState('forcePressed')}
-                />
-              </DebugControlGroup>
-
-              <DebugControlGroup label="Connection">
-                {SANDBOX_CONNECTION_STATES.map((value) => (
-                  <DebugToggleButton
-                    key={value}
-                    active={sandboxState.connection === value}
-                    label={humanizeToken(value)}
-                    onClick={() => onSetConnectionState(value)}
-                  />
-                ))}
-              </DebugControlGroup>
-
-              <DebugControlGroup label="Validation">
-                {SANDBOX_VALIDATION_STATES.map((value) => (
-                  <DebugToggleButton
-                    key={value}
-                    active={sandboxState.validation === value}
-                    label={humanizeToken(value)}
-                    onClick={() => onSetValidationState(value)}
-                  />
-                ))}
-              </DebugControlGroup>
-
-              <p className="canvas-debug-panel__empty">
-                Validation and runtime overrides follow the selected sandbox node.
-              </p>
-
-              <DebugControlGroup label="Runtime">
-                {SANDBOX_RUNTIME_STATES.map((value) => (
-                  <DebugToggleButton
-                    key={value}
-                    active={sandboxState.runtime === value}
-                    label={humanizeToken(value)}
-                    onClick={() => onSetRuntimeState(value)}
-                  />
-                ))}
-              </DebugControlGroup>
+              <DebugRectDescriptor label="Node Rect" rect={debugState.nodeRect} />
             </div>
           </section>
 
@@ -981,9 +953,9 @@ function CanvasDebugPanel({
             {debugState.blockerElement ? (
               <DebugElementDescriptor element={debugState.blockerElement} />
             ) : (
-              <p className="canvas-debug-panel__empty">No top-level blocker detected outside the sandbox element.</p>
+              <p className="canvas-debug-panel__empty">No top-level blocker detected outside the active node.</p>
             )}
-          </section>
+          </section> */}
         </>
       )}
     </aside>
@@ -1033,40 +1005,6 @@ function DebugRectDescriptor({ label, meta = null, rect }) {
       )}
       {meta ? <span className="canvas-debug-panel__meta">{meta.className || '(no classes)'}</span> : null}
     </div>
-  );
-}
-
-function DebugStateDescriptor({ label, value }) {
-  return (
-    <div className="canvas-debug-panel__item">
-      <div className="canvas-debug-panel__item-head">
-        <strong>{label}</strong>
-      </div>
-      <code>{value}</code>
-    </div>
-  );
-}
-
-function DebugControlGroup({ children, label }) {
-  return (
-    <div className="canvas-debug-panel__item">
-      <div className="canvas-debug-panel__item-head">
-        <strong>{label}</strong>
-      </div>
-      <div className="canvas-debug-panel__controls">{children}</div>
-    </div>
-  );
-}
-
-function DebugToggleButton({ active, label, onClick }) {
-  return (
-    <button
-      className={`canvas-debug-panel__toggle${active ? ' is-active' : ''}`}
-      onClick={onClick}
-      type="button"
-    >
-      {label}
-    </button>
   );
 }
 
@@ -1122,20 +1060,26 @@ function cardTitleFor({ floatingCard, activeProblem, activeRun, selectedNode }) 
   return 'Context';
 }
 
-function cloneSandboxState() {
-  return structuredClone(DEFAULT_SANDBOX_STATE);
+function workflowSignature(workflow) {
+  return JSON.stringify(workflow);
 }
 
-function formatInteractionState(interaction) {
-  if (!interaction) {
-    return 'Idle';
+function buildCanvasStarterWorkflow() {
+  return prepareCanvasWorkflow(cloneWorkflow(starterWorkflowFixture));
+}
+
+function prepareCanvasWorkflow(workflow) {
+  if (workflow?.workflow_id !== starterWorkflowFixture.workflow_id) {
+    return workflow;
   }
 
-  const activeStates = Object.entries(interaction)
-    .filter(([, enabled]) => enabled)
-    .map(([key]) => humanizeToken(key));
+  const hasSendEmailNode = workflow.nodes.some((node) => node.type_id === 'send_email');
 
-  return activeStates.length ? activeStates.join(', ') : 'Idle';
+  if (!hasSendEmailNode) {
+    return cloneWorkflow(starterWorkflowFixture);
+  }
+
+  return workflow;
 }
 
 function readStoredCanvasDebugCollapsed() {

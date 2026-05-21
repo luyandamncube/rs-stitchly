@@ -10,7 +10,7 @@ import {
   useParams
 } from 'react-router-dom';
 import CanvasWorkspace from './components/CanvasWorkspace';
-import { createWorkspace, getSession, login, logout } from './lib/api';
+import { createWorkspace, getSession, getWorkspaceRuns, login, logout } from './lib/api';
 
 const APP_SCREENS = [
   {
@@ -490,7 +490,10 @@ function ProductShell({
               <span className="dashboard-pill">{activeWorkspace.name}</span>
             </div>
             <main className="dashboard-canvas-shell__stage">
-              <CanvasScreen isFullScreen />
+              <CanvasScreen
+                isFullScreen
+                workspaceId={activeWorkspace.workspace_id}
+              />
             </main>
           </div>
         ) : (
@@ -523,7 +526,9 @@ function ProductShell({
                   {activeScreen.id === 'overview' ? (
                     <OverviewScreen activeWorkspace={activeWorkspace} viewMode={viewMode} />
                   ) : null}
-                  {activeScreen.id === 'runs' ? <RunsScreen /> : null}
+                  {activeScreen.id === 'runs' ? (
+                    <RunsScreen activeWorkspace={activeWorkspace} />
+                  ) : null}
                   {activeScreen.id === 'connections' ? <ConnectionsScreen /> : null}
                   {activeScreen.id === 'settings' ? (
                     <SettingsScreen
@@ -909,7 +914,7 @@ function OverviewScreen({ activeWorkspace, viewMode }) {
   );
 }
 
-function CanvasScreen({ isFullScreen = false, viewMode = 'desktop' }) {
+function CanvasScreen({ isFullScreen = false, viewMode = 'desktop', workspaceId }) {
   const viewportVariant = isFullScreen ? 'canvas-route' : viewMode;
 
   return (
@@ -917,26 +922,69 @@ function CanvasScreen({ isFullScreen = false, viewMode = 'desktop' }) {
       className={`workspace-stage workspace-stage--${isFullScreen ? 'canvas-route' : viewMode}`}
     >
       <div className={`workspace-stage__viewport workspace-stage__viewport--${viewportVariant}`}>
-        <CanvasWorkspace />
+        <CanvasWorkspace workspaceId={workspaceId} />
       </div>
     </div>
   );
 }
 
-function RunsScreen() {
+function RunsScreen({ activeWorkspace }) {
+  const [runState, setRunState] = useState({
+    error: '',
+    runs: [],
+    status: 'loading'
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadRuns() {
+      try {
+        const response = await getWorkspaceRuns(activeWorkspace.workspace_id);
+        if (!cancelled) {
+          setRunState({
+            error: '',
+            runs: response.runs ?? [],
+            status: 'ready'
+          });
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setRunState({
+            error: error.message ?? 'Unable to load runs.',
+            runs: [],
+            status: 'error'
+          });
+        }
+      }
+    }
+
+    void loadRuns();
+    const intervalId = window.setInterval(() => {
+      void loadRuns();
+    }, 4000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [activeWorkspace.workspace_id]);
+
+  const metrics = summarizeWorkspaceRuns(runState.runs);
+
   return (
     <div className="dashboard-runs">
       <div className="dashboard-toolbar">
         <span className="dashboard-pill">All</span>
-        <span className="dashboard-pill dashboard-pill--ghost">Success</span>
-        <span className="dashboard-pill dashboard-pill--ghost">Failed</span>
-        <span className="dashboard-pill dashboard-pill--ghost">In progress</span>
-        <span className="dashboard-pill">Workflows</span>
-        <span className="dashboard-pill">Last 24h</span>
-        <span className="dashboard-pill">More filters</span>
+        <span className="dashboard-pill dashboard-pill--ghost">{metrics.succeeded} Success</span>
+        <span className="dashboard-pill dashboard-pill--ghost">{metrics.failed} Failed</span>
+        <span className="dashboard-pill dashboard-pill--ghost">{metrics.running} In progress</span>
+        <span className="dashboard-pill">{activeWorkspace.name}</span>
+        <span className="dashboard-pill">Last sync</span>
+        <span className="dashboard-pill">{humanizeRunLoadState(runState.status)}</span>
         <span className="dashboard-pill dashboard-pill--ghost dashboard-toolbar__search">
-          <span>Name, ID, errors...</span>
-          <span>⌕</span>
+          <span>{runState.status === 'loading' ? 'Loading runs…' : 'Workspace runs'}</span>
+          <span>{runState.runs.length}</span>
         </span>
       </div>
 
@@ -944,43 +992,68 @@ function RunsScreen() {
         <div className="dashboard-kpi">
           <span className="dashboard-kpi__label">Total runs</span>
           <span className="dashboard-kpi__value">
-            <span>237</span>
+            <span>{metrics.total}</span>
             <span className="dashboard-kpi__divider">|</span>
             <span className="dashboard-kpi__group">
               <span className="dashboard-kpi__icon dashboard-kpi__icon--success">✓</span>
-              <span>230</span>
+              <span>{metrics.succeeded}</span>
             </span>
             <span className="dashboard-kpi__group">
               <span className="dashboard-kpi__icon dashboard-kpi__icon--running">•</span>
-              <span>2</span>
+              <span>{metrics.running}</span>
             </span>
             <span className="dashboard-kpi__group">
               <span className="dashboard-kpi__icon dashboard-kpi__icon--failed">×</span>
-              <span>5</span>
+              <span>{metrics.failed}</span>
             </span>
           </span>
         </div>
         <div className="dashboard-kpi">
           <span className="dashboard-kpi__label">Workflow success</span>
           <span className="dashboard-kpi__value">
-            <span>98.7%</span>
+            <span>{metrics.successRate}</span>
             <span className="dashboard-kpi__group">
               <span className="dashboard-kpi__icon dashboard-kpi__icon--success">↗</span>
-              <span className="dashboard-kpi__delta dashboard-kpi__delta--up">2%</span>
+              <span className="dashboard-kpi__delta dashboard-kpi__delta--up">
+                {metrics.completedRuns} done
+              </span>
             </span>
           </span>
         </div>
         <div className="dashboard-kpi">
-          <span className="dashboard-kpi__label">Average lag</span>
-          <span className="dashboard-kpi__value">38s</span>
+          <span className="dashboard-kpi__label">Running now</span>
+          <span className="dashboard-kpi__value">{metrics.running}</span>
         </div>
         <div className="dashboard-kpi">
-          <span className="dashboard-kpi__label">Avg latency</span>
-          <span className="dashboard-kpi__value">1.8s</span>
+          <span className="dashboard-kpi__label">Avg duration</span>
+          <span className="dashboard-kpi__value">{metrics.averageDuration}</span>
         </div>
       </div>
 
-      <div className="dashboard-table-shell">
+      {runState.status === 'error' ? (
+        <section className="dashboard-section-card">
+          <div className="dashboard-section-card__header">
+            <span className="dashboard-section-card__eyebrow">Runs</span>
+            <h2>Unable to load workspace runs</h2>
+            <p>{runState.error}</p>
+          </div>
+        </section>
+      ) : null}
+
+      {runState.status === 'ready' && !runState.runs.length ? (
+        <section className="dashboard-section-card">
+          <div className="dashboard-section-card__header">
+            <span className="dashboard-section-card__eyebrow">Runs</span>
+            <h2>No runs for this workspace yet</h2>
+            <p>
+              Execute a workflow from the canvas to create the first workspace-scoped run entry.
+            </p>
+          </div>
+        </section>
+      ) : null}
+
+      {runState.runs.length ? (
+        <div className="dashboard-table-shell">
         <div className="dashboard-table-header">
           <span className="dashboard-table-header__lead">
             <span className="dashboard-table-check dashboard-table-check--header" aria-hidden="true" />
@@ -994,28 +1067,38 @@ function RunsScreen() {
           <span>Errors / Retries</span>
         </div>
 
-        {RUN_ROWS.map((row) => (
-          <div className="dashboard-table-row" key={row.runId}>
+        {runState.runs.map((run) => {
+          const statusTone = dashboardStatusTone(run.status);
+          const duration = formatRunDuration(run);
+          const started = formatRunTimestamp(run.started_at);
+          const error = run.error?.message ?? 'None';
+          const retryCount = countRunRetries(run);
+          const errorCount = countRunErrors(run);
+
+          return (
+            <div className="dashboard-table-row" key={run.run_id}>
             <span className="dashboard-table-row__lead">
               <span className="dashboard-table-check" aria-hidden="true" />
-              <span>{row.runId}</span>
+              <span>{shortRunId(run.run_id)}</span>
             </span>
-            <span className="dashboard-cell--muted">{row.started}</span>
-            <span className="dashboard-cell--truncate">{row.workflow}</span>
-            <span>{row.duration}</span>
-            <span className={`dashboard-status dashboard-status--${row.status}`}>
-              <span className={`dashboard-status__dot dashboard-status__dot--${row.status}`}>
-                {row.status === 'success' ? '✓' : row.status === 'failed' ? '×' : 'i'}
+            <span className="dashboard-cell--muted">{started}</span>
+            <span className="dashboard-cell--truncate">{run.workflow_id}</span>
+            <span>{duration}</span>
+            <span className={`dashboard-status dashboard-status--${statusTone}`}>
+              <span className={`dashboard-status__dot dashboard-status__dot--${statusTone}`}>
+                {statusTone === 'success' ? '✓' : statusTone === 'failed' ? '×' : 'i'}
               </span>
-              {row.statusLabel}
+              {humanizeRunStatus(run.status)}
             </span>
-            <span className={row.error === 'None' ? 'dashboard-cell--muted' : 'dashboard-cell--truncate'}>
-              {row.error}
+            <span className={error === 'None' ? 'dashboard-cell--muted' : 'dashboard-cell--truncate'}>
+              {error}
             </span>
-            <span>{row.retries}</span>
+            <span>{`${errorCount} / ${retryCount}`}</span>
           </div>
-        ))}
+          );
+        })}
       </div>
+      ) : null}
     </div>
   );
 }
@@ -1220,58 +1303,140 @@ function UtilityIcon({ kind }) {
   );
 }
 
-const RUN_ROWS = [
-  {
-    runId: '6734',
-    started: '22 Jun 2025, 11:02:48',
-    workflow: 'Product Catalog Sync',
-    duration: '45.2s',
-    status: 'running',
-    statusLabel: 'Running',
-    error: 'TimeoutError: Supplier API timed out',
-    retries: '0 / 0'
-  },
-  {
-    runId: '6733',
-    started: '22 Jun 2025, 11:05:12',
-    workflow: 'Customer Webhook Listener',
-    duration: '30.1s',
-    status: 'running',
-    statusLabel: 'Running',
-    error: 'None',
-    retries: '0 / 0'
-  },
-  {
-    runId: '6732',
-    started: '22 Jun 2025, 11:07:42',
-    workflow: 'Data Enrichment',
-    duration: '10.4s',
-    status: 'success',
-    statusLabel: 'Success',
-    error: 'None',
-    retries: '0 / 1'
-  },
-  {
-    runId: '6729',
-    started: '22 Jun 2025, 11:15:45',
-    workflow: 'Inventory Level Sync',
-    duration: '8.2s',
-    status: 'failed',
-    statusLabel: 'Failed',
-    error: 'HTTPError 404: Not Found',
-    retries: '2 / 4'
-  },
-  {
-    runId: '6723',
-    started: '22 Jun 2025, 11:32:32',
-    workflow: 'Real-Time Event Stream',
-    duration: '7.6s',
-    status: 'success',
-    statusLabel: 'Success',
-    error: 'None',
-    retries: '0 / 0'
+function summarizeWorkspaceRuns(runs) {
+  const total = runs.length;
+  const succeeded = runs.filter((run) => run.status === 'succeeded').length;
+  const failed = runs.filter((run) =>
+    ['failed', 'cancelled'].includes(run.status)
+  ).length;
+  const running = runs.filter((run) =>
+    ['created', 'queued', 'planning', 'running', 'cancelling'].includes(run.status)
+  ).length;
+  const completedRuns = succeeded + failed;
+
+  const durationValues = runs
+    .map((run) => runDurationMs(run))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const averageDurationMs = durationValues.length
+    ? durationValues.reduce((sum, value) => sum + value, 0) / durationValues.length
+    : 0;
+
+  return {
+    averageDuration: averageDurationMs ? formatDurationMs(averageDurationMs) : '—',
+    completedRuns,
+    failed,
+    running,
+    successRate: completedRuns ? `${((succeeded / completedRuns) * 100).toFixed(1)}%` : '—',
+    succeeded,
+    total
+  };
+}
+
+function dashboardStatusTone(status) {
+  if (status === 'succeeded') {
+    return 'success';
   }
-];
+
+  if (status === 'failed' || status === 'cancelled') {
+    return 'failed';
+  }
+
+  return 'running';
+}
+
+function humanizeRunLoadState(status) {
+  if (status === 'loading') {
+    return 'Loading';
+  }
+
+  if (status === 'error') {
+    return 'Offline';
+  }
+
+  return 'Live';
+}
+
+function humanizeRunStatus(status) {
+  if (!status) {
+    return 'Unknown';
+  }
+
+  return status
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function shortRunId(runId) {
+  return runId?.startsWith('run_') ? runId.slice(4) : runId;
+}
+
+function formatRunTimestamp(timestamp) {
+  if (!timestamp) {
+    return '—';
+  }
+
+  const value = new Date(timestamp);
+  if (Number.isNaN(value.getTime())) {
+    return '—';
+  }
+
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    month: 'short',
+    second: '2-digit',
+    year: 'numeric'
+  }).format(value);
+}
+
+function formatRunDuration(run) {
+  const durationMs = runDurationMs(run);
+  return durationMs ? formatDurationMs(durationMs) : '—';
+}
+
+function runDurationMs(run) {
+  if (!run?.started_at) {
+    return 0;
+  }
+
+  const started = new Date(run.started_at).getTime();
+  const finished = run.finished_at ? new Date(run.finished_at).getTime() : Date.now();
+
+  if (!Number.isFinite(started) || !Number.isFinite(finished)) {
+    return 0;
+  }
+
+  return Math.max(0, finished - started);
+}
+
+function formatDurationMs(durationMs) {
+  if (durationMs < 1000) {
+    return `${Math.round(durationMs)}ms`;
+  }
+
+  const seconds = durationMs / 1000;
+  if (seconds < 60) {
+    return `${seconds.toFixed(1)}s`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.round(seconds % 60);
+  return `${minutes}m ${remainingSeconds}s`;
+}
+
+function countRunRetries(run) {
+  return (run?.node_runs ?? []).reduce(
+    (sum, nodeRun) => sum + Math.max(0, (nodeRun.attempt ?? 1) - 1),
+    0
+  );
+}
+
+function countRunErrors(run) {
+  const nodeFailures = (run?.node_runs ?? []).filter((nodeRun) => nodeRun.error).length;
+  return run?.error ? Math.max(nodeFailures, 1) : nodeFailures;
+}
 
 async function refreshSession(setSessionState) {
   let session = UNAUTHENTICATED_SESSION;

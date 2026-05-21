@@ -2,65 +2,26 @@
   "schema_version": 1,
   "workflow_id": "wf_text_preview",
   "version": 1,
-  "name": "Text Preview Flow",
-  "description": "A starter workflow for the first Stitchly vertical slice.",
+  "name": "Send Email Flow",
+  "description": "A starter workflow for the send email node study.",
   "nodes": [
     {
-      "node_id": "input_text",
-      "type_id": "text_input",
+      "node_id": "send_email_notification",
+      "type_id": "send_email",
       "definition_version": 1,
-      "label": "Source Text",
+      "label": "Send Email",
       "config": {
-        "text": "ship the slice"
+        "to": "ops@stitchly.dev",
+        "subject": "Failed refunds need review from the latest sync",
+        "body": "Please inspect the latest failed refunds batch and acknowledge the issue."
       },
       "position": {
-        "x": 120,
-        "y": 180
-      }
-    },
-    {
-      "node_id": "transform_text",
-      "type_id": "text_transform",
-      "definition_version": 1,
-      "label": "Uppercase",
-      "config": {
-        "operation": "uppercase"
-      },
-      "position": {
-        "x": 520,
-        "y": 180
-      }
-    },
-    {
-      "node_id": "preview_text",
-      "type_id": "preview_output",
-      "definition_version": 1,
-      "label": "Preview",
-      "config": {
-        "title": "Result"
-      },
-      "position": {
-        "x": 940,
+        "x": 420,
         "y": 180
       }
     }
   ],
-  "edges": [
-    {
-      "edge_id": "edge_input_to_transform",
-      "source_node_id": "input_text",
-      "source_port_id": "text",
-      "target_node_id": "transform_text",
-      "target_port_id": "source"
-    },
-    {
-      "edge_id": "edge_transform_to_preview",
-      "source_node_id": "transform_text",
-      "source_port_id": "text",
-      "target_node_id": "preview_text",
-      "target_port_id": "text"
-    }
-  ],
+  "edges": [],
   "metadata": {
     "viewport": {
       "x": 0,

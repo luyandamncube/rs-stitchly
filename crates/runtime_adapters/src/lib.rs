@@ -39,6 +39,7 @@ impl RuntimeAdapters {
             "text_input" => execute_text_input(node),
             "text_transform" => execute_text_transform(node, inputs),
             "preview_output" => execute_preview_output(node, inputs),
+            "send_email" => execute_send_email(node, inputs),
             _ => Err(AdapterError::UnsupportedNode(definition.type_id.clone())),
         }
     }
@@ -67,6 +68,14 @@ struct TextTransformConfig {
 struct PreviewOutputConfig {
     #[serde(default)]
     title: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SendEmailConfig {
+    to: String,
+    subject: String,
+    #[serde(default)]
+    body: Option<String>,
 }
 
 fn execute_text_input(node: &WorkflowNode) -> Result<NodeExecutionResult, AdapterError> {
@@ -166,6 +175,41 @@ fn execute_preview_output(
     })
 }
 
+fn execute_send_email(
+    node: &WorkflowNode,
+    inputs: &PortValues,
+) -> Result<NodeExecutionResult, AdapterError> {
+    let config: SendEmailConfig =
+        serde_json::from_value(node.config.clone()).map_err(|error| {
+            AdapterError::InvalidConfig {
+                node_id: node.node_id.clone(),
+                message: error.to_string(),
+            }
+        })?;
+
+    let body = match inputs.get("body") {
+        Some(value) => value
+            .as_text()
+            .ok_or_else(|| AdapterError::TextTypeMismatch {
+                node_id: node.node_id.clone(),
+                port: "body".to_string(),
+            })?
+            .to_string(),
+        None => config
+            .body
+            .clone()
+            .unwrap_or_else(|| "No message body provided.".to_string()),
+    };
+
+    Ok(NodeExecutionResult {
+        outputs: PortValues::new(),
+        logs: vec![format!(
+            "Queued email to {} with subject `{}`: {}",
+            config.to, config.subject, body
+        )],
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -203,6 +247,37 @@ mod tests {
         assert_eq!(
             result.outputs.get("text").and_then(|value| value.as_text()),
             Some("HELLO")
+        );
+    }
+
+    #[test]
+    fn send_email_accepts_config_only_body() {
+        let registry = builtin_node_definitions();
+        let definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "send_email")
+            .expect("send_email definition");
+        let node = WorkflowNode {
+            node_id: "notify".to_string(),
+            type_id: "send_email".to_string(),
+            definition_version: 1,
+            label: None,
+            config: json!({
+                "to": "ops@stitchly.dev",
+                "subject": "Failed refunds need review",
+                "body": "Please inspect the latest sync."
+            }),
+            position: NodePosition::default(),
+        };
+
+        let result = RuntimeAdapters::default()
+            .execute(definition, &node, &PortValues::new())
+            .expect("send email should succeed");
+
+        assert_eq!(result.outputs.len(), 0);
+        assert_eq!(
+            result.logs,
+            vec!["Queued email to ops@stitchly.dev with subject `Failed refunds need review`: Please inspect the latest sync."]
         );
     }
 }

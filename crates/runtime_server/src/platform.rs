@@ -7,7 +7,7 @@ use std::{
 use anyhow::{anyhow, Context};
 use api_contract::{
     AuthSessionResponse, SessionUserSummary, WorkspaceListResponse, WorkspaceMembershipRole,
-    WorkspaceSummary,
+    RunSnapshot, WorkspaceSummary, WorkflowListResponse, WorkflowResponse, WorkflowSummary,
 };
 use argon2::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
@@ -17,6 +17,7 @@ use chrono::{Duration, Utc};
 use rand_core::OsRng;
 use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
+use workflow_schema::WorkflowDefinition;
 
 const DEMO_EMAIL: &str = "builder@stitchly.dev";
 const DEMO_PASSWORD: &str = "stitchly";
@@ -250,6 +251,278 @@ impl PlatformStore {
             .map_err(Into::into)
     }
 
+    pub fn list_workflows(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+    ) -> anyhow::Result<WorkflowListResponse> {
+        let connection = self.connection();
+        ensure_workspace_access(&connection, user_id, workspace_id)?;
+
+        let mut stmt = connection.prepare(
+            "select workflow_id, workspace_id, name, description, current_version
+             from workflows
+             where workspace_id = ?1
+             order by updated_at desc, name asc",
+        )?;
+        let workflows = stmt
+            .query_map(params![workspace_id], |row| {
+                Ok(WorkflowSummary {
+                    workflow_id: row.get(0)?,
+                    workspace_id: row.get(1)?,
+                    name: row.get(2)?,
+                    description: row.get(3)?,
+                    version: row.get(4)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(WorkflowListResponse { workflows })
+    }
+
+    pub fn get_workflow(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        workflow_id: &str,
+    ) -> anyhow::Result<Option<WorkflowResponse>> {
+        let connection = self.connection();
+        ensure_workspace_access(&connection, user_id, workspace_id)?;
+
+        let row = connection
+            .query_row(
+                "select w.workflow_id, w.workspace_id, w.name, w.description, w.current_version, v.definition_json
+                 from workflows w
+                 join workflow_versions v
+                   on v.workspace_id = w.workspace_id
+                  and v.workflow_id = w.workflow_id
+                  and v.version = w.current_version
+                 where w.workspace_id = ?1 and w.workflow_id = ?2",
+                params![workspace_id, workflow_id],
+                |row| {
+                    Ok((
+                        WorkflowSummary {
+                            workflow_id: row.get(0)?,
+                            workspace_id: row.get(1)?,
+                            name: row.get(2)?,
+                            description: row.get(3)?,
+                            version: row.get(4)?,
+                        },
+                        row.get::<_, String>(5)?,
+                    ))
+                },
+            )
+            .optional()?;
+
+        let Some((workflow, definition_json)) = row else {
+            return Ok(None);
+        };
+
+        let definition: WorkflowDefinition = serde_json::from_str(&definition_json)
+            .context("stored workflow definition is not valid JSON")?;
+
+        Ok(Some(WorkflowResponse { workflow, definition }))
+    }
+
+    pub fn create_workflow(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        workflow: &WorkflowDefinition,
+    ) -> anyhow::Result<WorkflowResponse> {
+        let connection = self.connection();
+        ensure_workspace_access(&connection, user_id, workspace_id)?;
+
+        let stored_workflow =
+            normalize_workflow_definition(workflow, &workflow.workflow_id, workflow.version.max(1))?;
+        let existing: Option<String> = connection
+            .query_row(
+                "select workflow_id
+                 from workflows
+                 where workspace_id = ?1 and workflow_id = ?2",
+                params![workspace_id, stored_workflow.workflow_id.as_str()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if existing.is_some() {
+            return Err(anyhow!(
+                "workflow `{}` already exists in workspace `{workspace_id}`",
+                stored_workflow.workflow_id
+            ));
+        }
+
+        let now = Utc::now().to_rfc3339();
+        let definition_json = serde_json::to_string(&stored_workflow)
+            .context("failed to serialize workflow definition")?;
+
+        let mut connection = connection;
+        let tx = connection.transaction()?;
+        tx.execute(
+            "insert into workflows (workspace_id, workflow_id, name, description, current_version, created_at, updated_at)
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                workspace_id,
+                stored_workflow.workflow_id.as_str(),
+                stored_workflow.name.as_str(),
+                stored_workflow.description.as_deref(),
+                stored_workflow.version,
+                now,
+                now
+            ],
+        )?;
+        tx.execute(
+            "insert into workflow_versions (workspace_id, workflow_id, version, definition_json, created_at)
+             values (?1, ?2, ?3, ?4, ?5)",
+            params![
+                workspace_id,
+                stored_workflow.workflow_id.as_str(),
+                stored_workflow.version,
+                definition_json,
+                now
+            ],
+        )?;
+        tx.commit()?;
+
+        let workflow = workflow_summary(workspace_id, &stored_workflow);
+        Ok(WorkflowResponse {
+            workflow,
+            definition: stored_workflow,
+        })
+    }
+
+    pub fn update_workflow(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        workflow_id: &str,
+        workflow: &WorkflowDefinition,
+    ) -> anyhow::Result<Option<WorkflowResponse>> {
+        let connection = self.connection();
+        ensure_workspace_access(&connection, user_id, workspace_id)?;
+
+        let current_version: Option<u32> = connection
+            .query_row(
+                "select current_version
+                 from workflows
+                 where workspace_id = ?1 and workflow_id = ?2",
+                params![workspace_id, workflow_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(current_version) = current_version else {
+            return Ok(None);
+        };
+
+        let next_version = current_version.saturating_add(1);
+        let stored_workflow = normalize_workflow_definition(workflow, workflow_id, next_version)?;
+        let now = Utc::now().to_rfc3339();
+        let definition_json = serde_json::to_string(&stored_workflow)
+            .context("failed to serialize workflow definition")?;
+
+        let mut connection = connection;
+        let tx = connection.transaction()?;
+        tx.execute(
+            "update workflows
+             set name = ?3,
+                 description = ?4,
+                 current_version = ?5,
+                 updated_at = ?6
+             where workspace_id = ?1 and workflow_id = ?2",
+            params![
+                workspace_id,
+                workflow_id,
+                stored_workflow.name.as_str(),
+                stored_workflow.description.as_deref(),
+                stored_workflow.version,
+                now
+            ],
+        )?;
+        tx.execute(
+            "insert into workflow_versions (workspace_id, workflow_id, version, definition_json, created_at)
+             values (?1, ?2, ?3, ?4, ?5)",
+            params![workspace_id, workflow_id, stored_workflow.version, definition_json, now],
+        )?;
+        tx.commit()?;
+
+        let workflow = workflow_summary(workspace_id, &stored_workflow);
+        Ok(Some(WorkflowResponse {
+            workflow,
+            definition: stored_workflow,
+        }))
+    }
+
+    pub fn save_run_snapshot(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        snapshot: &RunSnapshot,
+    ) -> anyhow::Result<()> {
+        let connection = self.connection();
+        ensure_workspace_access(&connection, user_id, workspace_id)?;
+
+        let now = Utc::now().to_rfc3339();
+        let snapshot_json = serde_json::to_string(snapshot)
+            .context("failed to serialize run snapshot")?;
+
+        connection.execute(
+            "insert into runs (
+                workspace_id,
+                run_id,
+                workflow_id,
+                workflow_version,
+                status,
+                snapshot_json,
+                created_at,
+                updated_at
+             )
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             on conflict(workspace_id, run_id) do update set
+                workflow_id = excluded.workflow_id,
+                workflow_version = excluded.workflow_version,
+                status = excluded.status,
+                snapshot_json = excluded.snapshot_json,
+                updated_at = excluded.updated_at",
+            params![
+                workspace_id,
+                snapshot.run_id.as_str(),
+                snapshot.workflow_id.as_str(),
+                snapshot.workflow_version,
+                run_status_to_db(&snapshot.status),
+                snapshot_json,
+                now,
+                now
+            ],
+        )?;
+
+        Ok(())
+    }
+
+    pub fn list_workspace_run_records(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+    ) -> anyhow::Result<Vec<StoredRunRecord>> {
+        let connection = self.connection();
+        ensure_workspace_access(&connection, user_id, workspace_id)?;
+
+        let mut stmt = connection.prepare(
+            "select run_id, snapshot_json
+             from runs
+             where workspace_id = ?1
+             order by updated_at desc, created_at desc",
+        )?;
+        let records = stmt
+            .query_map(params![workspace_id], |row| {
+                Ok(StoredRunRecord {
+                    run_id: row.get(0)?,
+                    snapshot_json: row.get(1)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(records)
+    }
+
     fn initialize(&self) -> anyhow::Result<()> {
         let connection = self.connection();
         connection.execute_batch(
@@ -289,6 +562,43 @@ impl PlatformStore {
                 primary key (workspace_id, user_id),
                 foreign key (workspace_id) references workspaces (workspace_id) on delete cascade,
                 foreign key (user_id) references users (user_id) on delete cascade
+            );
+
+            create table if not exists workflows (
+                workspace_id text not null,
+                workflow_id text not null,
+                name text not null,
+                description text null,
+                current_version integer not null,
+                created_at text not null,
+                updated_at text not null,
+                primary key (workspace_id, workflow_id),
+                foreign key (workspace_id) references workspaces (workspace_id) on delete cascade
+            );
+
+            create table if not exists workflow_versions (
+                workspace_id text not null,
+                workflow_id text not null,
+                version integer not null,
+                definition_json text not null,
+                created_at text not null,
+                primary key (workspace_id, workflow_id, version),
+                foreign key (workspace_id, workflow_id)
+                  references workflows (workspace_id, workflow_id)
+                  on delete cascade
+            );
+
+            create table if not exists runs (
+                workspace_id text not null,
+                run_id text not null,
+                workflow_id text not null,
+                workflow_version integer not null,
+                status text not null,
+                snapshot_json text not null,
+                created_at text not null,
+                updated_at text not null,
+                primary key (workspace_id, run_id),
+                foreign key (workspace_id) references workspaces (workspace_id) on delete cascade
             );
             ",
         )?;
@@ -330,6 +640,12 @@ struct SessionRecord {
     session_id: String,
     user_id: String,
     expires_at: String,
+}
+
+#[derive(Debug)]
+pub struct StoredRunRecord {
+    pub run_id: String,
+    pub snapshot_json: String,
 }
 
 fn build_session_response(
@@ -384,6 +700,66 @@ fn build_session_response(
         workspaces,
         active_workspace_id,
     })
+}
+
+fn ensure_workspace_access(
+    connection: &Connection,
+    user_id: &str,
+    workspace_id: &str,
+) -> anyhow::Result<()> {
+    let membership: Option<String> = connection
+        .query_row(
+            "select workspace_id
+             from workspace_memberships
+             where workspace_id = ?1 and user_id = ?2",
+            params![workspace_id, user_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    if membership.is_some() {
+        Ok(())
+    } else {
+        Err(anyhow!("workspace `{workspace_id}` was not found"))
+    }
+}
+
+fn normalize_workflow_definition(
+    workflow: &WorkflowDefinition,
+    workflow_id: &str,
+    version: u32,
+) -> anyhow::Result<WorkflowDefinition> {
+    let trimmed_workflow_id = workflow_id.trim();
+    if trimmed_workflow_id.is_empty() {
+        return Err(anyhow!("workflow_id cannot be empty"));
+    }
+
+    let trimmed_name = workflow.name.trim();
+    if trimmed_name.is_empty() {
+        return Err(anyhow!("workflow name cannot be empty"));
+    }
+
+    Ok(WorkflowDefinition {
+        workflow_id: trimmed_workflow_id.to_string(),
+        version,
+        name: trimmed_name.to_string(),
+        description: workflow
+            .description
+            .as_ref()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        ..workflow.clone()
+    })
+}
+
+fn workflow_summary(workspace_id: &str, workflow: &WorkflowDefinition) -> WorkflowSummary {
+    WorkflowSummary {
+        workflow_id: workflow.workflow_id.clone(),
+        workspace_id: workspace_id.to_string(),
+        name: workflow.name.clone(),
+        description: workflow.description.clone(),
+        version: workflow.version,
+    }
 }
 
 fn ensure_parent_dir(database_path: &str) -> anyhow::Result<()> {
@@ -487,5 +863,18 @@ fn role_to_db(role: WorkspaceMembershipRole) -> &'static str {
     match role {
         WorkspaceMembershipRole::Owner => "owner",
         WorkspaceMembershipRole::Editor => "editor",
+    }
+}
+
+fn run_status_to_db(status: &api_contract::RunStatus) -> &'static str {
+    match status {
+        api_contract::RunStatus::Created => "created",
+        api_contract::RunStatus::Queued => "queued",
+        api_contract::RunStatus::Planning => "planning",
+        api_contract::RunStatus::Running => "running",
+        api_contract::RunStatus::Succeeded => "succeeded",
+        api_contract::RunStatus::Failed => "failed",
+        api_contract::RunStatus::Cancelling => "cancelling",
+        api_contract::RunStatus::Cancelled => "cancelled",
     }
 }

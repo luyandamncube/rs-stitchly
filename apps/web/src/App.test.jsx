@@ -11,6 +11,7 @@ vi.mock('./components/CanvasWorkspace', () => ({
 const api = vi.hoisted(() => ({
   createWorkspace: vi.fn(),
   getSession: vi.fn(),
+  getWorkspaceRuns: vi.fn(),
   login: vi.fn(),
   logout: vi.fn()
 }));
@@ -48,9 +49,11 @@ describe('App platform shell', () => {
     window.history.replaceState({}, '', '/');
     api.createWorkspace.mockReset();
     api.getSession.mockReset();
+    api.getWorkspaceRuns.mockReset();
     api.login.mockReset();
     api.logout.mockReset();
     api.getSession.mockResolvedValue(UNAUTHENTICATED_SESSION);
+    api.getWorkspaceRuns.mockResolvedValue({ runs: [] });
   });
 
   it('shows the login route by default and enters workspace overview after sign-in', async () => {

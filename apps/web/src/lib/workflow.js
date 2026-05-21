@@ -17,7 +17,7 @@ export function createCanvasElements(
   return {
     nodes: workflow.nodes.map((node) => ({
       id: node.node_id,
-      type: 'stitchly',
+      type: resolveCanvasNodeType(node.type_id),
       position: node.position,
       selected: node.node_id === selectedNodeId,
       data: {
@@ -50,6 +50,38 @@ export function createCanvasElements(
       target: edge.target_node_id,
       targetHandle: edge.target_port_id
     }))
+  }
+}
+
+export function connectWorkflowNodes(workflow, connection) {
+  if (!connection.source || !connection.target || !connection.sourceHandle || !connection.targetHandle) {
+    return workflow
+  }
+
+  const duplicateEdge = workflow.edges.find(
+    (edge) =>
+      edge.source_node_id === connection.source &&
+      edge.source_port_id === connection.sourceHandle &&
+      edge.target_node_id === connection.target &&
+      edge.target_port_id === connection.targetHandle
+  )
+
+  if (duplicateEdge) {
+    return workflow
+  }
+
+  return {
+    ...workflow,
+    edges: [
+      ...workflow.edges,
+      {
+        edge_id: nextWorkflowEdgeId(workflow, connection),
+        source_node_id: connection.source,
+        source_port_id: connection.sourceHandle,
+        target_node_id: connection.target,
+        target_port_id: connection.targetHandle
+      }
+    ]
   }
 }
 
@@ -141,7 +173,37 @@ export function updateNodeLabel(workflow, nodeId, nextLabel) {
             ...node,
             label: nextLabel
           }
-        : node
+      : node
     )
   }
+}
+
+function resolveCanvasNodeType(typeId) {
+  if (typeId === 'text_input') {
+    return 'text_input'
+  }
+
+  if (typeId === 'send_email') {
+    return 'send_email'
+  }
+
+  return 'stitchly'
+}
+
+function nextWorkflowEdgeId(workflow, connection) {
+  const baseId = `edge_${connection.source}_${connection.sourceHandle}_to_${connection.target}_${connection.targetHandle}`
+
+  if (!workflow.edges.some((edge) => edge.edge_id === baseId)) {
+    return baseId
+  }
+
+  let suffix = 2
+  let nextId = `${baseId}_${suffix}`
+
+  while (workflow.edges.some((edge) => edge.edge_id === nextId)) {
+    suffix += 1
+    nextId = `${baseId}_${suffix}`
+  }
+
+  return nextId
 }

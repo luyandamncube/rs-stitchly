@@ -776,6 +776,43 @@ fn validate_node_config(node: &WorkflowNode) -> Option<ValidationIssue> {
             }
             None
         }
+        "send_email" => {
+            let to = node.config.get("to").and_then(Value::as_str);
+            if to.is_none() {
+                return Some(issue(
+                    "invalid_send_email_recipient",
+                    format!(
+                        "Node `{}` requires a string `to` config field.",
+                        node.node_id
+                    ),
+                    Some(format!("workflow.nodes.{}.config.to", node.node_id)),
+                ));
+            }
+
+            let subject = node.config.get("subject").and_then(Value::as_str);
+            if subject.is_none() {
+                return Some(issue(
+                    "invalid_send_email_subject",
+                    format!(
+                        "Node `{}` requires a string `subject` config field.",
+                        node.node_id
+                    ),
+                    Some(format!("workflow.nodes.{}.config.subject", node.node_id)),
+                ));
+            }
+
+            if let Some(body) = node.config.get("body") {
+                if !body.is_string() {
+                    return Some(issue(
+                        "invalid_send_email_body",
+                        format!("Node `{}` expects optional string `body`.", node.node_id),
+                        Some(format!("workflow.nodes.{}.config.body", node.node_id)),
+                    ));
+                }
+            }
+
+            None
+        }
         _ => None,
     }
 }

@@ -8,7 +8,8 @@ export function createCanvasElements(
   workflow,
   nodeDefinitions,
   selectedNodeId,
-  hoveredNodeId = null
+  hoveredNodeId = null,
+  selectedEdgeId = null
 ) {
   const definitionMap = Object.fromEntries(
     nodeDefinitions.map((definition) => [definition.type_id, definition])
@@ -45,6 +46,7 @@ export function createCanvasElements(
     })),
     edges: workflow.edges.map((edge) => ({
       id: edge.edge_id,
+      selected: edge.edge_id === selectedEdgeId,
       source: edge.source_node_id,
       sourceHandle: edge.source_port_id,
       target: edge.target_node_id,
@@ -82,6 +84,27 @@ export function connectWorkflowNodes(workflow, connection) {
         target_port_id: connection.targetHandle
       }
     ]
+  }
+}
+
+export function reconnectWorkflowEdge(workflow, edgeId, connection) {
+  if (!edgeId || !connection.source || !connection.target || !connection.sourceHandle || !connection.targetHandle) {
+    return workflow
+  }
+
+  return {
+    ...workflow,
+    edges: workflow.edges.map((edge) =>
+      edge.edge_id === edgeId
+        ? {
+            ...edge,
+            source_node_id: connection.source,
+            source_port_id: connection.sourceHandle,
+            target_node_id: connection.target,
+            target_port_id: connection.targetHandle
+          }
+        : edge
+    )
   }
 }
 
@@ -143,6 +166,7 @@ export function canConnect(connection, workflow, nodeDefinitions) {
 
   const alreadyConnected = workflow.edges.some(
     (edge) =>
+      edge.edge_id !== connection.edgeId &&
       edge.target_node_id === connection.target &&
       edge.target_port_id === connection.targetHandle
   )

@@ -29,12 +29,28 @@ function getSendEmailNode() {
   return node
 }
 
+function getTextInputNode() {
+  const node = screen.getByText('Text Input').closest('.workflow-node-card')
+
+  expect(node).not.toBeNull()
+
+  return node
+}
+
 describe('WorkflowCanvas', () => {
-  it('renders the real send email node from the persisted workflow', () => {
+  it('renders the real text input and send email nodes from the persisted workflow', () => {
     render(<CanvasHarness />)
 
+    const textInputNode = getTextInputNode()
     const sendEmailNode = getSendEmailNode()
 
+    expect(textInputNode).toHaveClass('workflow-node-card')
+    expect(
+      within(textInputNode).getByText(
+        'Please inspect the latest failed refunds batch and acknowledge the issue.'
+      )
+    ).toBeInTheDocument()
+    expect(within(textInputNode).getByText('73 chars')).toBeInTheDocument()
     expect(sendEmailNode).toHaveClass('workflow-node-card')
     expect(within(sendEmailNode).getByText('Notify')).toBeInTheDocument()
     expect(within(sendEmailNode).getByText('ops@stitchly.dev')).toBeInTheDocument()
@@ -47,11 +63,13 @@ describe('WorkflowCanvas', () => {
   it('does not keep the old placeholder starter nodes in the flow', () => {
     const { container } = render(<CanvasHarness />)
 
+    const textInputNode = container.querySelector('[data-id="input_text"] .workflow-node-card')
     const sendEmailNode = container.querySelector(
       '[data-id="send_email_notification"] .workflow-node-card'
     )
     const placeholderNode = container.querySelector('.schema-node')
 
+    expect(textInputNode).not.toBeNull()
     expect(sendEmailNode).not.toBeNull()
     expect(placeholderNode).toBeNull()
   })

@@ -1,6 +1,11 @@
 import nodeDefinitionFixture from '../../../../tests/fixtures/api/node_definitions.json';
 import workflowFixture from '../../../../tests/fixtures/workflows/basic_text_preview.json';
-import { createCanvasElements } from './workflow';
+import {
+  canConnect,
+  createCanvasElements,
+  reconnectWorkflowEdge,
+  syncWorkflowEdges
+} from './workflow';
 
 describe('createCanvasElements', () => {
   it('consumes the shared fixture workflow and preserves its graph shape', () => {
@@ -8,13 +13,42 @@ describe('createCanvasElements', () => {
       workflowFixture,
       nodeDefinitionFixture.node_definitions,
       workflowFixture.nodes[0].node_id,
-      workflowFixture.nodes[0].node_id
+      workflowFixture.nodes[1].node_id
     );
 
-    expect(graph.nodes).toHaveLength(1);
-    expect(graph.edges).toHaveLength(0);
-    expect(graph.nodes[0].type).toBe('send_email');
-    expect(graph.nodes[0].data.label).toBe('Send Email');
-    expect(graph.nodes[0].data.uiState.interaction.hovered).toBe(true);
+    expect(graph.nodes).toHaveLength(2);
+    expect(graph.edges).toHaveLength(1);
+    expect(graph.nodes[0].type).toBe('text_input');
+    expect(graph.nodes[0].data.label).toBe('Text Input');
+    expect(graph.edges[0].sourceHandle).toBe('text');
+    expect(graph.edges[0].targetHandle).toBe('body');
+    expect(graph.nodes[1].data.uiState.interaction.hovered).toBe(true);
   });
+
+  it('can remove and resync edges from the workflow graph', () => {
+    const nextWorkflow = syncWorkflowEdges(workflowFixture, [])
+
+    expect(nextWorkflow.edges).toHaveLength(0)
+  })
+
+  it('can reconnect an existing edge without tripping the single-target guard', () => {
+    const edge = workflowFixture.edges[0]
+    const nextConnection = {
+      edgeId: edge.edge_id,
+      source: 'input_text',
+      sourceHandle: 'text',
+      target: 'send_email_notification',
+      targetHandle: 'body'
+    }
+
+    expect(
+      canConnect(nextConnection, workflowFixture, nodeDefinitionFixture.node_definitions)
+    ).toBe(true)
+
+    const nextWorkflow = reconnectWorkflowEdge(workflowFixture, edge.edge_id, nextConnection)
+
+    expect(nextWorkflow.edges[0].source_node_id).toBe('input_text')
+    expect(nextWorkflow.edges[0].target_node_id).toBe('send_email_notification')
+    expect(nextWorkflow.edges[0].target_port_id).toBe('body')
+  })
 });

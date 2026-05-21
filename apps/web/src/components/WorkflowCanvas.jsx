@@ -1,5 +1,6 @@
-import { memo, useCallback, useMemo, useRef } from 'react'
+import { memo, useCallback, useMemo, useRef, useState } from 'react'
 import {
+  applyEdgeChanges,
   applyNodeChanges,
   Background,
   Handle,
@@ -11,6 +12,8 @@ import {
   canConnect,
   connectWorkflowNodes,
   createCanvasElements,
+  reconnectWorkflowEdge,
+  syncWorkflowEdges,
   syncWorkflowNodes
 } from '../lib/workflow'
 
@@ -44,10 +47,11 @@ function WorkflowCanvas({
   workflow
 }) {
   const debugSignatureRef = useRef('')
+  const [selectedEdgeId, setSelectedEdgeId] = useState(null)
 
   const { edges, nodes } = useMemo(
-    () => createCanvasElements(workflow, nodeDefinitions, selectedNodeId, null),
-    [nodeDefinitions, selectedNodeId, workflow]
+    () => createCanvasElements(workflow, nodeDefinitions, selectedNodeId, null, selectedEdgeId),
+    [nodeDefinitions, selectedEdgeId, selectedNodeId, workflow]
   )
 
   const publishDebugState = useCallback(
@@ -127,6 +131,7 @@ function WorkflowCanvas({
 
   const handleNodeClick = useCallback(
     (event, node) => {
+      setSelectedEdgeId(null)
       onSelectionChange?.(node.id)
       inspectCanvas(event, node.id)
     },
@@ -156,6 +161,16 @@ function WorkflowCanvas({
 
   const handlePaneClick = useCallback(
     (event) => {
+      setSelectedEdgeId(null)
+      onSelectionChange?.(null)
+      inspectCanvas(event, null)
+    },
+    [inspectCanvas, onSelectionChange]
+  )
+
+  const handleEdgeClick = useCallback(
+    (event, edge) => {
+      setSelectedEdgeId(edge.id)
       onSelectionChange?.(null)
       inspectCanvas(event, null)
     },
@@ -185,7 +200,52 @@ function WorkflowCanvas({
         return
       }
 
+      setSelectedEdgeId(null)
       onWorkflowChange(connectWorkflowNodes(workflow, connection))
+    },
+    [nodeDefinitions, onWorkflowChange, workflow]
+  )
+
+  const handleEdgesChange = useCallback(
+    (changes) => {
+      if (!workflow || !onWorkflowChange || !changes.length) {
+        return
+      }
+
+      const nextEdges = applyEdgeChanges(changes, edges)
+      const removed = changes.some((change) => change.type === 'remove')
+      const selectedChange = changes.find((change) => change.type === 'select')
+
+      if (selectedChange && 'selected' in selectedChange) {
+        setSelectedEdgeId(selectedChange.selected ? selectedChange.id : null)
+        if (selectedChange.selected) {
+          onSelectionChange?.(null)
+        }
+      }
+
+      if (removed) {
+        if (!nextEdges.some((edge) => edge.id === selectedEdgeId)) {
+          setSelectedEdgeId(null)
+        }
+
+        onWorkflowChange(syncWorkflowEdges(workflow, nextEdges))
+      }
+    },
+    [edges, onSelectionChange, onWorkflowChange, selectedEdgeId, workflow]
+  )
+
+  const handleReconnect = useCallback(
+    (oldEdge, connection) => {
+      if (
+        !workflow ||
+        !onWorkflowChange ||
+        !canConnect({ ...connection, edgeId: oldEdge.id }, workflow, nodeDefinitions)
+      ) {
+        return
+      }
+
+      setSelectedEdgeId(oldEdge.id)
+      onWorkflowChange(reconnectWorkflowEdge(workflow, oldEdge.id, connection))
     },
     [nodeDefinitions, onWorkflowChange, workflow]
   )
@@ -202,14 +262,13 @@ function WorkflowCanvas({
         defaultEdgeOptions={{
           animated: false,
           pathOptions: {
-            borderRadius: 24,
-            offset: 18
+            curvature: 0.42
           },
           style: {
             stroke: 'rgba(255, 122, 26, 0.62)',
             strokeWidth: 2.6
           },
-          type: 'smoothstep'
+          type: 'bezier'
         }}
         defaultViewport={{
           x: 0,
@@ -217,18 +276,22 @@ function WorkflowCanvas({
           zoom: 1
         }}
         edges={edges}
+        edgesReconnectable
         isValidConnection={(connection) => canConnect(connection, workflow, nodeDefinitions)}
         maxZoom={1}
         minZoom={1}
         nodeTypes={NODE_TYPES}
         nodes={nodes}
         onConnect={handleConnect}
+        onEdgeClick={handleEdgeClick}
+        onEdgesChange={handleEdgesChange}
         onNodeClick={handleNodeClick}
         onNodeDoubleClick={handleNodeDoubleClick}
         onNodeMouseEnter={handleNodeMouseEnter}
         onNodeMouseLeave={handleNodeMouseLeave}
         onNodesChange={handleNodesChange}
         onPaneClick={handlePaneClick}
+        onReconnect={handleReconnect}
         panOnDrag={false}
         proOptions={{ hideAttribution: true }}
         zoomOnDoubleClick={false}

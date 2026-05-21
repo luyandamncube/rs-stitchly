@@ -1079,7 +1079,55 @@ function prepareCanvasWorkflow(workflow) {
     return cloneWorkflow(starterWorkflowFixture);
   }
 
-  return workflow;
+  return ensureStarterEmailDraftFlow(workflow);
+}
+
+function ensureStarterEmailDraftFlow(workflow) {
+  const nextWorkflow = cloneWorkflow(workflow);
+  const sendEmailNode = nextWorkflow.nodes.find((node) => node.type_id === 'send_email') ?? null;
+  const starterTextNode =
+    starterWorkflowFixture.nodes.find((node) => node.type_id === 'text_input') ?? null;
+
+  if (!starterTextNode || !sendEmailNode) {
+    return nextWorkflow;
+  }
+
+  let textInputNode = nextWorkflow.nodes.find((node) => node.type_id === 'text_input') ?? null;
+
+  if (!textInputNode) {
+    textInputNode = {
+      ...starterTextNode,
+      position: {
+        x: Math.max(80, (sendEmailNode.position?.x ?? starterTextNode.position.x) - 400),
+        y: sendEmailNode.position?.y ?? starterTextNode.position.y
+      }
+    };
+
+    nextWorkflow.nodes = [textInputNode, ...nextWorkflow.nodes];
+  }
+
+  const hasBodyEdge = nextWorkflow.edges.some(
+    (edge) =>
+      edge.source_node_id === textInputNode.node_id &&
+      edge.source_port_id === 'text' &&
+      edge.target_node_id === sendEmailNode.node_id &&
+      edge.target_port_id === 'body'
+  );
+
+  if (!hasBodyEdge) {
+    nextWorkflow.edges = [
+      ...nextWorkflow.edges,
+      {
+        edge_id: `edge_${textInputNode.node_id}_text_to_${sendEmailNode.node_id}_body`,
+        source_node_id: textInputNode.node_id,
+        source_port_id: 'text',
+        target_node_id: sendEmailNode.node_id,
+        target_port_id: 'body'
+      }
+    ];
+  }
+
+  return nextWorkflow;
 }
 
 function readStoredCanvasDebugCollapsed() {

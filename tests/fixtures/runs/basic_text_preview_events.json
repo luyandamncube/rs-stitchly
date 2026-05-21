@@ -8,6 +8,9 @@
     "node_started",
     "node_log",
     "node_finished",
+    "node_started",
+    "node_log",
+    "node_finished",
     "run_succeeded"
   ]
 }

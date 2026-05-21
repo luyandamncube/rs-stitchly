@@ -2,9 +2,22 @@
   "schema_version": 1,
   "workflow_id": "wf_text_preview",
   "version": 1,
-  "name": "Send Email Flow",
-  "description": "A starter workflow for the send email node study.",
+  "name": "Email Draft Flow",
+  "description": "A starter workflow with text input feeding the send email node.",
   "nodes": [
+    {
+      "node_id": "input_text",
+      "type_id": "text_input",
+      "definition_version": 1,
+      "label": "Text Input",
+      "config": {
+        "text": "Please inspect the latest failed refunds batch and acknowledge the issue."
+      },
+      "position": {
+        "x": 120,
+        "y": 180
+      }
+    },
     {
       "node_id": "send_email_notification",
       "type_id": "send_email",
@@ -12,16 +25,23 @@
       "label": "Send Email",
       "config": {
         "to": "ops@stitchly.dev",
-        "subject": "Failed refunds need review from the latest sync",
-        "body": "Please inspect the latest failed refunds batch and acknowledge the issue."
+        "subject": "Failed refunds need review from the latest sync"
       },
       "position": {
-        "x": 420,
+        "x": 520,
         "y": 180
       }
     }
   ],
-  "edges": [],
+  "edges": [
+    {
+      "edge_id": "edge_input_text_to_send_email_body",
+      "source_node_id": "input_text",
+      "source_port_id": "text",
+      "target_node_id": "send_email_notification",
+      "target_port_id": "body"
+    }
+  ],
   "metadata": {
     "viewport": {
       "x": 0,

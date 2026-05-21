@@ -55,9 +55,9 @@ These archetypes are the reusable visual patterns we should design once and then
 | `NODE_TRG_MANUAL` | `manual_trigger` | Trigger | Declared | Now | `ARC_TRIGGER_ROLE` | Not started | Needed for simple on-demand workflow starts and local testing flows |
 | `NODE_TRG_SCHEDULE` | `schedule_trigger` | Trigger | Declared | Now | `ARC_TRIGGER_ROLE` | `v1` sample exists | Needed for recurring jobs and already useful as the reference trigger study |
 | `NODE_TRG_EVENT` | `event_trigger` | Trigger | Declared | Soon | `ARC_TRIGGER_ROLE` | Not started | Needed for webhook and event-driven workflows, but can follow the trigger archetype after manual/schedule |
-| `NODE_IN_FILE` | `file_input` | Input | Declared | Now | `ARC_INPUT_REFERENCE` | Not started | Core for artifact-based workflows and file-oriented execution |
-| `NODE_IN_TEXT` | `text_input` | Input | Declared | Now | `ARC_INPUT_LITERAL` | Not started | Already part of the early MVP and useful for simple editor-driven flows |
-| `NODE_IN_JSON` | `json_input` | Input | Declared | Now | `ARC_INPUT_LITERAL` | Not started | Important for structured control/config payloads without needing a file |
+| `NODE_IN_FILE` | `file_input` | Input | Declared | Now | `ARC_INPUT_REFERENCE` | `v1` sample exists | Core for artifact-based workflows and file-oriented execution |
+| `NODE_IN_TEXT` | `text_input` | Input | Declared | Now | `ARC_INPUT_LITERAL` | `v1` sample exists | Already part of the early MVP and useful for simple editor-driven flows |
+| `NODE_IN_JSON` | `json_input` | Input | Declared | Now | `ARC_INPUT_LITERAL` | `v1` sample exists | Important for structured control/config payloads without needing a file |
 | `NODE_IN_TABLE` | `table_input` | Input | Declared | Now | `ARC_INPUT_REFERENCE` | Not started | Important for dataflow-first workflows and warehouse/table references |
 | `NODE_IN_OBJECT_STORE` | `object_store_input` | Input | Declared | Soon | `ARC_INPUT_REFERENCE` | Not started | Useful once staging/object-store workflows become first-class |
 | `NODE_CMP_API_REQUEST` | `api_request` | Compute | Proposed | Now | `ARC_COMPUTE_REQUEST` | `v1` sample exists | Missing from the declared taxonomy but highly useful and already a natural fit for the current visual direction |
@@ -75,7 +75,7 @@ These archetypes are the reusable visual patterns we should design once and then
 | `NODE_CTL_APPROVAL_GATE` | `approval_gate` | Control | Proposed | Later | `ARC_HUMAN_GATE` | Not started | Good future workflow primitive for human-in-the-loop orchestration |
 | `NODE_CTL_SUBGRAPH` | `subgraph` | Control | Proposed | Later | `ARC_CONTROL_FLOW` | Not started | Useful for encapsulation and reusable workflow blocks once graph composition matures |
 | `NODE_OUT_FILE` | `file_output` | Output | Declared | Now | `ARC_OUTPUT_RESULT` | Not started | Core artifact-oriented output surface |
-| `NODE_OUT_PREVIEW` | `preview_output` | Output | Declared | Now | `ARC_OUTPUT_RESULT` | Not started | Important for fast UI feedback and the current MVP |
+| `NODE_OUT_PREVIEW` | `preview_output` | Output | Declared | Now | `ARC_OUTPUT_RESULT` | `v1` sample exists | Important for fast UI feedback and the current MVP |
 | `NODE_OUT_JSON` | `json_output` | Output | Declared | Soon | `ARC_OUTPUT_RESULT` | Not started | Useful for structured downstream consumption or persisted structured results |
 | `NODE_OUT_TABLE` | `table_output` | Output | Declared | Now | `ARC_OUTPUT_RESULT` | Not started | Important for dataflow and warehouse-oriented workflows |
 | `NODE_OUT_NOTIFICATION` | `notification` | Output | Proposed | Soon | `ARC_OUTPUT_RESULT` | Not started | Useful future sink for Slack, email, webhook, or alert-style flows |

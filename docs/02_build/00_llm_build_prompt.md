@@ -61,6 +61,9 @@ Use these docs for these responsibilities:
 - `docs/03_ui/04_ui_lab_workflow.md`
   Workflow for isolating UI samples, reviewing variants, approving patterns, and then implementing them in the real app.
 
+- `docs/03_ui/05_node_design_inventory.md`
+  Node-design planning backlog, shared archetypes, and the keyed candidate list to use when deciding which node studies to build next.
+
 - `docs/00_foundation/06_backend_api.md`
   API design, endpoint families, Rust API stack, REST and SSE transport model, and sample payloads.
 
@@ -118,11 +121,12 @@ When docs overlap, prefer them in this order:
 6. `03_ui/02_ui_roadmap.md`
 7. `03_ui/03_node_reference_analysis.md`
 8. `03_ui/04_ui_lab_workflow.md`
-9. `06_backend_api.md`
-10. `15_node_definition_spec.md`
-11. `19_compute_model.md`
-12. `18_run_lifecycle_and_events.md`
-13. the remaining foundation and UI docs
+9. `03_ui/05_node_design_inventory.md`
+10. `06_backend_api.md`
+11. `15_node_definition_spec.md`
+12. `19_compute_model.md`
+13. `18_run_lifecycle_and_events.md`
+14. the remaining foundation and UI docs
 
 If details are missing:
 

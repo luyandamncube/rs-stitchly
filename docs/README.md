@@ -50,6 +50,7 @@ The goal is to document:
 - `03_ui/02_ui_roadmap.md`: phased UI delivery plan, sandbox-first build method, and recommended next implementation order
 - `03_ui/03_node_reference_analysis.md`: detailed analysis of the sample node design language, spacing, hierarchy, handles, and practical implications for Stitchly
 - `03_ui/04_ui_lab_workflow.md`: workflow for building isolated HTML/CSS design samples, reviewing variants, and graduating approved patterns into the real UI
+- `03_ui/05_node_design_inventory.md`: node-design approval backlog, shared visual archetypes, and the candidate node list keyed for approve/reject decisions
 
 ## Workflows
 

@@ -5,13 +5,29 @@ const DRAG_THRESHOLD_PX = 6;
 const SANDBOX_NODE_DEFS = [
   {
     id: 'sandbox_a',
+    icon: '*',
     label: 'Sandbox A',
+    rows: [
+      { icon: 'o', kind: 'pill', label: 'Surface', value: 'Node shell' },
+      { icon: '·', kind: 'plain', label: 'Scope', value: 'Phase 1A' }
+    ],
+    subtitle: 'Trigger shell',
+    topChip: 'Start',
+    footer: { icon: 'o', label: 'Status', value: 'Ready' },
     left: 'clamp(24px, 12vw, 220px)',
     top: 'clamp(132px, 24vh, 180px)'
   },
   {
     id: 'sandbox_b',
+    icon: '<>',
     label: 'Sandbox B',
+    rows: [
+      { icon: 'o', kind: 'pill', label: 'Surface', value: 'Node shell' },
+      { icon: '·', kind: 'plain', label: 'Scope', value: 'Phase 1A' }
+    ],
+    subtitle: 'Compute shell',
+    topChip: null,
+    footer: { icon: 'o', label: 'Status', value: 'Ready' },
     left: 'clamp(280px, 48vw, 620px)',
     top: 'clamp(236px, 42vh, 320px)'
   }
@@ -630,6 +646,8 @@ function WorkflowCanvas({
           }}
         >
           <CanvasStateSandbox
+            footer={sandboxNode.footer}
+            icon={sandboxNode.icon}
             label={sandboxNode.label}
             onConnectionHandlePointerDown={(event) =>
               handleConnectionHandlePointerDown(sandboxNode.id, event)
@@ -650,7 +668,10 @@ function WorkflowCanvas({
             onPointerMove={(event) => handleSandboxPointerMove(sandboxNode.id, event)}
             onPointerUp={(event) => handleSandboxPointerUp(sandboxNode.id, event)}
             resolvedState={resolvedSandboxStates[sandboxNode.id]}
+            rows={sandboxNode.rows}
             sandboxId={sandboxNode.id}
+            subtitle={sandboxNode.subtitle}
+            topChip={sandboxNode.topChip}
           />
         </div>
       ))}
@@ -659,6 +680,8 @@ function WorkflowCanvas({
 }
 
 export function CanvasStateSandbox({
+  footer = DEFAULT_SANDBOX_FOOTER,
+  icon = '*',
   label = 'State Sandbox',
   onConnectionHandlePointerDown,
   onConnectionTargetPointerDown,
@@ -673,10 +696,14 @@ export function CanvasStateSandbox({
   onPointerMove,
   onPointerUp,
   resolvedState,
-  sandboxId = 'sandbox'
+  rows = DEFAULT_SANDBOX_ROWS,
+  sandboxId = 'sandbox',
+  subtitle = 'State sandbox',
+  topChip = 'Start'
 }) {
   return (
     <div
+      aria-label={label}
       className={buildSandboxClassName(resolvedState)}
       aria-selected={resolvedState.interaction.selected}
       data-sandbox-id={sandboxId}
@@ -703,6 +730,54 @@ export function CanvasStateSandbox({
         tabIndex={-1}
         type="button"
       />
+      {topChip ? <span className="canvas-state-sandbox__top-chip">{topChip}</span> : null}
+      <div className="canvas-state-sandbox__frame">
+        <div className="canvas-state-sandbox__header">
+          <div className="canvas-state-sandbox__heading">
+            <span className="canvas-state-sandbox__icon" aria-hidden="true">
+              {icon}
+            </span>
+            <div className="canvas-state-sandbox__heading-copy">
+              <strong className="canvas-state-sandbox__title">{label}</strong>
+              <span className="canvas-state-sandbox__subtitle">{subtitle}</span>
+            </div>
+          </div>
+          <span className="canvas-state-sandbox__menu" aria-hidden="true">
+            ...
+          </span>
+        </div>
+
+        <div className="canvas-state-sandbox__body">
+          {rows.map((row) => (
+            <div
+              key={row.label}
+              className={`canvas-state-sandbox__row canvas-state-sandbox__row--${row.kind ?? 'plain'}`}
+            >
+              <span className="canvas-state-sandbox__row-label">
+                {row.icon ? (
+                  <span className="canvas-state-sandbox__row-icon" aria-hidden="true">
+                    {row.icon}
+                  </span>
+                ) : null}
+                <span>{row.label}</span>
+              </span>
+              <strong className="canvas-state-sandbox__row-value">{row.value}</strong>
+            </div>
+          ))}
+        </div>
+
+        <div className="canvas-state-sandbox__footer">
+          <span className="canvas-state-sandbox__footer-label">
+            {footer.icon ? (
+              <span className="canvas-state-sandbox__footer-icon" aria-hidden="true">
+                {footer.icon}
+              </span>
+            ) : null}
+            <span>{footer.label}</span>
+          </span>
+          <strong className="canvas-state-sandbox__footer-value">{footer.value}</strong>
+        </div>
+      </div>
       <button
         aria-label={`${label} source handle`}
         className="canvas-state-sandbox__handle canvas-state-sandbox__handle--source"
@@ -710,10 +785,16 @@ export function CanvasStateSandbox({
         tabIndex={-1}
         type="button"
       />
-      {label}
     </div>
   );
 }
+
+const DEFAULT_SANDBOX_ROWS = [
+  { icon: 'o', kind: 'pill', label: 'Surface', value: 'Node shell' },
+  { icon: '·', kind: 'plain', label: 'Scope', value: 'Sandbox' }
+];
+
+const DEFAULT_SANDBOX_FOOTER = { icon: 'o', label: 'Status', value: 'Ready' };
 
 export function buildSandboxClassName(resolvedState) {
   const classes = ['canvas-state-sandbox'];

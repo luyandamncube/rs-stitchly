@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Design Lab · Conditional</title>
+    <link rel="stylesheet" href="../shared.css" />
+  </head>
+  <body>
+    <main class="lab-page">
+      <section class="lab-stage" aria-label="Conditional node sample">
+        <article class="node-card node-card--conditional" aria-label="Conditional node" data-node-kind="condition">
+          <span class="node-card__handle node-card__handle--left" aria-hidden="true"></span>
+
+          <header class="node-card__header">
+            <div class="node-card__heading">
+              <span class="node-card__icon node-card__icon--compound" aria-hidden="true">
+                <span class="node-card__icon-dot"></span>
+                <span class="node-card__icon-arc"></span>
+              </span>
+              <strong>Conditional</strong>
+            </div>
+
+            <span class="node-card__menu" aria-hidden="true">...</span>
+          </header>
+
+          <section class="node-card__body">
+            <div class="node-card__row node-card__row--kv">
+              <span class="node-card__label">Condition</span>
+              <strong class="node-card__value">order_total &gt; 100</strong>
+            </div>
+
+            <section class="node-card__panel" aria-label="Last run">
+              <p class="node-card__panel-title">Last run</p>
+
+              <div class="node-card__stats">
+                <div class="node-card__stat">
+                  <span class="node-card__stat-label">True (Premium)</span>
+                  <strong class="node-card__stat-value">23</strong>
+                </div>
+
+                <div class="node-card__stat">
+                  <span class="node-card__stat-label">False (Standard)</span>
+                  <strong class="node-card__stat-value">14</strong>
+                </div>
+              </div>
+            </section>
+          </section>
+
+          <footer class="node-card__footer">
+            <span class="node-card__footer-meta">
+              <span class="node-card__footer-icon" aria-hidden="true">o</span>
+              <span>Duration</span>
+            </span>
+            <strong>0.8s</strong>
+          </footer>
+
+          <span class="node-card__handle node-card__handle--right node-card__handle--right-upper" aria-hidden="true"></span>
+          <span
+            class="node-card__handle node-card__handle--right node-card__handle--right-lower node-card__handle--branch-secondary"
+            aria-hidden="true"
+          ></span>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

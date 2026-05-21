@@ -47,6 +47,9 @@ The goal is to document:
 
 - `03_ui/00_frontend_canvas.md`: React Flow editor responsibilities, shell model, visual direction, node design direction, and UX rules
 - `03_ui/01_node_state_model.md`: node interaction, connection, validation, and runtime state layers for the canvas UI
+- `03_ui/02_ui_roadmap.md`: phased UI delivery plan, sandbox-first build method, and recommended next implementation order
+- `03_ui/03_node_reference_analysis.md`: detailed analysis of the sample node design language, spacing, hierarchy, handles, and practical implications for Stitchly
+- `03_ui/04_ui_lab_workflow.md`: workflow for building isolated HTML/CSS design samples, reviewing variants, and graduating approved patterns into the real UI
 
 ## Workflows
 

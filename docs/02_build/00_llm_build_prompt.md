@@ -49,6 +49,18 @@ Use these docs for these responsibilities:
 - `docs/03_ui/00_frontend_canvas.md`
   Frontend scope and non-responsibilities, shell model, visual direction, and interaction rules.
 
+- `docs/03_ui/01_node_state_model.md`
+  Node interaction, connection, validation, and runtime state behavior for the canvas UI.
+
+- `docs/03_ui/02_ui_roadmap.md`
+  Recommended UI implementation phases, sequencing, and sandbox-first delivery method.
+
+- `docs/03_ui/03_node_reference_analysis.md`
+  Detailed breakdown of the sample node design language, spacing, hierarchy, handles, and what Stitchly should preserve or adapt.
+
+- `docs/03_ui/04_ui_lab_workflow.md`
+  Workflow for isolating UI samples, reviewing variants, approving patterns, and then implementing them in the real app.
+
 - `docs/00_foundation/06_backend_api.md`
   API design, endpoint families, Rust API stack, REST and SSE transport model, and sample payloads.
 
@@ -102,11 +114,15 @@ When docs overlap, prefer them in this order:
 2. `10_mvp_scope.md`
 3. `14_repo_structure_and_build.md`
 4. `03_ui/00_frontend_canvas.md`
-5. `06_backend_api.md`
-6. `15_node_definition_spec.md`
-7. `19_compute_model.md`
-8. `18_run_lifecycle_and_events.md`
-9. the remaining foundation and UI docs
+5. `03_ui/01_node_state_model.md`
+6. `03_ui/02_ui_roadmap.md`
+7. `03_ui/03_node_reference_analysis.md`
+8. `03_ui/04_ui_lab_workflow.md`
+9. `06_backend_api.md`
+10. `15_node_definition_spec.md`
+11. `19_compute_model.md`
+12. `18_run_lifecycle_and_events.md`
+13. the remaining foundation and UI docs
 
 If details are missing:
 

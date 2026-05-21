@@ -6,6 +6,14 @@ import WorkflowCanvas, {
   CanvasStateSandbox
 } from './WorkflowCanvas';
 
+function getSandbox(label) {
+  const sandbox = screen.getByText(label).closest('.canvas-state-sandbox');
+
+  expect(sandbox).not.toBeNull();
+
+  return sandbox;
+}
+
 describe('CanvasStateSandbox', () => {
   it('maps resolved interaction state to sandbox classes', () => {
     const className = buildSandboxClassName({
@@ -28,7 +36,7 @@ describe('CanvasStateSandbox', () => {
     expect(className).toContain('is-focused');
   });
 
-  it('renders the sandbox as a plain focusable canvas element', () => {
+  it('renders the sandbox as a focusable node shell element', () => {
     render(
       <CanvasStateSandbox
         label="Sandbox A"
@@ -47,13 +55,17 @@ describe('CanvasStateSandbox', () => {
       />
     );
 
-    const sandbox = screen.getByText('Sandbox A');
+    const sandbox = getSandbox('Sandbox A');
     const connectionHandle = screen.getByRole('button', { name: 'Sandbox A source handle' });
     const targetHandle = screen.getByRole('button', { name: 'Sandbox A target handle' });
 
     expect(sandbox).toHaveClass('canvas-state-sandbox');
     expect(connectionHandle).toHaveClass('canvas-state-sandbox__handle');
     expect(targetHandle).toHaveClass('canvas-state-sandbox__handle');
+    expect(sandbox.querySelector('.canvas-state-sandbox__top-chip')).not.toBeNull();
+    expect(sandbox.querySelector('.canvas-state-sandbox__header')).not.toBeNull();
+    expect(sandbox.querySelector('.canvas-state-sandbox__body')).not.toBeNull();
+    expect(sandbox.querySelector('.canvas-state-sandbox__footer')).not.toBeNull();
     expect(sandbox).toHaveAttribute('aria-selected', 'false');
     expect(sandbox).toHaveAttribute('data-sandbox-id', 'sandbox');
     expect(sandbox).toHaveAttribute('data-connection-state', 'target-valid');
@@ -78,7 +90,7 @@ describe('CanvasStateSandbox', () => {
 
     const { container } = render(<WorkflowCanvas sandboxState={sandboxState} />);
 
-    const sandbox = screen.getByText('Sandbox A');
+    const sandbox = getSandbox('Sandbox A');
     const canvasSurface = container.querySelector('.canvas-surface');
 
     expect(canvasSurface).not.toBeNull();
@@ -112,8 +124,8 @@ describe('CanvasStateSandbox', () => {
 
     render(<WorkflowCanvas sandboxState={sandboxState} />);
 
-    const sandboxA = screen.getByText('Sandbox A');
-    const sandboxB = screen.getByText('Sandbox B');
+    const sandboxA = getSandbox('Sandbox A');
+    const sandboxB = getSandbox('Sandbox B');
 
     fireEvent.pointerDown(sandboxA);
 
@@ -142,8 +154,8 @@ describe('CanvasStateSandbox', () => {
 
     render(<WorkflowCanvas sandboxState={sandboxState} />);
 
-    const sandboxA = screen.getByText('Sandbox A');
-    const sandboxB = screen.getByText('Sandbox B');
+    const sandboxA = getSandbox('Sandbox A');
+    const sandboxB = getSandbox('Sandbox B');
 
     expect(sandboxA).toHaveAttribute('data-validation-state', 'valid');
     expect(sandboxB).toHaveAttribute('data-validation-state', 'valid');
@@ -175,8 +187,8 @@ describe('CanvasStateSandbox', () => {
 
     render(<WorkflowCanvas sandboxState={sandboxState} />);
 
-    const sandboxA = screen.getByText('Sandbox A');
-    const sandboxB = screen.getByText('Sandbox B');
+    const sandboxA = getSandbox('Sandbox A');
+    const sandboxB = getSandbox('Sandbox B');
 
     expect(sandboxA).toHaveAttribute('data-validation-state', 'valid');
     expect(sandboxB).toHaveAttribute('data-validation-state', 'valid');
@@ -208,8 +220,8 @@ describe('CanvasStateSandbox', () => {
 
     render(<WorkflowCanvas sandboxState={sandboxState} />);
 
-    const sandboxA = screen.getByText('Sandbox A');
-    const sandboxB = screen.getByText('Sandbox B');
+    const sandboxA = getSandbox('Sandbox A');
+    const sandboxB = getSandbox('Sandbox B');
 
     expect(sandboxA).toHaveAttribute('data-runtime-state', 'idle');
     expect(sandboxB).toHaveAttribute('data-runtime-state', 'idle');
@@ -241,8 +253,8 @@ describe('CanvasStateSandbox', () => {
 
     render(<WorkflowCanvas sandboxState={sandboxState} />);
 
-    const sandboxA = screen.getByText('Sandbox A');
-    const sandboxB = screen.getByText('Sandbox B');
+    const sandboxA = getSandbox('Sandbox A');
+    const sandboxB = getSandbox('Sandbox B');
 
     expect(sandboxA).toHaveAttribute('data-runtime-state', 'idle');
     expect(sandboxB).toHaveAttribute('data-runtime-state', 'idle');
@@ -274,8 +286,8 @@ describe('CanvasStateSandbox', () => {
 
     render(<WorkflowCanvas sandboxState={sandboxState} />);
 
-    const sandboxA = screen.getByText('Sandbox A');
-    const sandboxB = screen.getByText('Sandbox B');
+    const sandboxA = getSandbox('Sandbox A');
+    const sandboxB = getSandbox('Sandbox B');
 
     expect(sandboxA).toHaveAttribute('data-runtime-state', 'idle');
     expect(sandboxB).toHaveAttribute('data-runtime-state', 'idle');
@@ -307,8 +319,8 @@ describe('CanvasStateSandbox', () => {
 
     render(<WorkflowCanvas sandboxState={sandboxState} />);
 
-    const sandboxA = screen.getByText('Sandbox A');
-    const sandboxB = screen.getByText('Sandbox B');
+    const sandboxA = getSandbox('Sandbox A');
+    const sandboxB = getSandbox('Sandbox B');
 
     expect(sandboxA).toHaveAttribute('data-runtime-state', 'idle');
     expect(sandboxB).toHaveAttribute('data-runtime-state', 'idle');
@@ -340,8 +352,8 @@ describe('CanvasStateSandbox', () => {
 
     render(<WorkflowCanvas sandboxState={sandboxState} />);
 
-    const sandboxA = screen.getByText('Sandbox A');
-    const sandboxB = screen.getByText('Sandbox B');
+    const sandboxA = getSandbox('Sandbox A');
+    const sandboxB = getSandbox('Sandbox B');
 
     expect(sandboxA).toHaveAttribute('data-runtime-state', 'idle');
     expect(sandboxB).toHaveAttribute('data-runtime-state', 'idle');
@@ -373,7 +385,7 @@ describe('CanvasStateSandbox', () => {
 
     render(<WorkflowCanvas sandboxState={sandboxState} />);
 
-    const sandbox = screen.getByText('Sandbox A');
+    const sandbox = getSandbox('Sandbox A');
 
     fireEvent.pointerDown(sandbox);
 
@@ -411,7 +423,7 @@ describe('CanvasStateSandbox', () => {
 
     render(<WorkflowCanvas sandboxState={sandboxState} />);
 
-    const sandbox = screen.getByText('Sandbox A');
+    const sandbox = getSandbox('Sandbox A');
     const connectionHandle = screen.getByRole('button', { name: 'Sandbox A source handle' });
 
     fireEvent.pointerDown(connectionHandle, { clientX: 140, clientY: 120, pointerId: 7 });
@@ -442,8 +454,8 @@ describe('CanvasStateSandbox', () => {
 
     render(<WorkflowCanvas sandboxState={sandboxState} />);
 
-    const sandboxA = screen.getByText('Sandbox A');
-    const sandboxB = screen.getByText('Sandbox B');
+    const sandboxA = getSandbox('Sandbox A');
+    const sandboxB = getSandbox('Sandbox B');
     const sourceHandle = screen.getByRole('button', { name: 'Sandbox A source handle' });
     const targetHandle = screen.getByRole('button', { name: 'Sandbox B target handle' });
 
@@ -485,8 +497,8 @@ describe('CanvasStateSandbox', () => {
 
     render(<WorkflowCanvas sandboxState={sandboxState} />);
 
-    const sandboxA = screen.getByText('Sandbox A');
-    const sandboxB = screen.getByText('Sandbox B');
+    const sandboxA = getSandbox('Sandbox A');
+    const sandboxB = getSandbox('Sandbox B');
     const sourceHandle = screen.getByRole('button', { name: 'Sandbox B source handle' });
     const targetHandle = screen.getByRole('button', { name: 'Sandbox A target handle' });
 
@@ -568,7 +580,7 @@ describe('CanvasStateSandbox', () => {
 
     render(<WorkflowCanvas sandboxState={sandboxState} />);
 
-    const sandbox = screen.getByText('Sandbox A');
+    const sandbox = getSandbox('Sandbox A');
 
     fireEvent.keyDown(window, { key: 'Tab' });
     fireEvent.focus(sandbox);
@@ -599,7 +611,7 @@ describe('CanvasStateSandbox', () => {
 
     render(<WorkflowCanvas onDebugStateChange={onDebugStateChange} sandboxState={sandboxState} />);
 
-    const sandbox = screen.getByText('Sandbox A');
+    const sandbox = getSandbox('Sandbox A');
 
     expect(() => fireEvent.focus(sandbox)).not.toThrow();
     expect(onDebugStateChange).toHaveBeenCalled();

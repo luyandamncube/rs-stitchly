@@ -55,7 +55,7 @@ export function createCanvasElements(
   }
 }
 
-export function connectWorkflowNodes(workflow, connection) {
+export function connectWorkflowNodes(workflow, connection, nodeDefinitions = []) {
   if (!connection.source || !connection.target || !connection.sourceHandle || !connection.targetHandle) {
     return workflow
   }
@@ -72,10 +72,22 @@ export function connectWorkflowNodes(workflow, connection) {
     return workflow
   }
 
+  const targetPort = findTargetPortDefinition(workflow, connection, nodeDefinitions)
+  const nextEdges =
+    targetPort && !targetPort.multiple
+      ? workflow.edges.filter(
+          (edge) =>
+            !(
+              edge.target_node_id === connection.target &&
+              edge.target_port_id === connection.targetHandle
+            )
+        )
+      : workflow.edges
+
   return {
     ...workflow,
     edges: [
-      ...workflow.edges,
+      ...nextEdges,
       {
         edge_id: nextWorkflowEdgeId(workflow, connection),
         source_node_id: connection.source,
@@ -87,14 +99,27 @@ export function connectWorkflowNodes(workflow, connection) {
   }
 }
 
-export function reconnectWorkflowEdge(workflow, edgeId, connection) {
+export function reconnectWorkflowEdge(workflow, edgeId, connection, nodeDefinitions = []) {
   if (!edgeId || !connection.source || !connection.target || !connection.sourceHandle || !connection.targetHandle) {
     return workflow
   }
 
+  const targetPort = findTargetPortDefinition(workflow, connection, nodeDefinitions)
+  const nextEdges =
+    targetPort && !targetPort.multiple
+      ? workflow.edges.filter(
+          (edge) =>
+            edge.edge_id === edgeId ||
+            !(
+              edge.target_node_id === connection.target &&
+              edge.target_port_id === connection.targetHandle
+            )
+        )
+      : workflow.edges
+
   return {
     ...workflow,
-    edges: workflow.edges.map((edge) =>
+    edges: nextEdges.map((edge) =>
       edge.edge_id === edgeId
         ? {
             ...edge,
@@ -141,37 +166,100 @@ export function syncWorkflowEdges(workflow, edges) {
   }
 }
 
+export function removeWorkflowEdge(workflow, edgeId) {
+  return {
+    ...workflow,
+    edges: workflow.edges.filter((edge) => edge.edge_id !== edgeId)
+  }
+}
+
 export function canConnect(connection, workflow, nodeDefinitions) {
+  return inspectConnection(connection, workflow, nodeDefinitions).valid
+}
+
+export function inspectConnection(connection, workflow, nodeDefinitions) {
   if (!connection.source || !connection.target || !connection.sourceHandle || !connection.targetHandle) {
-    return false
+    return {
+      reason: 'missing_endpoint',
+      sourceDataType: null,
+      sourceFound: false,
+      sourceHandleFound: false,
+      sourceTypeId: null,
+      targetDataType: null,
+      targetFound: false,
+      targetHandleFound: false,
+      targetTypeId: null,
+      valid: false
+    }
   }
 
   const sourceNode = workflow.nodes.find((node) => node.node_id === connection.source)
   const targetNode = workflow.nodes.find((node) => node.node_id === connection.target)
   if (!sourceNode || !targetNode) {
-    return false
+    return {
+      reason: !sourceNode ? 'missing_source_node' : 'missing_target_node',
+      sourceDataType: null,
+      sourceFound: Boolean(sourceNode),
+      sourceHandleFound: false,
+      sourceTypeId: sourceNode?.type_id ?? null,
+      targetDataType: null,
+      targetFound: Boolean(targetNode),
+      targetHandleFound: false,
+      targetTypeId: targetNode?.type_id ?? null,
+      valid: false
+    }
   }
 
-  const sourceDefinition = nodeDefinitions.find((definition) => definition.type_id === sourceNode.type_id)
-  const targetDefinition = nodeDefinitions.find((definition) => definition.type_id === targetNode.type_id)
+  const sourceDefinition = findNodeDefinition(sourceNode, nodeDefinitions)
+  const targetDefinition = findNodeDefinition(targetNode, nodeDefinitions)
   if (!sourceDefinition || !targetDefinition) {
-    return false
+    return {
+      reason: !sourceDefinition ? 'missing_source_definition' : 'missing_target_definition',
+      sourceDataType: null,
+      sourceFound: true,
+      sourceHandleFound: false,
+      sourceTypeId: sourceNode.type_id,
+      targetDataType: null,
+      targetFound: true,
+      targetHandleFound: false,
+      targetTypeId: targetNode.type_id,
+      valid: false
+    }
   }
 
   const sourcePort = sourceDefinition.outputs.find((port) => port.port_id === connection.sourceHandle)
   const targetPort = targetDefinition.inputs.find((port) => port.port_id === connection.targetHandle)
   if (!sourcePort || !targetPort) {
-    return false
+    return {
+      reason: !sourcePort ? 'missing_source_port' : 'missing_target_port',
+      sourceDataType: normalizeDataType(sourcePort?.data_type),
+      sourceFound: true,
+      sourceHandleFound: Boolean(sourcePort),
+      sourceTypeId: sourceNode.type_id,
+      targetDataType: normalizeDataType(targetPort?.data_type),
+      targetFound: true,
+      targetHandleFound: Boolean(targetPort),
+      targetTypeId: targetNode.type_id,
+      valid: false
+    }
   }
 
-  const alreadyConnected = workflow.edges.some(
-    (edge) =>
-      edge.edge_id !== connection.edgeId &&
-      edge.target_node_id === connection.target &&
-      edge.target_port_id === connection.targetHandle
-  )
+  const sourceDataType = normalizeDataType(sourcePort.data_type)
+  const targetDataType = normalizeDataType(targetPort.data_type)
+  const valid = sourceDataType === targetDataType
 
-  return sourcePort.data_type === targetPort.data_type && (targetPort.multiple || !alreadyConnected)
+  return {
+    reason: valid ? 'ok' : 'type_mismatch',
+    sourceDataType,
+    sourceFound: true,
+    sourceHandleFound: true,
+    sourceTypeId: sourceNode.type_id,
+    targetDataType,
+    targetFound: true,
+    targetHandleFound: true,
+    targetTypeId: targetNode.type_id,
+    valid
+  }
 }
 
 export function updateNodeConfig(workflow, nodeId, nextConfig) {
@@ -230,4 +318,56 @@ function nextWorkflowEdgeId(workflow, connection) {
   }
 
   return nextId
+}
+
+function findTargetPortDefinition(workflow, connection, nodeDefinitions) {
+  const targetNode = workflow.nodes.find((node) => node.node_id === connection.target)
+  const targetDefinition = findNodeDefinition(targetNode, nodeDefinitions)
+
+  return targetDefinition?.inputs.find((port) => port.port_id === connection.targetHandle) ?? null
+}
+
+function normalizeDataType(value) {
+  return String(value ?? '').trim().toLowerCase()
+}
+
+function findNodeDefinition(node, nodeDefinitions) {
+  if (!node) {
+    return null
+  }
+
+  const matchedDefinition = nodeDefinitions.find(
+    (definition) => definition.type_id === node.type_id
+  )
+
+  if (matchedDefinition) {
+    return matchedDefinition
+  }
+
+  return FALLBACK_NODE_DEFINITIONS[node.type_id] ?? null
+}
+
+const FALLBACK_NODE_DEFINITIONS = {
+  send_email: {
+    inputs: [
+      {
+        data_type: 'text',
+        multiple: false,
+        port_id: 'body'
+      }
+    ],
+    outputs: [],
+    type_id: 'send_email'
+  },
+  text_input: {
+    inputs: [],
+    outputs: [
+      {
+        data_type: 'text',
+        multiple: false,
+        port_id: 'text'
+      }
+    ],
+    type_id: 'text_input'
+  }
 }

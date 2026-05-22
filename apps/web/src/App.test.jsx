@@ -92,9 +92,55 @@ describe('App platform shell', () => {
     expect(container.querySelector('.dashboard-app--sidebar-collapsed')).not.toBeNull();
     expect(screen.getByText('Default Workspace')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Desktop' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /expand sidebar/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /collapse sidebar/i })).toBeNull();
   });
 
-  it('collapses the dashboard sidebar into the icon rail', async () => {
+  it('opens the canvas node shelf on click from the collapsed rail', async () => {
+    api.login.mockResolvedValue(AUTHENTICATED_SESSION);
+
+    const { container } = render(<App />);
+
+    await screen.findByRole('heading', { name: /log in/i });
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+    expect(await screen.findByRole('heading', { name: 'Overview' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /open canvas/i }));
+
+    const outputButton = await screen.findByRole('button', { name: 'Output' });
+    expect(outputButton).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(outputButton);
+
+    expect(outputButton).toHaveAttribute('aria-expanded', 'true');
+    expect(container.querySelector('.dashboard-node-group.is-open')).not.toBeNull();
+    expect(screen.getByText('Preview Output')).toBeInTheDocument();
+    expect(screen.getByText('Send Email')).toBeInTheDocument();
+  });
+
+  it('closes the active canvas node shelf after a drag operation ends', async () => {
+    api.login.mockResolvedValue(AUTHENTICATED_SESSION);
+
+    const { container } = render(<App />);
+
+    await screen.findByRole('heading', { name: /log in/i });
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+    expect(await screen.findByRole('heading', { name: 'Overview' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /open canvas/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Output' }));
+
+    const sendEmailShelfItem = await screen.findByRole('button', { name: 'Send Email' });
+    fireEvent.dragEnd(sendEmailShelfItem);
+
+    await waitFor(() => {
+      expect(container.querySelector('.dashboard-node-group.is-open')).toBeNull();
+    });
+
+    expect(screen.queryByText('Preview Output')).toBeNull();
+  });
+
+  it('uses the collapsed rail as the default sidebar state without a visible toggle', async () => {
     api.login.mockResolvedValue(AUTHENTICATED_SESSION);
 
     const { container } = render(<App />);
@@ -103,15 +149,9 @@ describe('App platform shell', () => {
     fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
 
     expect(await screen.findByRole('heading', { name: 'Overview' })).toBeInTheDocument();
-    expect(container.querySelector('.dashboard-app--sidebar-collapsed')).toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { name: /collapse sidebar/i }));
-
-    await waitFor(() => {
-      expect(container.querySelector('.dashboard-app--sidebar-collapsed')).not.toBeNull();
-    });
-
-    expect(screen.getByRole('button', { name: /expand sidebar/i })).toBeInTheDocument();
+    expect(container.querySelector('.dashboard-app--sidebar-collapsed')).not.toBeNull();
+    expect(screen.queryByRole('button', { name: /expand sidebar/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /collapse sidebar/i })).toBeNull();
   });
 
   it('collapses the attention panel to a compact summary', async () => {

@@ -11,6 +11,7 @@ import {
 } from 'react-router-dom';
 import CanvasWorkspace from './components/CanvasWorkspace';
 import { createWorkspace, getSession, getWorkspaceRuns, login, logout } from './lib/api';
+import { setDraggedNodeType } from './lib/canvasDnD';
 
 const APP_SCREENS = [
   {
@@ -45,13 +46,99 @@ const APP_SCREENS = [
   }
 ];
 
+const SIDEBAR_SCREEN_IDS = new Set(['overview', 'canvas', 'runs']);
+
+const NODE_SHELF_GROUPS = [
+  {
+    id: 'trigger',
+    label: 'Trigger',
+    icon: 'T',
+    items: [
+      { typeId: 'manual_trigger', label: 'Manual Trigger', implemented: false },
+      { typeId: 'schedule_trigger', label: 'Schedule Trigger', implemented: false },
+      { typeId: 'event_trigger', label: 'Event Trigger', implemented: false }
+    ]
+  },
+  {
+    id: 'input',
+    label: 'Input',
+    icon: 'I',
+    items: [
+      { typeId: 'text_input', label: 'Text Input', implemented: true },
+      { typeId: 'json_input', label: 'JSON Input', implemented: false },
+      { typeId: 'file_input', label: 'File Input', implemented: false },
+      { typeId: 'table_input', label: 'Table Input', implemented: false },
+      { typeId: 'object_store_input', label: 'Object Store Input', implemented: false }
+    ]
+  },
+  {
+    id: 'compute',
+    label: 'Compute',
+    icon: 'C',
+    items: [
+      { typeId: 'api_request', label: 'API Request', implemented: false },
+      { typeId: 'python_script', label: 'Python Script', implemented: false },
+      { typeId: 'transform', label: 'Transform', implemented: false },
+      { typeId: 'sql_transform', label: 'SQL Transform', implemented: false },
+      { typeId: 'rust_native', label: 'Rust Native', implemented: false },
+      { typeId: 'engine_workload', label: 'Engine Workload', implemented: false }
+    ]
+  },
+  {
+    id: 'data_movement',
+    label: 'Data Movement',
+    icon: 'D',
+    items: [
+      { typeId: 'extract', label: 'Extract', implemented: false },
+      { typeId: 'load', label: 'Load', implemented: false },
+      { typeId: 'materialize', label: 'Materialize', implemented: false }
+    ]
+  },
+  {
+    id: 'control',
+    label: 'Control',
+    icon: 'F',
+    items: [
+      { typeId: 'branch', label: 'Branch', implemented: false },
+      { typeId: 'merge', label: 'Merge', implemented: false },
+      { typeId: 'map', label: 'Map', implemented: false },
+      { typeId: 'approval_gate', label: 'Approval Gate', implemented: false },
+      { typeId: 'subgraph', label: 'Subgraph', implemented: false }
+    ]
+  },
+  {
+    id: 'output',
+    label: 'Output',
+    icon: 'O',
+    items: [
+      { typeId: 'preview_output', label: 'Preview Output', implemented: false },
+      { typeId: 'file_output', label: 'File Output', implemented: false },
+      { typeId: 'json_output', label: 'JSON Output', implemented: false },
+      { typeId: 'table_output', label: 'Table Output', implemented: false },
+      { typeId: 'send_email', label: 'Send Email', implemented: true },
+      { typeId: 'send_telegram', label: 'Send Telegram', implemented: false },
+      { typeId: 'notification', label: 'Notification', implemented: false }
+    ]
+  },
+  {
+    id: 'system',
+    label: 'System',
+    icon: 'S',
+    items: [
+      { typeId: 'cache', label: 'Cache', implemented: false },
+      { typeId: 'quality_check', label: 'Quality Check', implemented: false },
+      { typeId: 'debug', label: 'Debug', implemented: false },
+      { typeId: 'note', label: 'Note', implemented: false }
+    ]
+  }
+];
+
 const VIEW_MODES = [
   { id: 'desktop', label: 'Desktop' },
   { id: 'mobile', label: 'Mobile' }
 ];
 
 const VIEW_MODE_STORAGE_KEY = 'stitchly.view-mode.v1';
-const SIDEBAR_COLLAPSE_STORAGE_KEY = 'stitchly.dashboard.sidebar-collapsed.v1';
 const ATTENTION_COLLAPSE_STORAGE_KEY = 'stitchly.dashboard.attention-collapsed.v1';
 const UNAUTHENTICATED_SESSION = {
   authenticated: false,
@@ -66,9 +153,6 @@ export default function App() {
     session: UNAUTHENTICATED_SESSION
   });
   const [viewMode, setViewMode] = useState(() => readStoredViewMode());
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() =>
-    readStoredSidebarCollapsed()
-  );
   const [isAttentionCollapsed, setIsAttentionCollapsed] = useState(() =>
     readStoredAttentionCollapsed()
   );
@@ -84,17 +168,6 @@ export default function App() {
 
     window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
   }, [viewMode]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-
-    window.localStorage.setItem(
-      SIDEBAR_COLLAPSE_STORAGE_KEY,
-      JSON.stringify(isSidebarCollapsed)
-    );
-  }, [isSidebarCollapsed]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -134,9 +207,7 @@ export default function App() {
         onLogout={handleLogout}
         onRefreshSession={handleRefreshSession}
         onToggleAttentionCollapsed={setIsAttentionCollapsed}
-        onToggleSidebarCollapsed={setIsSidebarCollapsed}
         isAttentionCollapsed={isAttentionCollapsed}
-        isSidebarCollapsed={isSidebarCollapsed}
         session={sessionState.session}
         setViewMode={setViewMode}
         viewMode={viewMode}
@@ -151,9 +222,7 @@ function AppRoutes({
   onLogout,
   onRefreshSession,
   onToggleAttentionCollapsed,
-  onToggleSidebarCollapsed,
   isAttentionCollapsed,
-  isSidebarCollapsed,
   session,
   setViewMode,
   viewMode
@@ -197,9 +266,7 @@ function AppRoutes({
               onLogout={onLogout}
               onRefreshSession={onRefreshSession}
               onToggleAttentionCollapsed={onToggleAttentionCollapsed}
-              onToggleSidebarCollapsed={onToggleSidebarCollapsed}
               isAttentionCollapsed={isAttentionCollapsed}
-              isSidebarCollapsed={isSidebarCollapsed}
               session={session}
               setViewMode={setViewMode}
               viewMode={viewMode}
@@ -239,9 +306,7 @@ function WorkspaceScreenRoute({
   onLogout,
   onRefreshSession,
   onToggleAttentionCollapsed,
-  onToggleSidebarCollapsed,
   isAttentionCollapsed,
-  isSidebarCollapsed,
   session,
   setViewMode,
   viewMode
@@ -263,11 +328,9 @@ function WorkspaceScreenRoute({
       activeScreen={activeScreen}
       activeWorkspace={activeWorkspace}
       isAttentionCollapsed={isAttentionCollapsed}
-      isSidebarCollapsed={isSidebarCollapsed}
       onLogout={onLogout}
       onRefreshSession={onRefreshSession}
       onToggleAttentionCollapsed={onToggleAttentionCollapsed}
-      onToggleSidebarCollapsed={onToggleSidebarCollapsed}
       session={session}
       setViewMode={setViewMode}
       viewMode={viewMode}
@@ -279,34 +342,33 @@ function ProductShell({
   activeScreen,
   activeWorkspace,
   isAttentionCollapsed,
-  isSidebarCollapsed,
   onLogout,
   onRefreshSession,
   onToggleAttentionCollapsed,
-  onToggleSidebarCollapsed,
   session,
   setViewMode,
   viewMode
 }) {
   const isCanvasRoute = activeScreen.id === 'canvas';
-  const [isCanvasSidebarExpanded, setIsCanvasSidebarExpanded] = useState(false);
-  const isSidebarCollapsedEffective = isCanvasRoute
-    ? !isCanvasSidebarExpanded
-    : isSidebarCollapsed;
+  const [activeCanvasShelfId, setActiveCanvasShelfId] = useState(null);
+  const [draggedCanvasNodeType, setDraggedCanvasNodeType] = useState(null);
+  const [canvasActions, setCanvasActions] = useState(null);
+  const activeCanvasShelfGroup =
+    NODE_SHELF_GROUPS.find((group) => group.id === activeCanvasShelfId) ?? null;
+  const isSidebarCollapsedEffective = true;
 
   useEffect(() => {
-    if (isCanvasRoute) {
-      setIsCanvasSidebarExpanded(false);
-    }
+    setActiveCanvasShelfId(null);
+    setDraggedCanvasNodeType(null);
   }, [activeWorkspace.workspace_id, isCanvasRoute]);
 
-  function handleSidebarToggle() {
-    if (isCanvasRoute) {
-      setIsCanvasSidebarExpanded((current) => !current);
-      return;
-    }
+  function handleCanvasShelfToggle(groupId) {
+    setActiveCanvasShelfId((current) => (current === groupId ? null : groupId));
+  }
 
-    onToggleSidebarCollapsed((current) => !current);
+  function handleCanvasNodeAdd(typeId) {
+    canvasActions?.addNode?.(typeId);
+    setActiveCanvasShelfId(null);
   }
 
   return (
@@ -327,19 +389,6 @@ function ProductShell({
               : ''
           }`}
         >
-          <div className="dashboard-sidebar__control-row">
-            <button
-              aria-label={isSidebarCollapsedEffective ? 'Expand sidebar' : 'Collapse sidebar'}
-              className="dashboard-sidebar__collapse-button"
-              onClick={handleSidebarToggle}
-              type="button"
-            >
-              <span aria-hidden="true">
-                {isSidebarCollapsedEffective ? '↗' : '←'}
-              </span>
-            </button>
-          </div>
-
           {/* <div className="dashboard-sidebar__brand">
             <span className="dashboard-brand-chip">
               <img
@@ -362,7 +411,7 @@ function ProductShell({
 
           <div className="dashboard-sidebar__nav">
             <div className="dashboard-nav-group">
-              {APP_SCREENS.map((screen) => (
+              {APP_SCREENS.filter((screen) => SIDEBAR_SCREEN_IDS.has(screen.id)).map((screen) => (
                 <NavLink
                   key={screen.id}
                   className={({ isActive }) =>
@@ -370,42 +419,51 @@ function ProductShell({
                   }
                   aria-label={screen.label}
                   to={`/w/${activeWorkspace.slug}/${screen.id}`}
-                  title={screen.label}
                 >
                   <span className="dashboard-nav-item__icon" aria-hidden="true">
                     <DashboardNavIcon screenId={screen.id} />
                   </span>
                   <span className="dashboard-nav-item__label">{screen.label}</span>
+                  <span className="dashboard-nav-item__tooltip" role="tooltip">
+                    {screen.label}
+                  </span>
                 </NavLink>
               ))}
             </div>
+
+            {isCanvasRoute ? (
+              <>
+                <span className="dashboard-sidebar__rail-divider" aria-hidden="true" />
+
+                <div className="dashboard-sidebar__node-groups">
+                  {NODE_SHELF_GROUPS.map((group) => (
+                    <SidebarNodeShelfGroup
+                      key={group.id}
+                      group={group}
+                      isOpen={activeCanvasShelfId === group.id}
+                      onToggle={() => handleCanvasShelfToggle(group.id)}
+                    />
+                  ))}
+                </div>
+              </>
+            ) : null}
 
             <span className="dashboard-sidebar__rail-divider" aria-hidden="true" />
 
             <div className="dashboard-sidebar__subnav">
               <button
-                aria-label="Refresh session"
-                className="dashboard-nav-item dashboard-nav-item--utility"
-                onClick={() => void onRefreshSession()}
-                title="Refresh session"
-                type="button"
-              >
-                <span className="dashboard-nav-item__icon" aria-hidden="true">
-                  <UtilityIcon kind="refresh" />
-                </span>
-                <span className="dashboard-nav-item__label">Refresh session</span>
-              </button>
-              <button
                 aria-label="Sign out"
                 className="dashboard-nav-item dashboard-nav-item--utility"
                 onClick={onLogout}
-                title="Sign out"
                 type="button"
               >
                 <span className="dashboard-nav-item__icon" aria-hidden="true">
                   <UtilityIcon kind="logout" />
                 </span>
                 <span className="dashboard-nav-item__label">Sign out</span>
+                <span className="dashboard-nav-item__tooltip" role="tooltip">
+                  Sign out
+                </span>
               </button>
             </div>
 
@@ -467,6 +525,18 @@ function ProductShell({
             </div>
           </div>
 
+          {isCanvasRoute && isSidebarCollapsedEffective && activeCanvasShelfGroup ? (
+            <CanvasNodeShelfDrawer
+              group={activeCanvasShelfGroup}
+              onAddNode={handleCanvasNodeAdd}
+              onNodeDragEnd={() => {
+                setDraggedCanvasNodeType(null);
+                setActiveCanvasShelfId(null);
+              }}
+              onNodeDragStart={setDraggedCanvasNodeType}
+            />
+          ) : null}
+
           <div className="dashboard-sidebar__footer">
             <div className="dashboard-profile">
               <span className="dashboard-profile__avatar dashboard-profile__avatar--symbol">
@@ -491,7 +561,9 @@ function ProductShell({
             </div>
             <main className="dashboard-canvas-shell__stage">
               <CanvasScreen
+                draggedNodeType={draggedCanvasNodeType}
                 isFullScreen
+                onRegisterCanvasActions={setCanvasActions}
                 workspaceId={activeWorkspace.workspace_id}
               />
             </main>
@@ -574,6 +646,77 @@ function WorkspaceSwitcher({ activeWorkspace, variant = 'sidebar', workspaces })
         ))}
       </div>
     </section>
+  );
+}
+
+function SidebarNodeShelfGroup({ group, isOpen = false, onToggle }) {
+  return (
+    <div className={`dashboard-node-group${isOpen ? ' is-open' : ''}`}>
+      <button
+        aria-label={group.label}
+        aria-controls={`dashboard-node-shelf-${group.id}`}
+        aria-expanded={isOpen}
+        className="dashboard-nav-item dashboard-nav-item--node-group"
+        onClick={onToggle}
+        type="button"
+      >
+        <span className="dashboard-nav-item__icon dashboard-nav-item__icon--glyph" aria-hidden="true">
+          {group.icon}
+        </span>
+        <span className="dashboard-nav-item__label">{group.label}</span>
+        <span className="dashboard-nav-item__tooltip" role="tooltip">
+          {group.label}
+        </span>
+      </button>
+    </div>
+  );
+}
+
+function CanvasNodeShelfDrawer({ group, onAddNode, onNodeDragEnd, onNodeDragStart }) {
+  return (
+    <aside
+      aria-label={`${group.label} nodes`}
+      className="dashboard-node-shelf"
+      id={`dashboard-node-shelf-${group.id}`}
+    >
+      <div className="dashboard-node-shelf__header">
+        <span>{group.label}</span>
+      </div>
+      <div className="dashboard-node-shelf__grid">
+        {group.items.map((item) => (
+          <button
+            key={item.typeId}
+            className={`dashboard-node-shelf__item${
+              item.implemented ? '' : ' is-disabled'
+            }`}
+            disabled={!item.implemented || !onAddNode}
+            draggable={item.implemented && Boolean(onAddNode)}
+            onDragEnd={() => onNodeDragEnd?.()}
+            onDragStart={(event) => {
+              if (!item.implemented) {
+                return;
+              }
+
+              setDraggedNodeType(event.dataTransfer, item.typeId);
+              onNodeDragStart?.(item.typeId);
+            }}
+            type="button"
+          >
+            <span className="dashboard-node-shelf__item-icon" aria-hidden="true">
+              {item.label
+                .split(' ')
+                .slice(0, 2)
+                .map((word) => word[0])
+                .join('')}
+            </span>
+            <span className="dashboard-node-shelf__item-label">{item.label}</span>
+            {!item.implemented ? (
+              <span className="dashboard-node-shelf__item-badge">Soon</span>
+            ) : null}
+          </button>
+        ))}
+      </div>
+    </aside>
   );
 }
 
@@ -914,7 +1057,13 @@ function OverviewScreen({ activeWorkspace, viewMode }) {
   );
 }
 
-function CanvasScreen({ isFullScreen = false, viewMode = 'desktop', workspaceId }) {
+function CanvasScreen({
+  draggedNodeType = null,
+  isFullScreen = false,
+  onRegisterCanvasActions = null,
+  viewMode = 'desktop',
+  workspaceId
+}) {
   const viewportVariant = isFullScreen ? 'canvas-route' : viewMode;
 
   return (
@@ -922,7 +1071,11 @@ function CanvasScreen({ isFullScreen = false, viewMode = 'desktop', workspaceId 
       className={`workspace-stage workspace-stage--${isFullScreen ? 'canvas-route' : viewMode}`}
     >
       <div className={`workspace-stage__viewport workspace-stage__viewport--${viewportVariant}`}>
-        <CanvasWorkspace workspaceId={workspaceId} />
+        <CanvasWorkspace
+          draggedNodeType={draggedNodeType}
+          onRegisterCanvasActions={onRegisterCanvasActions}
+          workspaceId={workspaceId}
+        />
       </div>
     </div>
   );
@@ -1488,15 +1641,6 @@ function readStoredViewMode() {
   } catch (error) {
     return 'desktop';
   }
-}
-
-function readStoredSidebarCollapsed() {
-  if (typeof window === 'undefined') {
-    return false;
-  }
-
-  const storedValue = window.localStorage.getItem(SIDEBAR_COLLAPSE_STORAGE_KEY);
-  return storedValue ? storedValue === 'true' : false;
 }
 
 function readStoredAttentionCollapsed() {

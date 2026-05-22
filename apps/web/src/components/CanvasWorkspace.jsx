@@ -28,8 +28,18 @@ import { cloneWorkflow, updateNodeConfig, updateNodeLabel } from '../lib/workflo
 const CANVAS_DEBUG_COLLAPSE_STORAGE_KEY = 'stitchly.canvas.debug-panel-collapsed.v1';
 
 const EMPTY_CANVAS_DEBUG_STATE = {
+  activeEdgeId: null,
   activeNodeId: null,
   blockerElement: null,
+  connectionFromHandleId: null,
+  connectionFromNodeId: null,
+  connectionInProgress: false,
+  connectionIsValid: null,
+  connectionReason: null,
+  connectionToHandleId: null,
+  connectionToNodeId: null,
+  connectionTypes: null,
+  edgeSelectedState: false,
   nodeFocusMatch: false,
   nodeHoverMatch: false,
   nodeRect: null,
@@ -41,7 +51,11 @@ const EMPTY_CANVAS_DEBUG_STATE = {
   viewport: null
 };
 
-export default function CanvasWorkspace({ workspaceId = null }) {
+export default function CanvasWorkspace({
+  draggedNodeType = null,
+  onRegisterCanvasActions = null,
+  workspaceId = null
+}) {
   const showCanvasDebug = import.meta.env.DEV;
   const [workflow, setWorkflow] = useState(() => cloneWorkflow(starterWorkflowFixture));
   const [nodeDefinitions, setNodeDefinitions] = useState(nodeDefinitionFixture.node_definitions);
@@ -156,6 +170,30 @@ export default function CanvasWorkspace({ workspaceId = null }) {
       JSON.stringify(isCanvasDebugCollapsed)
     );
   }, [isCanvasDebugCollapsed]);
+
+  useEffect(() => {
+    if (!onRegisterCanvasActions) {
+      return undefined;
+    }
+
+    onRegisterCanvasActions({
+      addNode(typeId, position = null) {
+        const nextState = appendCanvasNode(workflow, typeId, {
+          position,
+          selectedNodeId
+        });
+
+        if (!nextState) {
+          return;
+        }
+
+        applyWorkflowChange(nextState.workflow);
+        setSelectedNodeId(nextState.selectedNodeId);
+      }
+    });
+
+    return () => onRegisterCanvasActions(null);
+  }, [onRegisterCanvasActions, selectedNodeId, workflow]);
 
   useEffect(() => {
     let cancelled = false;
@@ -521,8 +559,22 @@ export default function CanvasWorkspace({ workspaceId = null }) {
   return (
     <div className="app-shell">
       <WorkflowCanvas
+        draggedNodeType={draggedNodeType}
         nodeDefinitions={nodeDefinitions}
         onDebugStateChange={showCanvasDebug ? setCanvasDebugState : undefined}
+        onNodeTypeDrop={(typeId, position) => {
+          const nextState = appendCanvasNode(workflow, typeId, {
+            position,
+            selectedNodeId
+          });
+
+          if (!nextState) {
+            return;
+          }
+
+          applyWorkflowChange(nextState.workflow);
+          setSelectedNodeId(nextState.selectedNodeId);
+        }}
         onNodeOpen={handleCanvasNodeOpen}
         onSelectionChange={handleCanvasSelection}
         onWorkflowChange={applyWorkflowChange}
@@ -888,6 +940,10 @@ function CanvasDebugPanel({
       {collapsed ? (
         <div className="canvas-debug-panel__stack">
           <DebugValue
+            label="Edge"
+            value={humanizeToken(debugState.activeEdgeId ?? 'none')}
+          />
+          <DebugValue
             label="Node"
             value={humanizeToken(debugState.activeNodeId ?? 'none')}
           />
@@ -895,12 +951,44 @@ function CanvasDebugPanel({
             label="Pointer"
             value={debugState.pointer ? `${debugState.pointer.x}, ${debugState.pointer.y}` : 'Idle'}
           />
+          <DebugValue
+            label="Connect"
+            value={debugState.connectionInProgress ? 'live' : 'idle'}
+          />
         </div>
       ) : (
         <>
           <div className="canvas-debug-panel__grid">
             <DebugValue label="Pointer" value={debugState.pointer ? `${debugState.pointer.x}, ${debugState.pointer.y}` : 'Idle'} />
             <DebugValue label="Active Node" value={humanizeToken(debugState.activeNodeId ?? 'none')} />
+            <DebugValue label="Active Edge" value={humanizeToken(debugState.activeEdgeId ?? 'none')} />
+            <DebugValue label="Connect Drag" value={debugState.connectionInProgress ? 'yes' : 'no'} />
+            <DebugValue
+              label="Connect Valid"
+              value={formatConnectionValidity(debugState.connectionIsValid)}
+            />
+            <DebugValue
+              label="Connect Reason"
+              value={humanizeToken(debugState.connectionReason ?? 'none')}
+            />
+            <DebugValue
+              label="Connect Types"
+              value={debugState.connectionTypes ?? 'unknown'}
+            />
+            <DebugValue
+              label="Connect From"
+              value={formatConnectionEndpoint(
+                debugState.connectionFromNodeId,
+                debugState.connectionFromHandleId
+              )}
+            />
+            <DebugValue
+              label="Connect To"
+              value={formatConnectionEndpoint(
+                debugState.connectionToNodeId,
+                debugState.connectionToHandleId
+              )}
+            />
             <DebugValue
               label="Viewport"
               value={
@@ -912,6 +1000,7 @@ function CanvasDebugPanel({
             <DebugValue label="Node :hover" value={debugState.nodeHoverMatch ? 'yes' : 'no'} />
             <DebugValue label="Node :focus" value={debugState.nodeFocusMatch ? 'yes' : 'no'} />
             <DebugValue label="Node Selected" value={debugState.nodeSelectedState ? 'yes' : 'no'} />
+            <DebugValue label="Edge Selected" value={debugState.edgeSelectedState ? 'yes' : 'no'} />
             <DebugValue label="Inside Node" value={debugState.pointerInsideNode ? 'yes' : 'no'} />
           </div>
 
@@ -1008,6 +1097,26 @@ function DebugRectDescriptor({ label, meta = null, rect }) {
   );
 }
 
+function formatConnectionEndpoint(nodeId, handleId) {
+  if (!nodeId) {
+    return 'none'
+  }
+
+  if (!handleId) {
+    return humanizeToken(nodeId)
+  }
+
+  return `${humanizeToken(nodeId)}.${humanizeToken(handleId)}`
+}
+
+function formatConnectionValidity(value) {
+  if (value == null) {
+    return 'unknown'
+  }
+
+  return value ? 'yes' : 'no'
+}
+
 function toneFromStatus(status) {
   if (status === 'connected' || status === 'succeeded' || status === 'valid') {
     return 'good';
@@ -1062,6 +1171,61 @@ function cardTitleFor({ floatingCard, activeProblem, activeRun, selectedNode }) 
 
 function workflowSignature(workflow) {
   return JSON.stringify(workflow);
+}
+
+function appendCanvasNode(workflow, typeId, options = {}) {
+  const { position = null, selectedNodeId = null } = options;
+
+  if (!['text_input', 'send_email'].includes(typeId)) {
+    return null;
+  }
+
+  const nextWorkflow = cloneWorkflow(workflow);
+  const selectedNode =
+    nextWorkflow.nodes.find((node) => node.node_id === selectedNodeId) ??
+    nextWorkflow.nodes[nextWorkflow.nodes.length - 1] ??
+    null;
+  const nextNodeId = nextWorkflow.nodes.some((node) => node.node_id === typeId)
+    ? `${typeId}_${nextWorkflow.nodes.filter((node) => node.type_id === typeId).length + 1}`
+    : typeId;
+
+  const nextNode = {
+    node_id: nextNodeId,
+    type_id: typeId,
+    definition_version: 1,
+    label: typeId === 'text_input' ? 'Text Input' : 'Send Email',
+    config:
+      typeId === 'text_input'
+        ? { text: 'Draft the next message body here.' }
+        : {
+            to: 'ops@stitchly.dev',
+            subject: 'New workflow alert'
+          },
+    position:
+      position != null
+        ? {
+            x: Math.max(80, Math.round(position.x)),
+            y: Math.max(80, Math.round(position.y))
+          }
+        : {
+            x: Math.max(
+              80,
+              selectedNode?.position?.x != null
+                ? selectedNode.position.x + (typeId === 'send_email' ? 380 : -380)
+                : typeId === 'send_email'
+                  ? 520
+                  : 120
+            ),
+            y: selectedNode?.position?.y ?? 180
+          }
+  };
+
+  nextWorkflow.nodes.push(nextNode);
+
+  return {
+    selectedNodeId: nextNode.node_id,
+    workflow: nextWorkflow
+  };
 }
 
 function buildCanvasStarterWorkflow() {

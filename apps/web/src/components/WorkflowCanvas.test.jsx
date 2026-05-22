@@ -1,11 +1,13 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { useState } from 'react'
+import { vi } from 'vitest'
 import nodeDefinitionFixture from '../../../../tests/fixtures/api/node_definitions.json'
 import workflowFixture from '../../../../tests/fixtures/workflows/basic_text_preview.json'
+import { setDraggedNodeType } from '../lib/canvasDnD'
 import { cloneWorkflow } from '../lib/workflow'
 import WorkflowCanvas from './WorkflowCanvas'
 
-function CanvasHarness({ onNodeOpen = () => {} }) {
+function CanvasHarness({ onNodeOpen = () => {}, onNodeTypeDrop = () => {} }) {
   const [workflow, setWorkflow] = useState(() => cloneWorkflow(workflowFixture))
   const [selectedNodeId, setSelectedNodeId] = useState(null)
 
@@ -13,6 +15,7 @@ function CanvasHarness({ onNodeOpen = () => {} }) {
     <WorkflowCanvas
       nodeDefinitions={nodeDefinitionFixture.node_definitions}
       onNodeOpen={onNodeOpen}
+      onNodeTypeDrop={onNodeTypeDrop}
       onSelectionChange={setSelectedNodeId}
       onWorkflowChange={setWorkflow}
       selectedNodeId={selectedNodeId}
@@ -100,5 +103,37 @@ describe('WorkflowCanvas', () => {
     fireEvent.doubleClick(getSendEmailNode())
 
     expect(onNodeOpen).toHaveBeenCalledWith('send_email_notification')
+  })
+
+  it('emits a node drop event when a shelf item is dragged onto the canvas', () => {
+    const onNodeTypeDrop = vi.fn()
+    const dragData = new Map()
+    const dataTransfer = {
+      dropEffect: '',
+      effectAllowed: '',
+      getData(type) {
+        return dragData.get(type) ?? ''
+      },
+      setData(type, value) {
+        dragData.set(type, value)
+      }
+    }
+
+    const { container } = render(<CanvasHarness onNodeTypeDrop={onNodeTypeDrop} />)
+    const canvasSurface = container.querySelector('.canvas-surface')
+
+    expect(canvasSurface).not.toBeNull()
+
+    setDraggedNodeType(dataTransfer, 'send_email')
+    fireEvent.dragOver(canvasSurface, { dataTransfer })
+    fireEvent.drop(canvasSurface, { clientX: 240, clientY: 180, dataTransfer })
+
+    expect(onNodeTypeDrop).toHaveBeenCalledWith(
+      'send_email',
+      expect.objectContaining({
+        x: expect.any(Number),
+        y: expect.any(Number)
+      })
+    )
   })
 })

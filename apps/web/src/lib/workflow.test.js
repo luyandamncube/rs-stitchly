@@ -2,7 +2,9 @@ import nodeDefinitionFixture from '../../../../tests/fixtures/api/node_definitio
 import workflowFixture from '../../../../tests/fixtures/workflows/basic_text_preview.json';
 import {
   canConnect,
+  connectWorkflowNodes,
   createCanvasElements,
+  removeWorkflowEdge,
   reconnectWorkflowEdge,
   syncWorkflowEdges
 } from './workflow';
@@ -31,6 +33,15 @@ describe('createCanvasElements', () => {
     expect(nextWorkflow.edges).toHaveLength(0)
   })
 
+  it('can remove a workflow edge by id', () => {
+    const nextWorkflow = removeWorkflowEdge(
+      workflowFixture,
+      workflowFixture.edges[0].edge_id
+    )
+
+    expect(nextWorkflow.edges).toHaveLength(0)
+  })
+
   it('can reconnect an existing edge without tripping the single-target guard', () => {
     const edge = workflowFixture.edges[0]
     const nextConnection = {
@@ -49,6 +60,70 @@ describe('createCanvasElements', () => {
 
     expect(nextWorkflow.edges[0].source_node_id).toBe('input_text')
     expect(nextWorkflow.edges[0].target_node_id).toBe('send_email_notification')
+    expect(nextWorkflow.edges[0].target_port_id).toBe('body')
+  })
+
+  it('replaces an existing single-input edge when a new source connects to the same target port', () => {
+    const workflowWithSecondInput = {
+      ...workflowFixture,
+      nodes: [
+        ...workflowFixture.nodes,
+        {
+          ...workflowFixture.nodes[0],
+          node_id: 'input_text_2',
+          position: { x: 120, y: 320 }
+        }
+      ]
+    }
+    const replacementConnection = {
+      source: 'input_text_2',
+      sourceHandle: 'text',
+      target: 'send_email_notification',
+      targetHandle: 'body'
+    }
+
+    expect(
+      canConnect(replacementConnection, workflowWithSecondInput, nodeDefinitionFixture.node_definitions)
+    ).toBe(true)
+
+    const nextWorkflow = connectWorkflowNodes(
+      workflowWithSecondInput,
+      replacementConnection,
+      nodeDefinitionFixture.node_definitions
+    )
+
+    expect(nextWorkflow.edges).toHaveLength(1)
+    expect(nextWorkflow.edges[0].source_node_id).toBe('input_text_2')
+    expect(nextWorkflow.edges[0].target_node_id).toBe('send_email_notification')
+    expect(nextWorkflow.edges[0].target_port_id).toBe('body')
+  })
+
+  it('can still validate and connect implemented node types when a definition is missing', () => {
+    const definitionsWithoutSendEmail = nodeDefinitionFixture.node_definitions.filter(
+      (definition) => definition.type_id !== 'send_email'
+    )
+    const connection = {
+      source: 'input_text',
+      sourceHandle: 'text',
+      target: 'send_email_notification',
+      targetHandle: 'body'
+    }
+
+    expect(
+      canConnect(connection, workflowFixture, definitionsWithoutSendEmail)
+    ).toBe(true)
+
+    const nextWorkflow = connectWorkflowNodes(
+      {
+        ...workflowFixture,
+        edges: []
+      },
+      connection,
+      definitionsWithoutSendEmail
+    )
+
+    expect(nextWorkflow.edges).toHaveLength(1)
+    expect(nextWorkflow.edges[0].source_port_id).toBe('text')
     expect(nextWorkflow.edges[0].target_port_id).toBe('body')
   })
 });

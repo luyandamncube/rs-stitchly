@@ -131,7 +131,7 @@ textarea {
   margin: 0;
   padding: 22px 18px 18px;
   border-radius: 20px 18px 18px 20px;
-  overflow: hidden;
+  overflow: visible;
   background: linear-gradient(180deg, #2b2a29, #262524 100%);
 }
 
@@ -160,36 +160,6 @@ textarea {
 
 .dashboard-app__sidebar--overlay-collapsed {
   width: 92px;
-}
-
-.dashboard-sidebar__control-row {
-  position: absolute;
-  top: 18px;
-  right: 18px;
-  z-index: 2;
-  display: flex;
-}
-
-.dashboard-sidebar__collapse-button {
-  width: 40px;
-  height: 40px;
-  border: none;
-  border-radius: 16px;
-  display: grid;
-  place-items: center;
-  background: rgba(255, 255, 255, 0.03);
-  color: rgba(255, 255, 255, 0.86);
-  cursor: pointer;
-  transition:
-    transform 160ms ease,
-    background 160ms ease,
-    color 160ms ease;
-}
-
-.dashboard-sidebar__collapse-button:hover {
-  transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text-main);
 }
 
 .dashboard-sidebar__brand {
@@ -251,15 +221,28 @@ textarea {
   gap: 14px;
   align-content: start;
   min-height: 0;
-  overflow: auto;
-  padding-right: 4px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  padding-right: 8px;
   padding-bottom: 88px;
+}
+
+.dashboard-sidebar__nav::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .dashboard-nav-group,
 .dashboard-sidebar__subnav {
   display: grid;
   gap: 6px;
+}
+
+.dashboard-sidebar__node-groups {
+  display: grid;
+  gap: 10px;
 }
 
 .dashboard-nav-item {
@@ -304,8 +287,159 @@ textarea {
   display: block;
 }
 
+.dashboard-nav-item__icon--glyph {
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
 .dashboard-nav-item__label {
   min-width: 0;
+}
+
+.dashboard-nav-item__tooltip {
+  position: absolute;
+  top: 50%;
+  left: calc(100% + 14px);
+  z-index: 8;
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(43, 42, 45, 0.98);
+  color: rgba(255, 255, 255, 0.94);
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%) translateX(-6px);
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease;
+}
+
+.dashboard-node-group {
+  position: relative;
+}
+
+.dashboard-node-shelf {
+  position: absolute;
+  top: 86px;
+  left: calc(100% + 16px);
+  z-index: 9;
+  width: 256px;
+  max-height: calc(100% - 104px);
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background: rgba(39, 38, 42, 0.99);
+  overflow-y: auto;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-8px);
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+}
+
+.dashboard-node-shelf__header {
+  padding: 0 2px 12px;
+}
+
+.dashboard-node-shelf__header span {
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 0.84rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.dashboard-node-shelf__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dashboard-node-shelf__item {
+  position: relative;
+  min-height: 100px;
+  padding: 14px 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.015);
+  color: rgba(255, 255, 255, 0.94);
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 12px;
+  text-align: center;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease;
+}
+
+.dashboard-node-shelf__item:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.dashboard-node-shelf__item[draggable="true"] {
+  cursor: grab;
+}
+
+.dashboard-node-shelf__item[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.dashboard-node-shelf__item:disabled,
+.dashboard-node-shelf__item.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+.dashboard-node-shelf__item-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: var(--text-main);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.dashboard-node-shelf__item-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+
+.dashboard-node-shelf__item-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 5px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.84);
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .dashboard-nav-item--active {
@@ -633,13 +767,6 @@ textarea {
   align-content: start;
 }
 
-.dashboard-app--sidebar-collapsed .dashboard-sidebar__control-row {
-  top: 16px;
-  left: 50%;
-  right: auto;
-  transform: translateX(-50%);
-}
-
 .dashboard-app--sidebar-collapsed .dashboard-sidebar__brand {
   justify-items: center;
   gap: 14px;
@@ -659,15 +786,19 @@ textarea {
 }
 
 .dashboard-app--sidebar-collapsed .dashboard-sidebar__nav {
-  gap: 16px;
-  padding-top: 56px;
-  padding-bottom: 72px;
+  gap: 12px;
+  padding-top: 8px;
+  padding-bottom: 28px;
 }
 
 .dashboard-app--sidebar-collapsed .dashboard-nav-group,
 .dashboard-app--sidebar-collapsed .dashboard-sidebar__subnav {
-  gap: 10px;
+  gap: 8px;
   justify-items: center;
+}
+
+.dashboard-app--sidebar-collapsed .dashboard-sidebar__node-groups {
+  gap: 8px;
 }
 
 .dashboard-app--sidebar-collapsed .dashboard-nav-item {
@@ -680,6 +811,26 @@ textarea {
 
 .dashboard-app--sidebar-collapsed .dashboard-nav-item__label {
   display: none;
+}
+
+.dashboard-app--sidebar-collapsed .dashboard-nav-item:hover .dashboard-nav-item__tooltip,
+.dashboard-app--sidebar-collapsed .dashboard-nav-item:focus-visible .dashboard-nav-item__tooltip,
+.dashboard-app--sidebar-collapsed .dashboard-node-group.is-open .dashboard-nav-item__tooltip,
+.dashboard-app--sidebar-collapsed .dashboard-node-group:focus-within .dashboard-nav-item__tooltip {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+.dashboard-app--sidebar-collapsed .dashboard-app__sidebar--overlay-collapsed .dashboard-node-shelf,
+.dashboard-app--sidebar-collapsed .dashboard-node-group.is-open .dashboard-node-shelf {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+.dashboard-app--sidebar-collapsed .dashboard-node-group.is-open .dashboard-nav-item--node-group {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-main);
 }
 
 .dashboard-app--sidebar-collapsed .dashboard-nav-item--active {
@@ -2152,21 +2303,50 @@ textarea {
 }
 
 .workflow-flow .react-flow__handle {
-  width: 14px;
-  height: 14px;
+  position: absolute;
+  z-index: 3;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.workflow-flow .react-flow__handle::after {
+  content: "";
+  position: absolute;
+  inset: 5px;
   border: 3px solid var(--accent-secondary);
+  border-radius: 999px;
   background: #111114;
   box-shadow: 0 0 0 4px rgba(245, 110, 15, 0.14);
+}
+
+.workflow-flow .react-flow__handle.connecting::after {
+  box-shadow: 0 0 0 5px rgba(245, 110, 15, 0.18);
+}
+
+.workflow-flow .react-flow__handle.valid::after {
+  box-shadow:
+    0 0 0 5px rgba(245, 110, 15, 0.22),
+    0 0 16px rgba(245, 110, 15, 0.22);
 }
 
 .workflow-flow .react-flow__edge-path {
   stroke-linecap: round;
   stroke-linejoin: round;
+  opacity: 0.74;
 }
 
-.workflow-flow .react-flow__edge:hover .react-flow__edge-path,
+.workflow-flow .react-flow__edge:hover .react-flow__edge-path {
+  stroke-width: 1.9 !important;
+  opacity: 0.9;
+}
+
 .workflow-flow .react-flow__edge.selected .react-flow__edge-path {
   stroke: var(--accent-secondary);
+  stroke-width: 2.6 !important;
+  opacity: 1;
   filter: drop-shadow(0 0 10px rgba(245, 110, 15, 0.26));
 }
 
@@ -3916,13 +4096,6 @@ textarea {
     gap: 16px;
     padding: 16px;
     align-content: stretch;
-  }
-
-  .dashboard-app--sidebar-collapsed .dashboard-sidebar__control-row {
-    top: 16px;
-    left: auto;
-    right: 16px;
-    transform: none;
   }
 
   .dashboard-app--sidebar-collapsed .dashboard-sidebar__brand {

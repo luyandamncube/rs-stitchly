@@ -1,25 +1,40 @@
-import { memo, useCallback, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   applyEdgeChanges,
   applyNodeChanges,
   Background,
+  ConnectionMode,
   Handle,
   MiniMap,
   Position,
-  ReactFlow
+  ReactFlow,
+  useConnection
 } from '@xyflow/react'
+import { getDraggedNodeType } from '../lib/canvasDnD'
 import {
   canConnect,
   connectWorkflowNodes,
   createCanvasElements,
+  inspectConnection,
+  removeWorkflowEdge,
   reconnectWorkflowEdge,
   syncWorkflowEdges,
   syncWorkflowNodes
 } from '../lib/workflow'
 
 const EMPTY_CANVAS_DEBUG_STATE = {
+  activeEdgeId: null,
   activeNodeId: null,
   blockerElement: null,
+  connectionFromHandleId: null,
+  connectionFromNodeId: null,
+  connectionInProgress: false,
+  connectionIsValid: null,
+  connectionReason: null,
+  connectionToHandleId: null,
+  connectionToNodeId: null,
+  connectionTypes: null,
+  edgeSelectedState: false,
   nodeFocusMatch: false,
   nodeHoverMatch: false,
   nodeRect: null,
@@ -38,8 +53,10 @@ const NODE_TYPES = {
 }
 
 function WorkflowCanvas({
+  draggedNodeType = null,
   nodeDefinitions = [],
   onDebugStateChange,
+  onNodeTypeDrop,
   onNodeOpen,
   onSelectionChange,
   onWorkflowChange,
@@ -47,7 +64,35 @@ function WorkflowCanvas({
   workflow
 }) {
   const debugSignatureRef = useRef('')
+  const currentDebugStateRef = useRef(EMPTY_CANVAS_DEBUG_STATE)
+  const connectStartRef = useRef({
+    handleId: null,
+    handleType: null,
+    nodeId: null
+  })
+  const resolvedConnectionRef = useRef(null)
+  const liveConnectionDebugRef = useRef({
+    connectionFromHandleId: null,
+    connectionFromNodeId: null,
+    connectionInProgress: false,
+    connectionIsValid: null,
+    connectionReason: null,
+    connectionToHandleId: null,
+    connectionToNodeId: null,
+    connectionTypes: null
+  })
+  const reactFlowInstanceRef = useRef(null)
   const [selectedEdgeId, setSelectedEdgeId] = useState(null)
+  const [liveConnectionDebug, setLiveConnectionDebug] = useState({
+    connectionFromHandleId: null,
+    connectionFromNodeId: null,
+    connectionInProgress: false,
+    connectionIsValid: null,
+    connectionReason: null,
+    connectionToHandleId: null,
+    connectionToNodeId: null,
+    connectionTypes: null
+  })
 
   const { edges, nodes } = useMemo(
     () => createCanvasElements(workflow, nodeDefinitions, selectedNodeId, null, selectedEdgeId),
@@ -66,13 +111,14 @@ function WorkflowCanvas({
       }
 
       debugSignatureRef.current = nextSignature
+      currentDebugStateRef.current = nextState
       onDebugStateChange(nextState)
     },
     [onDebugStateChange]
   )
 
   const inspectCanvas = useCallback(
-    (event, preferredNodeId = selectedNodeId) => {
+    (event, preferredNodeId = selectedNodeId, preferredEdgeId = selectedEdgeId) => {
       if (!onDebugStateChange || typeof document === 'undefined') {
         return
       }
@@ -81,6 +127,9 @@ function WorkflowCanvas({
       const stack = pointer ? document.elementsFromPoint(pointer.x, pointer.y).slice(0, 8) : []
       const topElement = stack[0] ?? null
       const activeNodeId = findActiveNodeId(stack, preferredNodeId, selectedNodeId)
+      const activeEdgeId = findActiveEdgeId(stack, preferredEdgeId, selectedEdgeId)
+      const resolvedSelectedNodeId = preferredNodeId ?? selectedNodeId
+      const resolvedSelectedEdgeId = preferredEdgeId ?? selectedEdgeId
       const nodeElement =
         activeNodeId != null
           ? document.querySelector(`.react-flow__node[data-id="${activeNodeId}"]`)
@@ -92,15 +141,18 @@ function WorkflowCanvas({
           : false
 
       publishDebugState({
+        activeEdgeId,
         activeNodeId,
         blockerElement:
           nodeElement instanceof Element && topElement instanceof Element && !topElementInsideNode
             ? describeCanvasElement(topElement)
             : null,
+        ...liveConnectionDebug,
+        edgeSelectedState: activeEdgeId != null && activeEdgeId === resolvedSelectedEdgeId,
         nodeFocusMatch: Boolean(nodeElement?.matches(':focus')),
         nodeHoverMatch: Boolean(nodeElement?.matches(':hover')),
         nodeRect,
-        nodeSelectedState: activeNodeId != null && activeNodeId === selectedNodeId,
+        nodeSelectedState: activeNodeId != null && activeNodeId === resolvedSelectedNodeId,
         pointer: pointer ? { x: Math.round(pointer.x), y: Math.round(pointer.y) } : null,
         pointerInsideNode: pointer ? isPointInsideRect(pointer.x, pointer.y, nodeRect) : false,
         stack: stack.map(describeCanvasElement),
@@ -115,7 +167,7 @@ function WorkflowCanvas({
               }
       })
     },
-    [onDebugStateChange, publishDebugState, selectedNodeId]
+    [liveConnectionDebug, onDebugStateChange, publishDebugState, selectedEdgeId, selectedNodeId]
   )
 
   const handleCanvasPointerMove = useCallback(
@@ -126,14 +178,53 @@ function WorkflowCanvas({
   )
 
   const handleCanvasPointerLeave = useCallback(() => {
-    publishDebugState(EMPTY_CANVAS_DEBUG_STATE)
-  }, [publishDebugState])
+    publishDebugState({
+      ...EMPTY_CANVAS_DEBUG_STATE,
+      ...liveConnectionDebug
+    })
+  }, [liveConnectionDebug, publishDebugState])
+
+  const handleConnectionDebugChange = useCallback(
+    (nextConnectionDebug) => {
+      const directConnection = buildConnectionFromDebugState(nextConnectionDebug)
+      const diagnostics = directConnection
+        ? inspectConnection(directConnection, workflow, nodeDefinitions)
+        : null
+      const nextConnection = diagnostics?.valid ? directConnection : null
+
+      resolvedConnectionRef.current = nextConnection
+
+      const computedConnectionDebug = {
+        ...nextConnectionDebug,
+        connectionIsValid:
+          typeof nextConnectionDebug.connectionIsValid === 'boolean'
+            ? nextConnectionDebug.connectionIsValid || Boolean(nextConnection)
+            : nextConnection
+              ? true
+              : nextConnectionDebug.connectionIsValid
+        ,
+        connectionReason: diagnostics?.reason ?? (nextConnectionDebug.connectionInProgress ? 'pending' : null),
+        connectionTypes:
+          diagnostics?.sourceDataType || diagnostics?.targetDataType
+            ? `${diagnostics?.sourceDataType ?? '?' }→${diagnostics?.targetDataType ?? '?' }`
+            : null
+      }
+
+      liveConnectionDebugRef.current = computedConnectionDebug
+      setLiveConnectionDebug(computedConnectionDebug)
+      publishDebugState({
+        ...currentDebugStateRef.current,
+        ...computedConnectionDebug
+      })
+    },
+    [nodeDefinitions, publishDebugState, workflow]
+  )
 
   const handleNodeClick = useCallback(
     (event, node) => {
       setSelectedEdgeId(null)
       onSelectionChange?.(node.id)
-      inspectCanvas(event, node.id)
+      inspectCanvas(event, node.id, null)
     },
     [inspectCanvas, onSelectionChange]
   )
@@ -147,32 +238,69 @@ function WorkflowCanvas({
 
   const handleNodeMouseEnter = useCallback(
     (event, node) => {
-      inspectCanvas(event, node.id)
+      inspectCanvas(event, node.id, null)
     },
     [inspectCanvas]
   )
 
   const handleNodeMouseLeave = useCallback(
     (event, node) => {
-      inspectCanvas(event, selectedNodeId)
+      inspectCanvas(event, selectedNodeId, selectedEdgeId)
     },
-    [inspectCanvas, selectedNodeId]
+    [inspectCanvas, selectedEdgeId, selectedNodeId]
   )
 
   const handlePaneClick = useCallback(
     (event) => {
       setSelectedEdgeId(null)
       onSelectionChange?.(null)
-      inspectCanvas(event, null)
+      inspectCanvas(event, null, null)
     },
     [inspectCanvas, onSelectionChange]
   )
+
+  const handleCanvasDragOver = useCallback((event) => {
+    if (!onNodeTypeDrop) {
+      return
+    }
+
+    const nodeType = getDraggedNodeType(event.dataTransfer) || draggedNodeType
+    if (!nodeType) {
+      return
+    }
+
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+  }, [draggedNodeType, onNodeTypeDrop])
+
+  const handleCanvasDrop = useCallback((event) => {
+    if (!onNodeTypeDrop) {
+      return
+    }
+
+    const nodeType = getDraggedNodeType(event.dataTransfer) || draggedNodeType
+    if (!nodeType) {
+      return
+    }
+
+    event.preventDefault()
+
+    const pointer = pointForEvent(event) ?? { x: 0, y: 0 }
+    const position = reactFlowInstanceRef.current
+      ? reactFlowInstanceRef.current.screenToFlowPosition({
+          x: pointer.x,
+          y: pointer.y
+        })
+      : pointer
+
+    onNodeTypeDrop(nodeType, position)
+  }, [draggedNodeType, onNodeTypeDrop])
 
   const handleEdgeClick = useCallback(
     (event, edge) => {
       setSelectedEdgeId(edge.id)
       onSelectionChange?.(null)
-      inspectCanvas(event, null)
+      inspectCanvas(event, null, edge.id)
     },
     [inspectCanvas, onSelectionChange]
   )
@@ -201,9 +329,73 @@ function WorkflowCanvas({
       }
 
       setSelectedEdgeId(null)
-      onWorkflowChange(connectWorkflowNodes(workflow, connection))
+      onWorkflowChange(connectWorkflowNodes(workflow, connection, nodeDefinitions))
     },
     [nodeDefinitions, onWorkflowChange, workflow]
+  )
+
+  const handleConnectStart = useCallback((_event, params) => {
+    connectStartRef.current = {
+      handleId: params?.handleId ?? null,
+      handleType: params?.handleType ?? null,
+      nodeId: params?.nodeId ?? null
+    }
+  }, [])
+
+  const handleConnectEnd = useCallback(
+    (event, connectionState) => {
+      if (!workflow || !onWorkflowChange || connectionState?.isValid) {
+        connectStartRef.current = {
+          handleId: null,
+          handleType: null,
+          nodeId: null
+        }
+        return
+      }
+
+      const fallbackConnection = buildNodeBodyConnection(
+        connectionState,
+        workflow,
+        nodeDefinitions
+      )
+      const liveFallbackConnection = buildConnectionFromDebugState(liveConnectionDebugRef.current)
+      const pointerFallbackConnection = buildPointerDropConnection(
+        event,
+        connectStartRef.current,
+        workflow,
+        nodeDefinitions
+      )
+      const resolvedConnection = resolvedConnectionRef.current
+
+      const nextConnection =
+        resolvedConnection
+          ? resolvedConnection
+          : fallbackConnection && canConnect(fallbackConnection, workflow, nodeDefinitions)
+            ? fallbackConnection
+            : liveFallbackConnection &&
+                canConnect(liveFallbackConnection, workflow, nodeDefinitions)
+              ? liveFallbackConnection
+              : pointerFallbackConnection &&
+                  canConnect(pointerFallbackConnection, workflow, nodeDefinitions)
+                ? pointerFallbackConnection
+                : null
+
+      connectStartRef.current = {
+        handleId: null,
+        handleType: null,
+        nodeId: null
+      }
+      resolvedConnectionRef.current = null
+
+      if (!nextConnection) {
+        return
+      }
+
+      setSelectedEdgeId(null)
+      onWorkflowChange(connectWorkflowNodes(workflow, nextConnection, nodeDefinitions))
+      inspectCanvas(event, null, null)
+    },
+    [inspectCanvas, nodeDefinitions, onWorkflowChange, workflow]
   )
 
   const handleEdgesChange = useCallback(
@@ -245,14 +437,39 @@ function WorkflowCanvas({
       }
 
       setSelectedEdgeId(oldEdge.id)
-      onWorkflowChange(reconnectWorkflowEdge(workflow, oldEdge.id, connection))
+      onWorkflowChange(reconnectWorkflowEdge(workflow, oldEdge.id, connection, nodeDefinitions))
     },
     [nodeDefinitions, onWorkflowChange, workflow]
   )
 
+  useEffect(() => {
+    if (!selectedEdgeId || !workflow || !onWorkflowChange) {
+      return
+    }
+
+    const handleKeyDown = (event) => {
+      if (
+        (event.key !== 'Delete' && event.key !== 'Backspace') ||
+        shouldIgnoreDeleteShortcut(event)
+      ) {
+        return
+      }
+
+      event.preventDefault()
+      setSelectedEdgeId(null)
+      onSelectionChange?.(null)
+      onWorkflowChange(removeWorkflowEdge(workflow, selectedEdgeId))
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [edges, onSelectionChange, onWorkflowChange, selectedEdgeId, workflow])
+
   return (
     <div
       className="canvas-surface"
+      onDragOver={handleCanvasDragOver}
+      onDrop={handleCanvasDrop}
       onPointerLeave={handleCanvasPointerLeave}
       onPointerMove={handleCanvasPointerMove}
     >
@@ -266,7 +483,7 @@ function WorkflowCanvas({
           },
           style: {
             stroke: 'rgba(255, 122, 26, 0.62)',
-            strokeWidth: 2.6
+            strokeWidth: 1.45
           },
           type: 'bezier'
         }}
@@ -275,6 +492,8 @@ function WorkflowCanvas({
           y: 0,
           zoom: 1
         }}
+        connectionMode={ConnectionMode.Strict}
+        connectionRadius={42}
         edges={edges}
         edgesReconnectable
         isValidConnection={(connection) => canConnect(connection, workflow, nodeDefinitions)}
@@ -283,8 +502,15 @@ function WorkflowCanvas({
         nodeTypes={NODE_TYPES}
         nodes={nodes}
         onConnect={handleConnect}
+        onConnectStart={handleConnectStart}
+        onConnectEnd={handleConnectEnd}
+        onDragOver={handleCanvasDragOver}
+        onDrop={handleCanvasDrop}
         onEdgeClick={handleEdgeClick}
         onEdgesChange={handleEdgesChange}
+        onInit={(instance) => {
+          reactFlowInstanceRef.current = instance
+        }}
         onNodeClick={handleNodeClick}
         onNodeDoubleClick={handleNodeDoubleClick}
         onNodeMouseEnter={handleNodeMouseEnter}
@@ -304,6 +530,11 @@ function WorkflowCanvas({
           gap={24}
           size={1.35}
           variant="dots"
+        />
+        <ConnectionDebugBridge
+          nodeDefinitions={nodeDefinitions}
+          onChange={handleConnectionDebugChange}
+          workflow={workflow}
         />
       </ReactFlow>
     </div>
@@ -619,6 +850,211 @@ function findActiveNodeId(stack, preferredNodeId, selectedNodeId) {
   return preferredNodeId ?? selectedNodeId ?? null
 }
 
+function findActiveEdgeId(stack, preferredEdgeId, selectedEdgeId) {
+  for (const element of stack) {
+    if (!(element instanceof Element)) {
+      continue
+    }
+
+    const edgeElement = element.closest('.react-flow__edge[data-id]')
+
+    if (edgeElement instanceof HTMLElement) {
+      return edgeElement.dataset.id ?? null
+    }
+  }
+
+  return preferredEdgeId ?? selectedEdgeId ?? null
+}
+
+function ConnectionDebugBridge({ nodeDefinitions, onChange, workflow }) {
+  const connection = useConnection()
+
+  useEffect(() => {
+    onChange?.(describeConnectionDebugState(connection, workflow, nodeDefinitions))
+  }, [connection, nodeDefinitions, onChange, workflow])
+
+  return null
+}
+
+function describeConnectionDebugState(connection, workflow, nodeDefinitions) {
+  const baseState = {
+    connectionFromHandleId: connection?.fromHandle?.id ?? null,
+    connectionFromNodeId: connection?.fromNode?.id ?? null,
+    connectionInProgress: Boolean(connection?.inProgress),
+    connectionToHandleId: connection?.toHandle?.id ?? null,
+    connectionToNodeId: connection?.toNode?.id ?? null
+  }
+  const derivedConnection =
+    workflow && nodeDefinitions
+      ? buildNodeBodyConnection(connection, workflow, nodeDefinitions)
+      : null
+
+  return {
+    ...baseState,
+    connectionIsValid:
+      typeof connection?.isValid === 'boolean'
+        ? connection.isValid || Boolean(derivedConnection)
+        : derivedConnection
+          ? true
+          : null,
+    connectionReason: null,
+    connectionTypes: null
+  }
+}
+
+function buildNodeBodyConnection(connectionState, workflow, nodeDefinitions) {
+  const sourceNodeId = connectionState?.fromNode?.id ?? null
+  const targetNodeId = connectionState?.toNode?.id ?? null
+
+  if (!sourceNodeId || !targetNodeId) {
+    return null
+  }
+
+  const sourceNode = workflow.nodes.find((node) => node.node_id === sourceNodeId)
+  const targetNode = workflow.nodes.find((node) => node.node_id === targetNodeId)
+
+  if (!sourceNode || !targetNode) {
+    return null
+  }
+
+  const sourceDefinition = nodeDefinitions.find(
+    (definition) => definition.type_id === sourceNode.type_id
+  )
+  const targetDefinition = nodeDefinitions.find(
+    (definition) => definition.type_id === targetNode.type_id
+  )
+
+  if (!sourceDefinition || !targetDefinition) {
+    return null
+  }
+
+  const sourceHandleId =
+    connectionState?.fromHandle?.id ??
+    (sourceDefinition.outputs.length === 1 ? sourceDefinition.outputs[0].port_id : null)
+  const targetHandleId =
+    connectionState?.toHandle?.id ??
+    (targetDefinition.inputs.length === 1 ? targetDefinition.inputs[0].port_id : null)
+
+  if (!sourceHandleId || !targetHandleId) {
+    return null
+  }
+
+  return {
+    source: sourceNodeId,
+    sourceHandle: sourceHandleId,
+    target: targetNodeId,
+    targetHandle: targetHandleId
+  }
+}
+
+function buildConnectionFromDebugState(debugState) {
+  const sourceNodeId = debugState?.connectionFromNodeId ?? null
+  const sourceHandleId = debugState?.connectionFromHandleId ?? null
+  const targetNodeId = debugState?.connectionToNodeId ?? null
+  const targetHandleId = debugState?.connectionToHandleId ?? null
+
+  if (!sourceNodeId || !sourceHandleId || !targetNodeId || !targetHandleId) {
+    return null
+  }
+
+  return {
+    source: sourceNodeId,
+    sourceHandle: sourceHandleId,
+    target: targetNodeId,
+    targetHandle: targetHandleId
+  }
+}
+
+function buildPointerDropConnection(event, connectStart, workflow, nodeDefinitions) {
+  if (typeof document === 'undefined' || connectStart?.handleType !== 'source') {
+    return null
+  }
+
+  const pointer = pointForEvent(event)
+  if (!pointer) {
+    return null
+  }
+
+  const stack = document.elementsFromPoint(pointer.x, pointer.y).slice(0, 8)
+  const handleTarget = findHandleTargetFromStack(stack, connectStart.nodeId)
+  if (handleTarget) {
+    return {
+      source: connectStart.nodeId,
+      sourceHandle: connectStart.handleId,
+      target: handleTarget.nodeId,
+      targetHandle: handleTarget.handleId
+    }
+  }
+
+  const targetNodeId = findTargetNodeIdFromStack(stack, connectStart.nodeId)
+  if (!targetNodeId) {
+    return null
+  }
+
+  const targetNode = workflow.nodes.find((node) => node.node_id === targetNodeId)
+  const targetDefinition = nodeDefinitions.find(
+    (definition) => definition.type_id === targetNode?.type_id
+  )
+  const targetHandleId =
+    targetDefinition?.inputs.length === 1 ? targetDefinition.inputs[0].port_id : null
+
+  if (!connectStart.nodeId || !connectStart.handleId || !targetHandleId) {
+    return null
+  }
+
+  return {
+    source: connectStart.nodeId,
+    sourceHandle: connectStart.handleId,
+    target: targetNodeId,
+    targetHandle: targetHandleId
+  }
+}
+
+function findHandleTargetFromStack(stack, sourceNodeId) {
+  for (const element of stack) {
+    if (!(element instanceof HTMLElement)) {
+      continue
+    }
+
+    const handleElement = element.closest('.react-flow__handle[data-nodeid][data-handleid]')
+    if (!(handleElement instanceof HTMLElement)) {
+      continue
+    }
+
+    const nodeId = handleElement.dataset.nodeid ?? null
+    const handleId = handleElement.dataset.handleid ?? null
+
+    if (!nodeId || !handleId || nodeId === sourceNodeId) {
+      continue
+    }
+
+    return { handleId, nodeId }
+  }
+
+  return null
+}
+
+function findTargetNodeIdFromStack(stack, sourceNodeId) {
+  for (const element of stack) {
+    if (!(element instanceof Element)) {
+      continue
+    }
+
+    const nodeElement = element.closest('.react-flow__node[data-id]')
+
+    if (!(nodeElement instanceof HTMLElement)) {
+      continue
+    }
+
+    const nodeId = nodeElement.dataset.id ?? null
+    if (nodeId && nodeId !== sourceNodeId) {
+      return nodeId
+    }
+  }
+
+  return null
+}
+
 function isPointInsideRect(x, y, rect) {
   if (!rect) {
     return false
@@ -656,6 +1092,21 @@ function breakpointForWidth(width) {
   }
 
   return '>1180'
+}
+
+function shouldIgnoreDeleteShortcut(event) {
+  const target = event.target
+
+  if (!(target instanceof HTMLElement)) {
+    return false
+  }
+
+  return (
+    target.isContentEditable ||
+    target.tagName === 'INPUT' ||
+    target.tagName === 'TEXTAREA' ||
+    target.tagName === 'SELECT'
+  )
 }
 
 export default memo(WorkflowCanvas)

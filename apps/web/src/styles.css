@@ -145,7 +145,7 @@ textarea {
 }
 
 .dashboard-app__sidebar--overlay-collapsed {
-  width: 92px;
+  width: 80px;
 }
 
 .dashboard-app__sidebar--overlay {
@@ -159,7 +159,7 @@ textarea {
 }
 
 .dashboard-app__sidebar--overlay-collapsed {
-  width: 92px;
+  width: 80px;
 }
 
 .dashboard-sidebar__brand {
@@ -285,6 +285,17 @@ textarea {
   width: 18px;
   height: 18px;
   display: block;
+}
+
+.dashboard-nav-item__icon img {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.dashboard-nav-item__icon-image--overview {
+  width: 22px;
+  height: 22px;
 }
 
 .dashboard-nav-item__icon--glyph {
@@ -724,21 +735,15 @@ textarea {
 }
 
 .dashboard-profile__avatar {
-  width: 34px;
-  height: 34px;
-  border-radius: 999px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.08));
+  width: 58px;
+  height: 58px;
   display: grid;
   place-items: center;
-  color: rgba(255, 255, 255, 0.86);
-  font-size: 0.88rem;
-  font-weight: 700;
 }
 
 .dashboard-profile__avatar--symbol img {
-  width: 18px;
-  height: 18px;
+  width: 42px;
+  height: 42px;
 }
 
 .dashboard-profile__meta {
@@ -758,12 +763,12 @@ textarea {
 }
 
 .dashboard-app--sidebar-collapsed .dashboard-app__shell {
-  grid-template-columns: 92px minmax(0, 1fr);
+  grid-template-columns: 80px minmax(0, 1fr);
 }
 
 .dashboard-app--sidebar-collapsed .dashboard-app__sidebar {
-  gap: 18px;
-  padding: 16px 12px 14px;
+  gap: 16px;
+  padding: 14px 10px 12px;
   align-content: start;
 }
 
@@ -786,27 +791,27 @@ textarea {
 }
 
 .dashboard-app--sidebar-collapsed .dashboard-sidebar__nav {
-  gap: 12px;
-  padding-top: 8px;
-  padding-bottom: 28px;
+  gap: 10px;
+  padding-top: 6px;
+  padding-bottom: 24px;
 }
 
 .dashboard-app--sidebar-collapsed .dashboard-nav-group,
 .dashboard-app--sidebar-collapsed .dashboard-sidebar__subnav {
-  gap: 8px;
+  gap: 6px;
   justify-items: center;
 }
 
 .dashboard-app--sidebar-collapsed .dashboard-sidebar__node-groups {
-  gap: 8px;
+  gap: 6px;
 }
 
 .dashboard-app--sidebar-collapsed .dashboard-nav-item {
-  width: 48px;
-  min-height: 48px;
+  width: 44px;
+  min-height: 44px;
   padding: 0;
   justify-content: center;
-  border-radius: 18px;
+  border-radius: 16px;
 }
 
 .dashboard-app--sidebar-collapsed .dashboard-nav-item__label {
@@ -839,15 +844,15 @@ textarea {
 }
 
 .dashboard-app--sidebar-collapsed .dashboard-nav-item--active::before {
-  left: -12px;
-  height: 24px;
+  left: -10px;
+  height: 22px;
 }
 
 .dashboard-app--sidebar-collapsed .dashboard-sidebar__footer {
   justify-items: center;
-  left: 12px;
-  right: 12px;
-  bottom: 14px;
+  left: 10px;
+  right: 10px;
+  bottom: 12px;
 }
 
 .dashboard-app--sidebar-collapsed .dashboard-profile {
@@ -3495,6 +3500,16 @@ textarea {
     background 160ms ease;
 }
 
+.workflow-node-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 1px solid transparent;
+  pointer-events: none;
+  transition: border-color 160ms ease;
+}
+
 .workflow-node-card__top-chip {
   position: absolute;
   top: -34px;
@@ -3692,6 +3707,10 @@ textarea {
   background: rgba(27, 27, 33, 0.98);
 }
 
+.workflow-node-card.is-selected::after {
+  border-color: rgba(245, 110, 15, 0.82);
+}
+
 .workflow-node-card.is-dragging {
   background: rgba(29, 29, 35, 0.99);
 }
@@ -3738,6 +3757,16 @@ textarea {
   pointer-events: none;
 }
 
+.schema-node::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 1px solid transparent;
+  pointer-events: none;
+  transition: border-color 160ms ease;
+}
+
 .workflow-flow .react-flow__node:hover .schema-node,
 .schema-node.is-hovered {
   border-color: rgba(245, 110, 15, 0.22);
@@ -3762,6 +3791,10 @@ textarea {
     0 28px 58px rgba(0, 0, 0, 0.32),
     0 0 0 4px rgba(245, 110, 15, 0.1);
   transform: translateY(-2px);
+}
+
+.schema-node.selected::after {
+  border-color: rgba(245, 110, 15, 0.82);
 }
 
 .schema-node.is-dragging {

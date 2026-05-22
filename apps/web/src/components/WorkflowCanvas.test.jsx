@@ -95,6 +95,20 @@ describe('WorkflowCanvas', () => {
     expect(sendEmailNode).not.toHaveClass('is-selected')
   })
 
+  it('deletes the selected node with the keyboard shortcut', () => {
+    render(<CanvasHarness />)
+
+    const sendEmailNode = getSendEmailNode()
+
+    fireEvent.click(sendEmailNode)
+    expect(sendEmailNode).toHaveClass('is-selected')
+
+    fireEvent.keyDown(window, { key: 'Delete' })
+
+    expect(screen.queryByText('Send Email')).not.toBeInTheDocument()
+    expect(screen.getByText('Text Input')).toBeInTheDocument()
+  })
+
   it('opens the node inspector on double click', () => {
     const onNodeOpen = vi.fn()
 

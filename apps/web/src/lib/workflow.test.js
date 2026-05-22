@@ -4,6 +4,7 @@ import {
   canConnect,
   connectWorkflowNodes,
   createCanvasElements,
+  removeWorkflowNode,
   removeWorkflowEdge,
   reconnectWorkflowEdge,
   syncWorkflowEdges
@@ -39,6 +40,14 @@ describe('createCanvasElements', () => {
       workflowFixture.edges[0].edge_id
     )
 
+    expect(nextWorkflow.edges).toHaveLength(0)
+  })
+
+  it('can remove a workflow node and any attached edges', () => {
+    const nextWorkflow = removeWorkflowNode(workflowFixture, 'input_text')
+
+    expect(nextWorkflow.nodes).toHaveLength(1)
+    expect(nextWorkflow.nodes[0].node_id).toBe('send_email_notification')
     expect(nextWorkflow.edges).toHaveLength(0)
   })
 

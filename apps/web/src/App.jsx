@@ -1394,12 +1394,11 @@ function DashboardNavIcon({ screenId }) {
   switch (screenId) {
     case 'overview':
       return (
-        <svg viewBox="0 0 18 18" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="4" cy="4" r="2.2" />
-          <circle cx="14" cy="4" r="2.2" />
-          <circle cx="4" cy="14" r="2.2" />
-          <circle cx="14" cy="14" r="2.2" />
-        </svg>
+        <img
+          alt=""
+          className="dashboard-nav-item__icon-image dashboard-nav-item__icon-image--overview"
+          src="/brand/symbol/stitchly-symbol-white.svg"
+        />
       );
     case 'canvas':
       return (

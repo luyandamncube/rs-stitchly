@@ -173,6 +173,16 @@ export function removeWorkflowEdge(workflow, edgeId) {
   }
 }
 
+export function removeWorkflowNode(workflow, nodeId) {
+  return {
+    ...workflow,
+    edges: workflow.edges.filter(
+      (edge) => edge.source_node_id !== nodeId && edge.target_node_id !== nodeId
+    ),
+    nodes: workflow.nodes.filter((node) => node.node_id !== nodeId)
+  }
+}
+
 export function canConnect(connection, workflow, nodeDefinitions) {
   return inspectConnection(connection, workflow, nodeDefinitions).valid
 }

@@ -17,6 +17,7 @@ import {
   createCanvasElements,
   inspectConnection,
   removeWorkflowEdge,
+  removeWorkflowNode,
   reconnectWorkflowEdge,
   syncWorkflowEdges,
   syncWorkflowNodes
@@ -464,6 +465,28 @@ function WorkflowCanvas({
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [edges, onSelectionChange, onWorkflowChange, selectedEdgeId, workflow])
+
+  useEffect(() => {
+    if (!selectedNodeId || selectedEdgeId || !workflow || !onWorkflowChange) {
+      return
+    }
+
+    const handleKeyDown = (event) => {
+      if (
+        (event.key !== 'Delete' && event.key !== 'Backspace') ||
+        shouldIgnoreDeleteShortcut(event)
+      ) {
+        return
+      }
+
+      event.preventDefault()
+      onSelectionChange?.(null)
+      onWorkflowChange(removeWorkflowNode(workflow, selectedNodeId))
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [onSelectionChange, onWorkflowChange, selectedEdgeId, selectedNodeId, workflow])
 
   return (
     <div

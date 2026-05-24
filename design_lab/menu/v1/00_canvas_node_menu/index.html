@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>00 Canvas Node Menu</title>
+    <link rel="stylesheet" href="../shared.css" />
+  </head>
+  <body>
+    <main class="menu-lab">
+      <section class="menu-lab__note">
+        <span class="menu-lab__eyebrow">Menu Lab</span>
+        <h1 class="menu-lab__title">00 Canvas Node Menu</h1>
+        <p class="menu-lab__caption">
+          Real canvas menu button set using the same dock and popout language as the canvas control.
+        </p>
+      </section>
+
+      <section class="menu-shell" aria-label="Canvas node menu study">
+        <section class="menu-stage" aria-label="Canvas stage context">
+          <div class="menu-stage__topbar">
+            <span class="menu-stage__pill">workspace_1</span>
+          </div>
+          <div class="menu-stage__placeholder" aria-hidden="true"></div>
+        </section>
+
+        <aside class="menu-control is-open" id="menu-control" aria-label="Node family dock">
+          <div class="menu-control__dock">
+            <button class="menu-control__button menu-control__button--brand" type="button" aria-label="Stitchly">
+              <span class="menu-control__icon" aria-hidden="true">
+                <img
+                  class="menu-control__brand-image"
+                  src="../../../../apps/web/public/brand/symbol/stitchly-symbol-mark-white.svg"
+                  alt=""
+                />
+              </span>
+            </button>
+
+            <button class="menu-control__button" type="button" aria-label="Canvas">
+              <span class="menu-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 20 20" fill="none">
+                  <rect x="4.15" y="4.15" width="11.7" height="11.7" rx="1.8" stroke="currentColor" stroke-width="1.3" />
+                  <path d="M8 4.2V15.8M12 4.2V15.8M4.2 8H15.8M4.2 12H12" stroke="currentColor" stroke-width="1.15" stroke-linecap="square" stroke-linejoin="miter" opacity="0.76" />
+                </svg>
+              </span>
+            </button>
+
+            <span class="menu-control__divider" aria-hidden="true"></span>
+
+            <button class="menu-control__button" type="button" aria-label="Trigger">
+              <span class="menu-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 20 20" fill="none">
+                  <path d="M10 3.7C6.52 3.7 3.7 6.52 3.7 10C3.7 13.48 6.52 16.3 10 16.3C13.48 16.3 16.3 13.48 16.3 10C16.3 8.92 16.03 7.9 15.55 7" stroke="currentColor" stroke-width="1.3" stroke-linecap="square" />
+                  <path d="M10 6.75V10.05L12.55 11.55" stroke="currentColor" stroke-width="1.3" stroke-linecap="square" stroke-linejoin="miter" />
+                  <path d="M6.05 4.75L3.95 4.7L4 2.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="square" stroke-linejoin="miter" />
+                </svg>
+              </span>
+            </button>
+
+            <button class="menu-control__button" type="button" aria-label="Input">
+              <span class="menu-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 20 20" fill="none">
+                  <path d="M10 4.3V11.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="square" />
+                  <path d="M7.55 9.25L10 11.7L12.45 9.25" stroke="currentColor" stroke-width="1.3" stroke-linecap="square" stroke-linejoin="miter" />
+                  <path d="M4.95 13.2H15.05" stroke="currentColor" stroke-width="1.3" stroke-linecap="square" />
+                  <path d="M5.45 6.9V14.25C5.45 15.02 6.08 15.65 6.85 15.65H13.15C13.92 15.65 14.55 15.02 14.55 14.25V6.9" stroke="currentColor" stroke-width="1.15" stroke-linecap="square" opacity="0.76" />
+                </svg>
+              </span>
+            </button>
+
+            <button class="menu-control__button" type="button" aria-label="Compute">
+              <span class="menu-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 20 20" fill="none">
+                  <path d="M6.35 5.45L3.2 10L6.35 14.55M13.65 5.45L16.8 10L13.65 14.55M11.25 4.15L8.75 15.85" stroke="currentColor" stroke-width="1.3" stroke-linecap="square" stroke-linejoin="miter" />
+                </svg>
+              </span>
+            </button>
+
+            <button class="menu-control__button" type="button" aria-label="Data movement">
+              <span class="menu-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 20 20" fill="none">
+                  <path d="M3.95 6.6H12.35" stroke="currentColor" stroke-width="1.28" stroke-linecap="square" />
+                  <path d="M10.2 4.45L12.95 6.6L10.2 8.75" stroke="currentColor" stroke-width="1.28" stroke-linecap="square" stroke-linejoin="miter" />
+                  <path d="M16.05 13.4H7.65" stroke="currentColor" stroke-width="1.28" stroke-linecap="square" />
+                  <path d="M9.8 11.25L7.05 13.4L9.8 15.55" stroke="currentColor" stroke-width="1.28" stroke-linecap="square" stroke-linejoin="miter" />
+                </svg>
+              </span>
+            </button>
+
+            <button class="menu-control__button" type="button" aria-label="Control">
+              <span class="menu-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 20 20" fill="none">
+                  <rect x="4.1" y="4.2" width="2.4" height="2.4" rx="0.45" stroke="currentColor" stroke-width="1.1" />
+                  <rect x="13.55" y="5.2" width="2.4" height="2.4" rx="0.45" stroke="currentColor" stroke-width="1.1" />
+                  <rect x="13.55" y="12.4" width="2.4" height="2.4" rx="0.45" stroke="currentColor" stroke-width="1.1" />
+                  <path d="M6.7 5.4H9.15C10.78 5.4 12.1 6.72 12.1 8.35C12.1 9.98 10.78 11.3 9.15 11.3H7.8C6.42 11.3 5.3 12.42 5.3 13.8V14.55" stroke="currentColor" stroke-width="1.2" stroke-linecap="square" stroke-linejoin="miter" />
+                  <path d="M12.25 8.35H13.1" stroke="currentColor" stroke-width="1.2" stroke-linecap="square" />
+                </svg>
+              </span>
+            </button>
+
+            <button
+              class="menu-control__button is-active"
+              id="menu-control-toggle"
+              type="button"
+              aria-label="Output"
+              aria-expanded="true"
+              aria-controls="menu-control-menu"
+            >
+              <span class="menu-control__icon menu-control__icon--output" aria-hidden="true">
+                <svg viewBox="0 0 20 20" fill="none">
+                  <rect x="3.65" y="5.15" width="12.7" height="9.7" rx="1.7" stroke="currentColor" stroke-width="1.2" opacity="0.82" />
+                  <path d="M5.95 10H12.05" stroke="currentColor" stroke-width="1.3" stroke-linecap="square" />
+                  <path d="M10.2 7.95L12.8 10L10.2 12.05" stroke="currentColor" stroke-width="1.3" stroke-linecap="square" stroke-linejoin="miter" />
+                </svg>
+              </span>
+            </button>
+
+            <button class="menu-control__button" type="button" aria-label="System">
+              <span class="menu-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 20 20" fill="none">
+                  <circle cx="10" cy="10" r="5.65" stroke="currentColor" stroke-width="1.2" />
+                  <path d="M4.75 10H15.25M10 4.35C8.62 5.9 7.82 7.88 7.78 10C7.82 12.12 8.62 14.1 10 15.65M10 4.35C11.38 5.9 12.18 7.88 12.22 10C12.18 12.12 11.38 14.1 10 15.65" stroke="currentColor" stroke-width="1.05" stroke-linecap="square" />
+                </svg>
+              </span>
+            </button>
+
+            <span class="menu-control__divider" aria-hidden="true"></span>
+
+            <button class="menu-control__button" type="button" aria-label="Exit">
+              <span class="menu-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 20 20" fill="none">
+                  <path d="M7.25 4.55H5.9C5.03 4.55 4.3 5.28 4.3 6.15V13.85C4.3 14.72 5.03 15.45 5.9 15.45H7.25" stroke="currentColor" stroke-width="1.2" stroke-linecap="square" />
+                  <path d="M8.85 10H15.45" stroke="currentColor" stroke-width="1.28" stroke-linecap="square" />
+                  <path d="M12.9 7.55L15.35 10L12.9 12.45" stroke="currentColor" stroke-width="1.28" stroke-linecap="square" stroke-linejoin="miter" />
+                </svg>
+              </span>
+            </button>
+          </div>
+
+          <aside class="menu-control__menu" id="menu-control-menu" aria-label="Output node menu">
+            <div class="menu-control__menu-header">
+              <h2 class="menu-control__menu-title">Output</h2>
+            </div>
+
+            <div class="menu-control__menu-grid">
+              <button class="menu-control__menu-card" type="button">
+                <span class="menu-control__menu-card-icon" aria-hidden="true">
+                  <svg viewBox="0 0 20 20" fill="none">
+                    <path d="M2.8 10C4.48 6.85 7.04 5.28 10 5.28C12.96 5.28 15.52 6.85 17.2 10C15.52 13.15 12.96 14.72 10 14.72C7.04 14.72 4.48 13.15 2.8 10Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+                    <circle cx="10" cy="10" r="2.25" stroke="currentColor" stroke-width="1.6" />
+                  </svg>
+                </span>
+                <span class="menu-control__menu-card-label">Preview</span>
+              </button>
+
+              <button class="menu-control__menu-card" type="button">
+                <span class="menu-control__menu-card-icon" aria-hidden="true">
+                  <svg viewBox="0 0 20 20" fill="none">
+                    <path d="M10 4.2V12.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+                    <path d="M6.9 9.7L10 12.8L13.1 9.7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+                    <path d="M4.8 15.1H15.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+                  </svg>
+                </span>
+                <span class="menu-control__menu-card-label">File</span>
+              </button>
+
+              <button class="menu-control__menu-card" type="button">
+                <span class="menu-control__menu-card-icon" aria-hidden="true">
+                  <svg viewBox="0 0 20 20" fill="none">
+                    <path d="M6.1 5.4H12.1L14.4 7.7V14.6C14.4 15.15 13.95 15.6 13.4 15.6H6.1C5.55 15.6 5.1 15.15 5.1 14.6V6.4C5.1 5.85 5.55 5.4 6.1 5.4Z" stroke="currentColor" stroke-width="1.55" stroke-linejoin="round" />
+                    <path d="M11.9 5.5V7.9H14.3" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" />
+                    <path d="M7.3 10H12.3M7.3 12.5H11" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" />
+                  </svg>
+                </span>
+                <span class="menu-control__menu-card-label">JSON</span>
+              </button>
+
+              <button class="menu-control__menu-card" type="button">
+                <span class="menu-control__menu-card-icon" aria-hidden="true">
+                  <svg viewBox="0 0 20 20" fill="none">
+                    <path d="M5 6.1H15C15.72 6.1 16.3 6.68 16.3 7.4V12.6C16.3 13.32 15.72 13.9 15 13.9H5C4.28 13.9 3.7 13.32 3.7 12.6V7.4C3.7 6.68 4.28 6.1 5 6.1Z" stroke="currentColor" stroke-width="1.5" />
+                    <path d="M4.2 7.1L9.24 10.57C9.69 10.88 10.3 10.88 10.76 10.57L15.8 7.1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </span>
+                <span class="menu-control__menu-card-label">Send email</span>
+              </button>
+            </div>
+          </aside>
+        </aside>
+      </section>
+    </main>
+
+    <script>
+      const control = document.getElementById('menu-control');
+      const toggle = document.getElementById('menu-control-toggle');
+
+      toggle?.addEventListener('click', () => {
+        const nextOpen = !control.classList.contains('is-open');
+        control.classList.toggle('is-open', nextOpen);
+        toggle.setAttribute('aria-expanded', String(nextOpen));
+      });
+    </script>
+  </body>
+</html>

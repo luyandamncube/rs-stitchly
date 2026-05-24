@@ -45,6 +45,12 @@ function buildSvg({ color, label, size = 512, source }) {
 `;
 }
 
+function recolorGeneratedSvg(svg, { color, label }) {
+  return svg
+    .replace(/<title id="title">[^<]+<\/title>/, `<title id="title">${label}</title>`)
+    .replace(/fill="#0b0b0d"/, `fill="${color}"`);
+}
+
 function buildPreviewHtml() {
   const whiteRows = SIZES.map(
     (size) => `
@@ -214,25 +220,40 @@ async function main() {
 
   await writeFile(
     path.join(OUTPUT_DIR, 'stitchly-symbol-current.svg'),
-    buildSvg({ color: 'currentColor', label: 'Stitchly symbol master', size: 512, source })
+    recolorGeneratedSvg(
+      buildSvg({ color: '#0b0b0d', label: 'Stitchly symbol black', size: 512, source }),
+      { color: 'currentColor', label: 'Stitchly symbol master' }
+    )
   );
+  const blackMasterSvg = buildSvg({
+    color: '#0b0b0d',
+    label: 'Stitchly symbol black',
+    size: 512,
+    source
+  });
+  await writeFile(path.join(OUTPUT_DIR, 'stitchly-symbol-black.svg'), blackMasterSvg);
   await writeFile(
     path.join(OUTPUT_DIR, 'stitchly-symbol-white.svg'),
-    buildSvg({ color: '#ffffff', label: 'Stitchly symbol white', size: 512, source })
-  );
-  await writeFile(
-    path.join(OUTPUT_DIR, 'stitchly-symbol-black.svg'),
-    buildSvg({ color: '#0b0b0d', label: 'Stitchly symbol black', size: 512, source })
+    recolorGeneratedSvg(blackMasterSvg, {
+      color: '#ffffff',
+      label: 'Stitchly symbol white'
+    })
   );
 
   for (const size of SIZES) {
+    const blackSizedSvg = buildSvg({
+      color: '#0b0b0d',
+      label: `Stitchly symbol black ${size}px`,
+      size,
+      source
+    });
+    await writeFile(path.join(OUTPUT_DIR, 'black', `stitchly-symbol-${size}.svg`), blackSizedSvg);
     await writeFile(
       path.join(OUTPUT_DIR, 'white', `stitchly-symbol-${size}.svg`),
-      buildSvg({ color: '#ffffff', label: `Stitchly symbol white ${size}px`, size, source })
-    );
-    await writeFile(
-      path.join(OUTPUT_DIR, 'black', `stitchly-symbol-${size}.svg`),
-      buildSvg({ color: '#0b0b0d', label: `Stitchly symbol black ${size}px`, size, source })
+      recolorGeneratedSvg(blackSizedSvg, {
+        color: '#ffffff',
+        label: `Stitchly symbol white ${size}px`
+      })
     );
   }
 

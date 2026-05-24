@@ -380,15 +380,25 @@ function ProductShell({
       }`}
     >
       <div className="dashboard-app__shell">
-        <aside
-          className={`dashboard-app__sidebar${
-            isSidebarCollapsedEffective ? ' dashboard-app__sidebar--collapsed' : ''
-          }${isCanvasRoute ? ' dashboard-app__sidebar--overlay' : ''}${
-            isCanvasRoute && isSidebarCollapsedEffective
-              ? ' dashboard-app__sidebar--overlay-collapsed'
-              : ''
-          }`}
-        >
+        {isCanvasRoute ? (
+          <CanvasMenuDock
+            activeGroup={activeCanvasShelfGroup}
+            groups={NODE_SHELF_GROUPS}
+            onAddNode={handleCanvasNodeAdd}
+            onNodeDragEnd={() => {
+              setDraggedCanvasNodeType(null);
+              setActiveCanvasShelfId(null);
+            }}
+            onNodeDragStart={setDraggedCanvasNodeType}
+            onShelfToggle={handleCanvasShelfToggle}
+            onSignOut={onLogout}
+          />
+        ) : (
+          <aside
+            className={`dashboard-app__sidebar${
+              isSidebarCollapsedEffective ? ' dashboard-app__sidebar--collapsed' : ''
+            }`}
+          >
           {/* <div className="dashboard-sidebar__brand">
             <span className="dashboard-brand-chip">
               <img
@@ -447,8 +457,6 @@ function ProductShell({
                 </div>
               </>
             ) : null}
-
-            <span className="dashboard-sidebar__rail-divider" aria-hidden="true" />
 
             <div className="dashboard-sidebar__subnav">
               <button
@@ -525,18 +533,6 @@ function ProductShell({
             </div>
           </div>
 
-          {isCanvasRoute && isSidebarCollapsedEffective && activeCanvasShelfGroup ? (
-            <CanvasNodeShelfDrawer
-              group={activeCanvasShelfGroup}
-              onAddNode={handleCanvasNodeAdd}
-              onNodeDragEnd={() => {
-                setDraggedCanvasNodeType(null);
-                setActiveCanvasShelfId(null);
-              }}
-              onNodeDragStart={setDraggedCanvasNodeType}
-            />
-          ) : null}
-
           <div className="dashboard-sidebar__footer">
             <div className="dashboard-profile">
               <span className="dashboard-profile__avatar dashboard-profile__avatar--symbol">
@@ -552,7 +548,8 @@ function ProductShell({
               </span>
             </div>
           </div>
-        </aside>
+          </aside>
+        )}
 
         {isCanvasRoute ? (
           <div className="dashboard-canvas-shell">
@@ -619,6 +616,86 @@ function ProductShell({
   );
 }
 
+function CanvasMenuDock({
+  activeGroup = null,
+  groups,
+  onAddNode,
+  onNodeDragEnd,
+  onNodeDragStart,
+  onShelfToggle,
+  onSignOut
+}) {
+  return (
+    <aside className={`canvas-menu${activeGroup ? ' is-open' : ''}`} aria-label="Canvas menu">
+      <div className="canvas-menu__dock">
+        <button className="canvas-menu__button canvas-menu__button--brand" type="button" aria-label="Stitchly">
+          <span className="canvas-menu__icon" aria-hidden="true">
+            <img
+              alt=""
+              className="canvas-menu__brand-image"
+              src="/brand/symbol/stitchly-symbol-mark-white.svg"
+            />
+          </span>
+        </button>
+
+        <CanvasMenuButton
+          icon={<CanvasMenuIcon kind="canvas" />}
+          label="Canvas"
+          onClick={() => onShelfToggle(null)}
+        />
+
+        <span className="canvas-menu__divider" aria-hidden="true" />
+
+        {groups.map((group) => (
+          <CanvasMenuButton
+            key={group.id}
+            icon={<CanvasMenuIcon kind={group.id} />}
+            isActive={activeGroup?.id === group.id}
+            isExpanded={activeGroup?.id === group.id}
+            label={group.label}
+            onClick={() => onShelfToggle(group.id)}
+          />
+        ))}
+
+        <span className="canvas-menu__divider" aria-hidden="true" />
+
+        <CanvasMenuButton
+          icon={<CanvasMenuIcon kind="exit" />}
+          label="Exit"
+          onClick={onSignOut}
+        />
+      </div>
+
+      {activeGroup ? (
+        <CanvasNodeShelfDrawer
+          group={activeGroup}
+          onAddNode={onAddNode}
+          onNodeDragEnd={onNodeDragEnd}
+          onNodeDragStart={onNodeDragStart}
+        />
+      ) : null}
+    </aside>
+  );
+}
+
+function CanvasMenuButton({ icon, isActive = false, isExpanded = undefined, label, onClick }) {
+  return (
+    <button
+      aria-expanded={typeof isExpanded === 'boolean' ? isExpanded : undefined}
+      className={`canvas-menu__button${isActive ? ' is-active' : ''}`}
+      onClick={onClick}
+      type="button"
+    >
+      <span className="canvas-menu__icon" aria-hidden="true">
+        {icon}
+      </span>
+      <span className="canvas-menu__tooltip" role="tooltip">
+        {label}
+      </span>
+    </button>
+  );
+}
+
 function WorkspaceSwitcher({ activeWorkspace, variant = 'sidebar', workspaces }) {
   return (
     <section
@@ -676,21 +753,29 @@ function CanvasNodeShelfDrawer({ group, onAddNode, onNodeDragEnd, onNodeDragStar
   return (
     <aside
       aria-label={`${group.label} nodes`}
-      className="dashboard-node-shelf"
+      className="canvas-menu__drawer"
       id={`dashboard-node-shelf-${group.id}`}
     >
-      <div className="dashboard-node-shelf__header">
-        <span>{group.label}</span>
+      <div className="canvas-menu__drawer-header">
+        <span className="canvas-menu__drawer-title">{group.label}</span>
       </div>
-      <div className="dashboard-node-shelf__grid">
+      <div className="canvas-menu__drawer-grid">
         {group.items.map((item) => (
           <button
             key={item.typeId}
-            className={`dashboard-node-shelf__item${
+            className={`canvas-menu__drawer-card${
               item.implemented ? '' : ' is-disabled'
             }`}
             disabled={!item.implemented || !onAddNode}
             draggable={item.implemented && Boolean(onAddNode)}
+            onClick={() => {
+              if (!item.implemented) {
+                return;
+              }
+
+              onAddNode?.(item.typeId);
+              onNodeDragEnd?.();
+            }}
             onDragEnd={() => onNodeDragEnd?.()}
             onDragStart={(event) => {
               if (!item.implemented) {
@@ -702,22 +787,155 @@ function CanvasNodeShelfDrawer({ group, onAddNode, onNodeDragEnd, onNodeDragStar
             }}
             type="button"
           >
-            <span className="dashboard-node-shelf__item-icon" aria-hidden="true">
-              {item.label
-                .split(' ')
-                .slice(0, 2)
-                .map((word) => word[0])
-                .join('')}
+            <span className="canvas-menu__drawer-card-icon" aria-hidden="true">
+              <CanvasShelfItemIcon groupId={group.id} typeId={item.typeId} />
             </span>
-            <span className="dashboard-node-shelf__item-label">{item.label}</span>
+            <span className="canvas-menu__drawer-card-label">{item.label}</span>
             {!item.implemented ? (
-              <span className="dashboard-node-shelf__item-badge">Soon</span>
+              <span className="canvas-menu__drawer-card-badge">Soon</span>
             ) : null}
           </button>
         ))}
       </div>
     </aside>
   );
+}
+
+function CanvasMenuIcon({ kind }) {
+  switch (kind) {
+    case 'canvas':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <rect x="4.15" y="4.15" width="11.7" height="11.7" rx="1.8" stroke="currentColor" strokeWidth="1.3" />
+          <path d="M8 4.2V15.8M12 4.2V15.8M4.2 8H15.8M4.2 12H12" stroke="currentColor" strokeWidth="1.15" strokeLinecap="square" strokeLinejoin="miter" opacity="0.76" />
+        </svg>
+      );
+    case 'trigger':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <path d="M10 3.7C6.52 3.7 3.7 6.52 3.7 10C3.7 13.48 6.52 16.3 10 16.3C13.48 16.3 16.3 13.48 16.3 10C16.3 8.92 16.03 7.9 15.55 7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="square" />
+          <path d="M10 6.75V10.05L12.55 11.55" stroke="currentColor" strokeWidth="1.3" strokeLinecap="square" strokeLinejoin="miter" />
+          <path d="M6.05 4.75L3.95 4.7L4 2.6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="square" strokeLinejoin="miter" />
+        </svg>
+      );
+    case 'input':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <path d="M10 4.3V11.2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="square" />
+          <path d="M7.55 9.25L10 11.7L12.45 9.25" stroke="currentColor" strokeWidth="1.3" strokeLinecap="square" strokeLinejoin="miter" />
+          <path d="M4.95 13.2H15.05" stroke="currentColor" strokeWidth="1.3" strokeLinecap="square" />
+          <path d="M5.45 6.9V14.25C5.45 15.02 6.08 15.65 6.85 15.65H13.15C13.92 15.65 14.55 15.02 14.55 14.25V6.9" stroke="currentColor" strokeWidth="1.15" strokeLinecap="square" opacity="0.76" />
+        </svg>
+      );
+    case 'compute':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <path d="M6.35 5.45L3.2 10L6.35 14.55M13.65 5.45L16.8 10L13.65 14.55M11.25 4.15L8.75 15.85" stroke="currentColor" strokeWidth="1.3" strokeLinecap="square" strokeLinejoin="miter" />
+        </svg>
+      );
+    case 'data_movement':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <path d="M3.95 6.6H12.35" stroke="currentColor" strokeWidth="1.28" strokeLinecap="square" />
+          <path d="M10.2 4.45L12.95 6.6L10.2 8.75" stroke="currentColor" strokeWidth="1.28" strokeLinecap="square" strokeLinejoin="miter" />
+          <path d="M16.05 13.4H7.65" stroke="currentColor" strokeWidth="1.28" strokeLinecap="square" />
+          <path d="M9.8 11.25L7.05 13.4L9.8 15.55" stroke="currentColor" strokeWidth="1.28" strokeLinecap="square" strokeLinejoin="miter" />
+        </svg>
+      );
+    case 'control':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <rect x="4.1" y="4.2" width="2.4" height="2.4" rx="0.45" stroke="currentColor" strokeWidth="1.1" />
+          <rect x="13.55" y="5.2" width="2.4" height="2.4" rx="0.45" stroke="currentColor" strokeWidth="1.1" />
+          <rect x="13.55" y="12.4" width="2.4" height="2.4" rx="0.45" stroke="currentColor" strokeWidth="1.1" />
+          <path d="M6.7 5.4H9.15C10.78 5.4 12.1 6.72 12.1 8.35C12.1 9.98 10.78 11.3 9.15 11.3H7.8C6.42 11.3 5.3 12.42 5.3 13.8V14.55" stroke="currentColor" strokeWidth="1.2" strokeLinecap="square" strokeLinejoin="miter" />
+          <path d="M12.25 8.35H13.1" stroke="currentColor" strokeWidth="1.2" strokeLinecap="square" />
+        </svg>
+      );
+    case 'output':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <rect x="3.65" y="5.15" width="12.7" height="9.7" rx="1.7" stroke="currentColor" strokeWidth="1.2" opacity="0.82" />
+          <path d="M5.95 10H12.05" stroke="currentColor" strokeWidth="1.3" strokeLinecap="square" />
+          <path d="M10.2 7.95L12.8 10L10.2 12.05" stroke="currentColor" strokeWidth="1.3" strokeLinecap="square" strokeLinejoin="miter" />
+        </svg>
+      );
+    case 'system':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <circle cx="10" cy="10" r="5.65" stroke="currentColor" strokeWidth="1.2" />
+          <path d="M4.75 10H15.25M10 4.35C8.62 5.9 7.82 7.88 7.78 10C7.82 12.12 8.62 14.1 10 15.65M10 4.35C11.38 5.9 12.18 7.88 12.22 10C12.18 12.12 11.38 14.1 10 15.65" stroke="currentColor" strokeWidth="1.05" strokeLinecap="square" />
+        </svg>
+      );
+    case 'exit':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <path d="M7.25 4.55H5.9C5.03 4.55 4.3 5.28 4.3 6.15V13.85C4.3 14.72 5.03 15.45 5.9 15.45H7.25" stroke="currentColor" strokeWidth="1.2" strokeLinecap="square" />
+          <path d="M8.85 10H15.45" stroke="currentColor" strokeWidth="1.28" strokeLinecap="square" />
+          <path d="M12.9 7.55L15.35 10L12.9 12.45" stroke="currentColor" strokeWidth="1.28" strokeLinecap="square" strokeLinejoin="miter" />
+        </svg>
+      );
+    default:
+      return null;
+  }
+}
+
+function CanvasShelfItemIcon({ groupId, typeId }) {
+  switch (typeId) {
+    case 'preview_output':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <path d="M2.8 10C4.48 6.85 7.04 5.28 10 5.28C12.96 5.28 15.52 6.85 17.2 10C15.52 13.15 12.96 14.72 10 14.72C7.04 14.72 4.48 13.15 2.8 10Z" stroke="currentColor" strokeWidth="1.45" strokeLinejoin="miter" />
+          <circle cx="10" cy="10" r="2.2" stroke="currentColor" strokeWidth="1.35" />
+        </svg>
+      );
+    case 'file_output':
+    case 'file_input':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <path d="M6.15 5.4H12.05L14.35 7.7V14.5C14.35 15.16 13.81 15.7 13.15 15.7H6.15C5.49 15.7 4.95 15.16 4.95 14.5V6.6C4.95 5.94 5.49 5.4 6.15 5.4Z" stroke="currentColor" strokeWidth="1.35" strokeLinejoin="miter" />
+          <path d="M11.95 5.55V7.95H14.25" stroke="currentColor" strokeWidth="1.25" strokeLinecap="square" strokeLinejoin="miter" />
+        </svg>
+      );
+    case 'json_output':
+    case 'json_input':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <path d="M7.4 5.6C6.35 5.6 5.8 6.2 5.8 7.2V8.35C5.8 9.05 5.5 9.45 4.85 9.7C5.5 9.95 5.8 10.35 5.8 11.05V12.2C5.8 13.2 6.35 13.8 7.4 13.8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="square" strokeLinejoin="miter" />
+          <path d="M12.6 5.6C13.65 5.6 14.2 6.2 14.2 7.2V8.35C14.2 9.05 14.5 9.45 15.15 9.7C14.5 9.95 14.2 10.35 14.2 11.05V12.2C14.2 13.2 13.65 13.8 12.6 13.8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="square" strokeLinejoin="miter" />
+        </svg>
+      );
+    case 'send_email':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <path d="M5 6.2H15C15.72 6.2 16.3 6.78 16.3 7.5V12.5C16.3 13.22 15.72 13.8 15 13.8H5C4.28 13.8 3.7 13.22 3.7 12.5V7.5C3.7 6.78 4.28 6.2 5 6.2Z" stroke="currentColor" strokeWidth="1.35" />
+          <path d="M4.25 7.15L9.25 10.5C9.71 10.81 10.29 10.81 10.75 10.5L15.75 7.15" stroke="currentColor" strokeWidth="1.35" strokeLinecap="square" strokeLinejoin="miter" />
+        </svg>
+      );
+    case 'send_telegram':
+    case 'notification':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <path d="M16 5.2L13.55 15.35C13.42 15.9 12.88 16.21 12.37 15.99L8.6 14.38L6.55 15.98C6.18 16.27 5.63 16.05 5.58 15.59L5.25 12.55L14.6 6.05C14.83 5.89 14.63 5.53 14.36 5.65L3.85 10.15C3.3 10.39 3.32 11.18 3.89 11.39L5.95 12.13" stroke="currentColor" strokeWidth="1.2" strokeLinecap="square" strokeLinejoin="miter" />
+        </svg>
+      );
+    case 'text_input':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <path d="M5.45 5.7H14.55M10 5.9V14.4" stroke="currentColor" strokeWidth="1.35" strokeLinecap="square" />
+        </svg>
+      );
+    case 'table_input':
+    case 'table_output':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <rect x="4.4" y="4.6" width="11.2" height="10.8" rx="1.3" stroke="currentColor" strokeWidth="1.25" />
+          <path d="M4.6 8.35H15.4M8.15 4.8V15.2M11.85 4.8V15.2" stroke="currentColor" strokeWidth="1.15" strokeLinecap="square" />
+        </svg>
+      );
+    default:
+      return <CanvasMenuIcon kind={groupId} />;
+  }
 }
 
 function LoginRoute({ onLogin }) {

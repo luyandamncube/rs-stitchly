@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Canvas Control Lab</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="canvas-lab">
+      <section class="canvas-lab__note">
+        <span class="canvas-lab__eyebrow">Canvas Lab</span>
+        <h1 class="canvas-lab__title">01 Canvas Control</h1>
+        <p class="canvas-lab__caption">
+          Static study for the bottom-center viewport dock and the right-side zoom popout.
+        </p>
+      </section>
+
+      <section class="canvas-control-lab is-open" id="canvas-control-lab">
+        <div class="canvas-control-lab__dock" aria-label="Canvas control dock">
+          <button class="canvas-control-lab__button" type="button" aria-label="Pointer tool">
+            <span class="canvas-icon canvas-icon--cursor" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M4.5 3.5L10.6 18.8L12.65 11.95L19.5 9.9L4.5 3.5Z"
+                  stroke="currentColor"
+                  stroke-width="1.7"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </span>
+          </button>
+
+          <button class="canvas-control-lab__button is-active" type="button" aria-label="Hand tool">
+            <span class="canvas-icon canvas-icon--hand" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M8.2 10.2V6.2C8.2 5.46 8.8 4.86 9.54 4.86C10.28 4.86 10.88 5.46 10.88 6.2V10.12"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                />
+                <path
+                  d="M10.88 9.55V4.86C10.88 4.12 11.48 3.52 12.22 3.52C12.96 3.52 13.56 4.12 13.56 4.86V9.7"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                />
+                <path
+                  d="M13.56 10.1V5.65C13.56 4.91 14.16 4.31 14.9 4.31C15.64 4.31 16.24 4.91 16.24 5.65V11.25"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                />
+                <path
+                  d="M16.24 9.88V8.54C16.24 7.8 16.84 7.2 17.58 7.2C18.32 7.2 18.92 7.8 18.92 8.54V12.02C18.92 14.95 16.55 17.32 13.62 17.32H11.92C10.86 17.32 9.84 16.91 9.08 16.18L5.66 12.88C5.13 12.37 5.11 11.52 5.62 10.99C6.14 10.45 6.99 10.44 7.53 10.95L8.2 11.58V10.2"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </span>
+          </button>
+
+          <span class="canvas-control-lab__divider" aria-hidden="true"></span>
+
+          <button class="canvas-control-lab__button" type="button" aria-label="Undo">
+            <span class="canvas-icon canvas-icon--undo" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M9 7L4.5 11.5L9 16"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+                <path
+                  d="M5.2 11.5H14.35C17.19 11.5 19.5 13.81 19.5 16.65V17"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </span>
+          </button>
+
+          <button class="canvas-control-lab__button" type="button" aria-label="Redo">
+            <span class="canvas-icon canvas-icon--redo" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M15 7L19.5 11.5L15 16"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+                <path
+                  d="M18.8 11.5H9.65C6.81 11.5 4.5 13.81 4.5 16.65V17"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </span>
+          </button>
+
+          <button
+            class="canvas-control-lab__zoom"
+            id="canvas-control-toggle"
+            type="button"
+            aria-expanded="true"
+            aria-controls="canvas-control-menu"
+          >
+            <span>37%</span>
+            <span class="canvas-control-lab__caret" aria-hidden="true">˅</span>
+          </button>
+        </div>
+
+        <aside class="canvas-control-lab__menu" id="canvas-control-menu" aria-label="Zoom menu">
+          <button class="canvas-control-lab__menu-item" type="button">
+            <span>Zoom in</span>
+            <strong>Ctrl + +</strong>
+          </button>
+          <button class="canvas-control-lab__menu-item" type="button">
+            <span>Zoom out</span>
+            <strong>Ctrl + -</strong>
+          </button>
+          <button class="canvas-control-lab__menu-item" type="button">
+            <span>Zoom to 100%</span>
+            <strong>Ctrl + 0</strong>
+          </button>
+          <button class="canvas-control-lab__menu-item" type="button">
+            <span>Zoom to fit</span>
+            <strong>Ctrl + 1</strong>
+          </button>
+        </aside>
+      </section>
+    </main>
+
+    <script>
+      const control = document.getElementById('canvas-control-lab');
+      const toggle = document.getElementById('canvas-control-toggle');
+
+      toggle?.addEventListener('click', () => {
+        const nextOpen = !control.classList.contains('is-open');
+        control.classList.toggle('is-open', nextOpen);
+        toggle.setAttribute('aria-expanded', String(nextOpen));
+      });
+    </script>
+  </body>
+</html>

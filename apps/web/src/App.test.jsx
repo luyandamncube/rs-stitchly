@@ -90,10 +90,13 @@ describe('App platform shell', () => {
     expect(screen.getByTestId('canvas-workspace')).toBeInTheDocument();
     expect(container.querySelector('.workspace-stage__viewport--canvas-route')).not.toBeNull();
     expect(container.querySelector('.dashboard-app--sidebar-collapsed')).not.toBeNull();
+    expect(container.querySelector('.canvas-menu')).not.toBeNull();
     expect(screen.getByText('Default Workspace')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Desktop' })).toBeNull();
     expect(screen.queryByRole('button', { name: /expand sidebar/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /collapse sidebar/i })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Overview' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Runs' })).toBeNull();
   });
 
   it('opens the canvas node shelf on click from the collapsed rail', async () => {
@@ -113,7 +116,7 @@ describe('App platform shell', () => {
     fireEvent.click(outputButton);
 
     expect(outputButton).toHaveAttribute('aria-expanded', 'true');
-    expect(container.querySelector('.dashboard-node-group.is-open')).not.toBeNull();
+    expect(container.querySelector('.canvas-menu.is-open')).not.toBeNull();
     expect(screen.getByText('Preview Output')).toBeInTheDocument();
     expect(screen.getByText('Send Email')).toBeInTheDocument();
   });
@@ -134,7 +137,7 @@ describe('App platform shell', () => {
     fireEvent.dragEnd(sendEmailShelfItem);
 
     await waitFor(() => {
-      expect(container.querySelector('.dashboard-node-group.is-open')).toBeNull();
+      expect(container.querySelector('.canvas-menu__drawer')).toBeNull();
     });
 
     expect(screen.queryByText('Preview Output')).toBeNull();

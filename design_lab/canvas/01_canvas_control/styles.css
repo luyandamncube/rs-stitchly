@@ -1,0 +1,261 @@
+:root {
+  color-scheme: dark;
+  --canvas-bg: #0b0b0e;
+  --canvas-dot: rgba(255, 255, 255, 0.12);
+  --dock-bg: rgba(34, 34, 39, 0.96);
+  --dock-border: rgba(255, 255, 255, 0.08);
+  --dock-button: rgba(255, 255, 255, 0.04);
+  --dock-button-hover: rgba(255, 255, 255, 0.075);
+  --dock-divider: rgba(255, 255, 255, 0.08);
+  --dock-text: rgba(255, 255, 255, 0.94);
+  --dock-text-muted: rgba(255, 255, 255, 0.58);
+  --dock-active: #f56e0f;
+  --dock-active-ink: #fff7f1;
+  --menu-bg: rgba(37, 37, 42, 0.98);
+  --menu-item-hover: rgba(255, 255, 255, 0.045);
+  --font-ui: "Space Grotesk", "Satoshi", "Azeret Mono", sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  min-height: 100vh;
+  display: grid;
+  place-items: stretch;
+  background:
+    radial-gradient(circle at 20% 18%, rgba(245, 110, 15, 0.06), transparent 20%),
+    linear-gradient(180deg, #0f0f12, #09090b);
+  color: var(--dock-text);
+  font-family: var(--font-ui);
+}
+
+.canvas-lab {
+  position: relative;
+  min-height: 100vh;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 18% 22%, rgba(245, 110, 15, 0.05), transparent 18%),
+    radial-gradient(circle at 80% 14%, rgba(255, 255, 255, 0.02), transparent 16%),
+    linear-gradient(180deg, rgba(12, 12, 14, 0.82), rgba(9, 9, 11, 0.98));
+}
+
+.canvas-lab::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, var(--canvas-dot) 1.1px, transparent 1.1px);
+  background-size: 24px 24px;
+  pointer-events: none;
+}
+
+.canvas-lab__note {
+  position: absolute;
+  left: 24px;
+  top: 24px;
+  z-index: 1;
+  display: grid;
+  gap: 4px;
+  max-width: 340px;
+}
+
+.canvas-lab__eyebrow {
+  color: rgba(255, 255, 255, 0.54);
+  font-size: 0.76rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.canvas-lab__title {
+  margin: 0;
+  font-size: 1.12rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.canvas-lab__caption {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.canvas-control-lab {
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  z-index: 2;
+  display: flex;
+  align-items: end;
+  justify-content: center;
+  transform: translateX(-50%);
+}
+
+.canvas-control-lab__dock,
+.canvas-control-lab__menu {
+  border: 1px solid var(--dock-border);
+  background: var(--dock-bg);
+}
+
+.canvas-control-lab__dock {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 9px;
+}
+
+.canvas-control-lab__button,
+.canvas-control-lab__zoom {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dock-text);
+  cursor: pointer;
+  font: inherit;
+  transition: background 160ms ease;
+}
+
+.canvas-control-lab__button:hover,
+.canvas-control-lab__zoom:hover {
+  background: var(--dock-button-hover);
+}
+
+.canvas-control-lab__button.is-active {
+  background: var(--dock-active);
+  color: var(--dock-active-ink);
+  width: 34px;
+  height: 34px;
+  margin: 2px;
+  padding: 0;
+}
+
+.canvas-control-lab__divider {
+  width: 1px;
+  height: 24px;
+  margin: 0 2px;
+  background: var(--dock-divider);
+}
+
+.canvas-control-lab__zoom {
+  gap: 10px;
+  min-width: 86px;
+  margin-left: 2px;
+  justify-content: space-between;
+  background: var(--dock-button);
+  font-size: 0.96rem;
+  font-weight: 600;
+}
+
+.canvas-control-lab__caret {
+  color: var(--dock-text-muted);
+  font-size: 0.78rem;
+}
+
+.canvas-control-lab__menu {
+  position: absolute;
+  left: calc(100% - 92px);
+  bottom: 46px;
+  width: 284px;
+  padding: 10px;
+  border-radius: 9px;
+  background: var(--menu-bg);
+  display: none;
+}
+
+.canvas-control-lab.is-open .canvas-control-lab__menu {
+  display: block;
+}
+
+.canvas-control-lab__menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 42px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dock-text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.95rem;
+  text-align: left;
+}
+
+.canvas-control-lab__menu-item:hover {
+  background: var(--menu-item-hover);
+}
+
+.canvas-control-lab__menu-item strong {
+  color: var(--dock-text-muted);
+  font-size: 0.95rem;
+  font-style: italic;
+  font-weight: 600;
+}
+
+.canvas-icon {
+  width: 22px;
+  height: 22px;
+  display: block;
+  flex: 0 0 auto;
+}
+
+.canvas-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
+}
+
+.canvas-icon--cursor {
+  width: 23px;
+  height: 23px;
+}
+
+.canvas-icon--hand {
+  width: 22px;
+  height: 22px;
+}
+
+.canvas-icon--undo,
+.canvas-icon--redo {
+  width: 24px;
+  height: 24px;
+}
+
+@media (max-width: 720px) {
+  .canvas-lab__note {
+    left: 16px;
+    top: 16px;
+    max-width: calc(100vw - 32px);
+  }
+
+  .canvas-control-lab {
+    bottom: 16px;
+  }
+
+  .canvas-control-lab__menu {
+    left: auto;
+    right: 0;
+    bottom: 52px;
+    width: min(284px, calc(100vw - 32px));
+  }
+}

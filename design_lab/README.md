@@ -16,6 +16,10 @@ Structure:
   Login and authentication screen studies.
 - `dashboard/`
   Dashboard and application-shell studies.
+- `canvas/`
+  Canvas chrome and overlay control studies.
+- `menu/`
+  Collapsed rail, tooltip, and popout node-shelf studies.
 
 Current convention:
 
@@ -30,6 +34,9 @@ Current convention:
 
 - `dashboard/v1/00_xxx/`
   Ordered dashboard design studies for the first dashboard-shell pass.
+
+- `menu/v1/00_xxx/`
+  Ordered menu and navigation studies for the first collapsed-rail pass.
 
 How to use:
 

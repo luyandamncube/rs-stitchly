@@ -77,6 +77,7 @@ export default function CanvasWorkspace({
   const [isCanvasDebugCollapsed, setIsCanvasDebugCollapsed] = useState(() =>
     readStoredCanvasDebugCollapsed()
   );
+  const [isCanvasZoomMenuOpen, setIsCanvasZoomMenuOpen] = useState(false);
   const [workflowSyncState, setWorkflowSyncState] = useState(
     workspaceId ? 'loading' : 'local'
   );
@@ -582,6 +583,11 @@ export default function CanvasWorkspace({
         workflow={workflow}
       />
 
+      <CanvasViewportControls
+        isZoomMenuOpen={isCanvasZoomMenuOpen}
+        onToggleZoomMenu={() => setIsCanvasZoomMenuOpen((current) => !current)}
+      />
+
       <div className="shell-overlay">
         {floatingCard ? (
           <section className={`floating-card floating-card--${floatingCard.type}`}>
@@ -804,6 +810,156 @@ export default function CanvasWorkspace({
           debugState={canvasDebugState}
           onToggleCollapsed={() => setIsCanvasDebugCollapsed((current) => !current)}
         />
+      ) : null}
+    </div>
+  );
+}
+
+function CanvasViewportControls({
+  isZoomMenuOpen = false,
+  onToggleZoomMenu
+}) {
+  return (
+    <div className="canvas-viewport-controls" aria-label="Canvas viewport controls">
+      <div className="canvas-viewport-controls__dock">
+        <button
+          aria-label="Pointer tool"
+          className="canvas-viewport-controls__button"
+          type="button"
+        >
+          <span className="canvas-viewport-controls__icon canvas-viewport-controls__icon--cursor" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path
+                d="M4.5 3.5L10.6 18.8L12.65 11.95L19.5 9.9L4.5 3.5Z"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+        </button>
+
+        <button
+          aria-label="Hand tool"
+          className="canvas-viewport-controls__button is-active"
+          type="button"
+        >
+          <span className="canvas-viewport-controls__icon canvas-viewport-controls__icon--hand" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path
+                d="M8.2 10.2V6.2C8.2 5.46 8.8 4.86 9.54 4.86C10.28 4.86 10.88 5.46 10.88 6.2V10.12"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+              />
+              <path
+                d="M10.88 9.55V4.86C10.88 4.12 11.48 3.52 12.22 3.52C12.96 3.52 13.56 4.12 13.56 4.86V9.7"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+              />
+              <path
+                d="M13.56 10.1V5.65C13.56 4.91 14.16 4.31 14.9 4.31C15.64 4.31 16.24 4.91 16.24 5.65V11.25"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+              />
+              <path
+                d="M16.24 9.88V8.54C16.24 7.8 16.84 7.2 17.58 7.2C18.32 7.2 18.92 7.8 18.92 8.54V12.02C18.92 14.95 16.55 17.32 13.62 17.32H11.92C10.86 17.32 9.84 16.91 9.08 16.18L5.66 12.88C5.13 12.37 5.11 11.52 5.62 10.99C6.14 10.45 6.99 10.44 7.53 10.95L8.2 11.58V10.2"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+        </button>
+
+        <span className="canvas-viewport-controls__divider" aria-hidden="true" />
+
+        <button
+          aria-label="Undo"
+          className="canvas-viewport-controls__button"
+          type="button"
+        >
+          <span className="canvas-viewport-controls__icon canvas-viewport-controls__icon--undo" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path
+                d="M9 7L4.5 11.5L9 16"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              <path
+                d="M5.2 11.5H14.35C17.19 11.5 19.5 13.81 19.5 16.65V17"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+        </button>
+
+        <button
+          aria-label="Redo"
+          className="canvas-viewport-controls__button"
+          type="button"
+        >
+          <span className="canvas-viewport-controls__icon canvas-viewport-controls__icon--redo" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path
+                d="M15 7L19.5 11.5L15 16"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              <path
+                d="M18.8 11.5H9.65C6.81 11.5 4.5 13.81 4.5 16.65V17"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+        </button>
+
+        <button
+          aria-expanded={isZoomMenuOpen}
+          aria-label="Zoom options"
+          className="canvas-viewport-controls__zoom"
+          onClick={onToggleZoomMenu}
+          type="button"
+        >
+          <span>37%</span>
+          <span aria-hidden="true" className="canvas-viewport-controls__zoom-caret">
+            ˅
+          </span>
+        </button>
+      </div>
+
+      {isZoomMenuOpen ? (
+        <aside className="canvas-viewport-controls__menu" aria-label="Zoom menu">
+          <button className="canvas-viewport-controls__menu-item" type="button">
+            <span>Zoom in</span>
+            <strong>Ctrl + +</strong>
+          </button>
+          <button className="canvas-viewport-controls__menu-item" type="button">
+            <span>Zoom out</span>
+            <strong>Ctrl + -</strong>
+          </button>
+          <button className="canvas-viewport-controls__menu-item" type="button">
+            <span>Zoom to 100%</span>
+            <strong>Ctrl + 0</strong>
+          </button>
+          <button className="canvas-viewport-controls__menu-item" type="button">
+            <span>Zoom to fit</span>
+            <strong>Ctrl + 1</strong>
+          </button>
+        </aside>
       ) : null}
     </div>
   );

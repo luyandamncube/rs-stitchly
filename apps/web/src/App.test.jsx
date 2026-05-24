@@ -91,7 +91,6 @@ describe('App platform shell', () => {
     expect(container.querySelector('.workspace-stage__viewport--canvas-route')).not.toBeNull();
     expect(container.querySelector('.dashboard-app--sidebar-collapsed')).not.toBeNull();
     expect(container.querySelector('.canvas-menu')).not.toBeNull();
-    expect(screen.getByText('Default Workspace')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Desktop' })).toBeNull();
     expect(screen.queryByRole('button', { name: /expand sidebar/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /collapse sidebar/i })).toBeNull();

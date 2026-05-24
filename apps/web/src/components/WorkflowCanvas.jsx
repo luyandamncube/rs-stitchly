@@ -5,7 +5,6 @@ import {
   Background,
   ConnectionMode,
   Handle,
-  MiniMap,
   Position,
   ReactFlow,
   useConnection
@@ -60,6 +59,8 @@ function WorkflowCanvas({
   onNodeTypeDrop,
   onNodeOpen,
   onSelectionChange,
+  onViewportActionsReady,
+  onViewportChange,
   onWorkflowChange,
   selectedNodeId = null,
   workflow
@@ -83,6 +84,7 @@ function WorkflowCanvas({
     connectionTypes: null
   })
   const reactFlowInstanceRef = useRef(null)
+  const latestViewportRef = useRef({ x: 0, y: 0, zoom: 1 })
   const [selectedEdgeId, setSelectedEdgeId] = useState(null)
   const [liveConnectionDebug, setLiveConnectionDebug] = useState({
     connectionFromHandleId: null,
@@ -444,6 +446,12 @@ function WorkflowCanvas({
   )
 
   useEffect(() => {
+    return () => {
+      onViewportActionsReady?.(null)
+    }
+  }, [onViewportActionsReady])
+
+  useEffect(() => {
     if (!selectedEdgeId || !workflow || !onWorkflowChange) {
       return
     }
@@ -520,8 +528,8 @@ function WorkflowCanvas({
         edges={edges}
         edgesReconnectable
         isValidConnection={(connection) => canConnect(connection, workflow, nodeDefinitions)}
-        maxZoom={1}
-        minZoom={1}
+        maxZoom={2}
+        minZoom={0.25}
         nodeTypes={NODE_TYPES}
         nodes={nodes}
         onConnect={handleConnect}
@@ -533,6 +541,41 @@ function WorkflowCanvas({
         onEdgesChange={handleEdgesChange}
         onInit={(instance) => {
           reactFlowInstanceRef.current = instance
+          const nextViewport =
+            typeof instance.getViewport === 'function'
+              ? instance.getViewport()
+              : { x: 0, y: 0, zoom: 1 }
+          latestViewportRef.current = nextViewport
+          onViewportChange?.(nextViewport)
+          onViewportActionsReady?.({
+            fitView() {
+              return reactFlowInstanceRef.current?.fitView?.({
+                duration: 180,
+                padding: 0.16
+              })
+            },
+            zoomIn() {
+              return reactFlowInstanceRef.current?.zoomIn?.({ duration: 180 })
+            },
+            zoomOut() {
+              return reactFlowInstanceRef.current?.zoomOut?.({ duration: 180 })
+            },
+            zoomTo(zoom) {
+              const currentViewport =
+                typeof reactFlowInstanceRef.current?.getViewport === 'function'
+                  ? reactFlowInstanceRef.current.getViewport()
+                  : latestViewportRef.current
+
+              return reactFlowInstanceRef.current?.setViewport?.(
+                { ...currentViewport, zoom },
+                { duration: 180 }
+              )
+            }
+          })
+        }}
+        onMove={(_event, viewport) => {
+          latestViewportRef.current = viewport
+          onViewportChange?.(viewport)
         }}
         onNodeClick={handleNodeClick}
         onNodeDoubleClick={handleNodeDoubleClick}
@@ -541,13 +584,12 @@ function WorkflowCanvas({
         onNodesChange={handleNodesChange}
         onPaneClick={handlePaneClick}
         onReconnect={handleReconnect}
-        panOnDrag={false}
+        panOnDrag
         proOptions={{ hideAttribution: true }}
         zoomOnDoubleClick={false}
-        zoomOnPinch={false}
-        zoomOnScroll={false}
+        zoomOnPinch
+        zoomOnScroll
       >
-        <MiniMap pannable zoomable />
         <Background
           color="rgba(255,255,255,0.12)"
           gap={24}

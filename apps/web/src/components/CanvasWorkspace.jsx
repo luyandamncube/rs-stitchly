@@ -81,6 +81,8 @@ export default function CanvasWorkspace({
   const [workflowSyncState, setWorkflowSyncState] = useState(
     workspaceId ? 'loading' : 'local'
   );
+  const [canvasViewport, setCanvasViewport] = useState({ x: 0, y: 0, zoom: 1 });
+  const [canvasViewportActions, setCanvasViewportActions] = useState(null);
   const [activeWorkflowId, setActiveWorkflowId] = useState(
     starterWorkflowFixture.workflow_id
   );
@@ -160,6 +162,48 @@ export default function CanvasWorkspace({
       closeStreamRef.current?.();
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !canvasViewportActions) {
+      return undefined;
+    }
+
+    const handleKeyDown = (event) => {
+      if (
+        !(event.ctrlKey || event.metaKey) ||
+        event.altKey ||
+        shouldIgnoreCanvasShortcut(event)
+      ) {
+        return;
+      }
+
+      if (event.key === '+' || event.key === '=') {
+        event.preventDefault();
+        void canvasViewportActions.zoomIn?.();
+        return;
+      }
+
+      if (event.key === '-') {
+        event.preventDefault();
+        void canvasViewportActions.zoomOut?.();
+        return;
+      }
+
+      if (event.key === '0') {
+        event.preventDefault();
+        void canvasViewportActions.zoomTo?.(1);
+        return;
+      }
+
+      if (event.key === '1') {
+        event.preventDefault();
+        void canvasViewportActions.fitView?.();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [canvasViewportActions]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -578,6 +622,8 @@ export default function CanvasWorkspace({
         }}
         onNodeOpen={handleCanvasNodeOpen}
         onSelectionChange={handleCanvasSelection}
+        onViewportActionsReady={setCanvasViewportActions}
+        onViewportChange={setCanvasViewport}
         onWorkflowChange={applyWorkflowChange}
         selectedNodeId={selectedNodeId}
         workflow={workflow}
@@ -586,6 +632,23 @@ export default function CanvasWorkspace({
       <CanvasViewportControls
         isZoomMenuOpen={isCanvasZoomMenuOpen}
         onToggleZoomMenu={() => setIsCanvasZoomMenuOpen((current) => !current)}
+        onZoomIn={() => {
+          void canvasViewportActions?.zoomIn?.();
+          setIsCanvasZoomMenuOpen(false);
+        }}
+        onZoomOut={() => {
+          void canvasViewportActions?.zoomOut?.();
+          setIsCanvasZoomMenuOpen(false);
+        }}
+        onZoomToFit={() => {
+          void canvasViewportActions?.fitView?.();
+          setIsCanvasZoomMenuOpen(false);
+        }}
+        onZoomToHundred={() => {
+          void canvasViewportActions?.zoomTo?.(1);
+          setIsCanvasZoomMenuOpen(false);
+        }}
+        zoomLabel={formatCanvasZoom(canvasViewport.zoom)}
       />
 
       <div className="shell-overlay">
@@ -817,7 +880,12 @@ export default function CanvasWorkspace({
 
 function CanvasViewportControls({
   isZoomMenuOpen = false,
-  onToggleZoomMenu
+  onToggleZoomMenu,
+  onZoomIn,
+  onZoomOut,
+  onZoomToFit,
+  onZoomToHundred,
+  zoomLabel = '100%'
 }) {
   return (
     <div className="canvas-viewport-controls" aria-label="Canvas viewport controls">
@@ -934,7 +1002,7 @@ function CanvasViewportControls({
           onClick={onToggleZoomMenu}
           type="button"
         >
-          <span>37%</span>
+          <span>{zoomLabel}</span>
           <span aria-hidden="true" className="canvas-viewport-controls__zoom-caret">
             ˅
           </span>
@@ -943,19 +1011,27 @@ function CanvasViewportControls({
 
       {isZoomMenuOpen ? (
         <aside className="canvas-viewport-controls__menu" aria-label="Zoom menu">
-          <button className="canvas-viewport-controls__menu-item" type="button">
+          <button className="canvas-viewport-controls__menu-item" onClick={onZoomIn} type="button">
             <span>Zoom in</span>
             <strong>Ctrl + +</strong>
           </button>
-          <button className="canvas-viewport-controls__menu-item" type="button">
+          <button className="canvas-viewport-controls__menu-item" onClick={onZoomOut} type="button">
             <span>Zoom out</span>
             <strong>Ctrl + -</strong>
           </button>
-          <button className="canvas-viewport-controls__menu-item" type="button">
+          <button
+            className="canvas-viewport-controls__menu-item"
+            onClick={onZoomToHundred}
+            type="button"
+          >
             <span>Zoom to 100%</span>
             <strong>Ctrl + 0</strong>
           </button>
-          <button className="canvas-viewport-controls__menu-item" type="button">
+          <button
+            className="canvas-viewport-controls__menu-item"
+            onClick={onZoomToFit}
+            type="button"
+          >
             <span>Zoom to fit</span>
             <strong>Ctrl + 1</strong>
           </button>
@@ -1263,6 +1339,28 @@ function formatConnectionEndpoint(nodeId, handleId) {
   }
 
   return `${humanizeToken(nodeId)}.${humanizeToken(handleId)}`
+}
+
+function formatCanvasZoom(zoom) {
+  if (!Number.isFinite(zoom) || zoom <= 0) {
+    return '100%';
+  }
+
+  return `${Math.round(zoom * 100)}%`;
+}
+
+function shouldIgnoreCanvasShortcut(event) {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  return (
+    target.isContentEditable ||
+    target.tagName === 'INPUT' ||
+    target.tagName === 'TEXTAREA' ||
+    target.tagName === 'SELECT'
+  );
 }
 
 function formatConnectionValidity(value) {

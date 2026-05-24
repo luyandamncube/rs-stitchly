@@ -553,9 +553,6 @@ function ProductShell({
 
         {isCanvasRoute ? (
           <div className="dashboard-canvas-shell">
-            <div className="dashboard-canvas-shell__toolbar">
-              <span className="dashboard-pill">{activeWorkspace.name}</span>
-            </div>
             <main className="dashboard-canvas-shell__stage">
               <CanvasScreen
                 draggedNodeType={draggedCanvasNodeType}

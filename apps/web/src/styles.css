@@ -876,15 +876,6 @@ textarea {
   height: 100%;
 }
 
-.dashboard-canvas-shell__toolbar {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  z-index: 4;
-  display: flex;
-  align-items: center;
-}
-
 .dashboard-canvas-shell__stage {
   width: 100%;
   height: 100%;
@@ -894,15 +885,6 @@ textarea {
   position: relative;
   width: 100%;
   height: 100%;
-}
-
-.dashboard-canvas-shell__toolbar {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  z-index: 4;
-  display: flex;
-  align-items: center;
 }
 
 .dashboard-canvas-shell__stage {
@@ -2511,11 +2493,11 @@ textarea {
 }
 
 .workflow-flow .react-flow__pane {
-  cursor: default;
+  cursor: grab;
 }
 
 .workflow-flow .react-flow__pane:active {
-  cursor: default;
+  cursor: grabbing;
 }
 
 .workflow-flow .react-flow__minimap {
@@ -3156,21 +3138,19 @@ textarea {
 
 .canvas-debug-panel {
   position: absolute;
-  top: 24px;
-  right: 24px;
+  left: 84px;
+  bottom: 24px;
   z-index: 30;
-  width: min(360px, calc(100vw - 48px));
-  padding: 14px;
-  border: 1px solid rgba(245, 110, 15, 0.18);
-  border-radius: 20px;
-  background: rgba(12, 12, 14, 0.94);
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.34);
-  backdrop-filter: blur(18px);
+  width: min(360px, calc(100vw - 108px));
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 9px;
+  background: rgba(37, 37, 42, 0.98);
   pointer-events: auto;
 }
 
 .canvas-debug-panel.is-collapsed {
-  width: min(240px, calc(100vw - 48px));
+  width: min(228px, calc(100vw - 108px));
 }
 
 .canvas-debug-panel__header,
@@ -3183,7 +3163,7 @@ textarea {
 }
 
 .canvas-debug-panel__header {
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .canvas-debug-panel__header-copy {
@@ -3202,7 +3182,8 @@ textarea {
 .canvas-debug-panel__header strong,
 .canvas-debug-panel__item-head strong,
 .canvas-debug-panel__kv strong {
-  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.96);
+  font-size: 0.8rem;
   line-height: 1.2;
 }
 
@@ -3212,52 +3193,53 @@ textarea {
 .canvas-debug-panel__meta,
 .canvas-debug-panel__label,
 .canvas-debug-panel__empty {
-  color: var(--text-muted);
-  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.56);
+  font-size: 0.7rem;
   line-height: 1.3;
 }
 
 .canvas-debug-panel__grid,
 .canvas-debug-panel__stack {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .canvas-debug-panel__grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .canvas-debug-panel__section + .canvas-debug-panel__section {
-  margin-top: 12px;
+  margin-top: 8px;
 }
 
 .canvas-debug-panel__label {
-  margin: 0 0 8px;
+  margin: 0 0 6px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
 
 .canvas-debug-panel__item,
 .canvas-debug-panel__kv {
-  padding: 10px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 14px;
+  min-height: 54px;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 6px;
   background: rgba(255, 255, 255, 0.035);
 }
 
 .canvas-debug-panel__controls {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
+  gap: 6px;
+  margin-top: 8px;
 }
 
 .canvas-debug-panel__toggle,
 .canvas-debug-panel__reset,
 .canvas-debug-panel__collapse {
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 999px;
+  border-radius: 6px;
   background: rgba(255, 255, 255, 0.04);
   color: var(--text-main);
   cursor: pointer;
@@ -3268,19 +3250,22 @@ textarea {
 }
 
 .canvas-debug-panel__toggle {
-  padding: 8px 12px;
-  font-size: 0.74rem;
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 0.72rem;
   line-height: 1;
 }
 
 .canvas-debug-panel__reset {
-  padding: 6px 12px;
+  min-height: 34px;
+  padding: 0 10px;
   font-size: 0.72rem;
   line-height: 1;
 }
 
 .canvas-debug-panel__collapse {
-  padding: 6px 12px;
+  min-height: 34px;
+  padding: 0 10px;
   font-size: 0.72rem;
   line-height: 1;
 }
@@ -3294,8 +3279,9 @@ textarea {
 .canvas-debug-panel__toggle.is-active,
 .canvas-debug-panel__reset,
 .canvas-debug-panel__collapse {
-  border-color: rgba(245, 110, 15, 0.28);
-  background: rgba(245, 110, 15, 0.12);
+  border-color: rgba(245, 110, 15, 0.22);
+  background: rgba(245, 110, 15, 0.11);
+  color: rgba(255, 247, 241, 0.94);
 }
 
 .canvas-debug-panel__item code {
@@ -3878,12 +3864,13 @@ textarea {
   min-height: 204px;
   padding: 14px 14px 12px;
   border: none;
-  border-radius: 28px;
-  background: var(--surface);
+  border-radius: 14px;
+  background: rgba(34, 34, 39, 0.96);
   overflow: visible;
   user-select: none;
   transition:
-    background 160ms ease;
+    background 160ms ease,
+    border-color 160ms ease;
 }
 
 .workflow-node-card::after {
@@ -3891,23 +3878,24 @@ textarea {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  border: 1px solid transparent;
+  border: 1px solid rgba(255, 255, 255, 0.07);
   pointer-events: none;
   transition: border-color 160ms ease;
 }
 
 .workflow-node-card__top-chip {
   position: absolute;
-  top: -34px;
-  left: 8px;
+  top: -32px;
+  left: 6px;
   display: inline-flex;
   align-items: center;
-  height: 28px;
-  padding: 0 14px;
-  border-radius: 999px;
-  background: var(--surface-elevated);
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 5px;
+  background: rgba(34, 34, 39, 0.98);
   color: rgba(255, 255, 255, 0.94);
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   font-weight: 700;
   line-height: 1;
   letter-spacing: -0.01em;
@@ -3955,7 +3943,7 @@ textarea {
 }
 
 .workflow-node-card__menu {
-  color: var(--text-muted);
+  color: rgba(255, 255, 255, 0.42);
   font-size: 0.72rem;
   font-weight: 600;
   letter-spacing: 0.14em;
@@ -3964,16 +3952,17 @@ textarea {
 
 .workflow-node-card__body {
   display: grid;
-  gap: 8px;
-  margin-top: 10px;
-  margin-bottom: 5px;
+  gap: 6px;
+  margin-top: 8px;
+  margin-bottom: 6px;
 }
 
 .workflow-node-card__row--primary {
   min-height: 72px;
   padding: 14px 16px;
-  border-radius: 18px;
-  background: var(--surface-pill);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.035);
   align-items: flex-start;
   flex-direction: column;
   justify-content: center;
@@ -3982,8 +3971,9 @@ textarea {
 .workflow-node-card__row--kv {
   min-height: 58px;
   padding: 0 16px;
-  border-radius: 18px;
-  background: var(--surface-pill);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.035);
   overflow: hidden;
 }
 
@@ -4035,9 +4025,10 @@ textarea {
 
 .workflow-node-card__footer {
   min-height: 40px;
-  padding: 0 14px;
-  border-radius: 16px;
-  background: var(--surface-pill);
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.035);
 }
 
 .workflow-node-card__footer-meta {
@@ -4086,11 +4077,11 @@ textarea {
 
 .workflow-flow .react-flow__node:hover .workflow-node-card,
 .workflow-node-card.is-hovered {
-  background: rgba(25, 25, 31, 0.98);
+  background: rgba(37, 37, 42, 0.98);
 }
 
 .workflow-node-card.is-selected {
-  background: rgba(27, 27, 33, 0.98);
+  background: rgba(39, 39, 44, 0.98);
 }
 
 .workflow-node-card.is-selected::after {
@@ -4098,13 +4089,19 @@ textarea {
 }
 
 .workflow-node-card.is-dragging {
-  background: rgba(29, 29, 35, 0.99);
+  background: rgba(41, 41, 46, 0.99);
 }
 
 .workflow-node-card.is-hovered .workflow-node-card__row--primary,
+.workflow-node-card.is-hovered .workflow-node-card__row--kv,
 .workflow-node-card.is-selected .workflow-node-card__row--primary,
-.workflow-node-card.is-dragging .workflow-node-card__row--primary {
-  background: rgba(255, 255, 255, 0.05);
+.workflow-node-card.is-selected .workflow-node-card__row--kv,
+.workflow-node-card.is-dragging .workflow-node-card__row--primary,
+.workflow-node-card.is-dragging .workflow-node-card__row--kv,
+.workflow-node-card.is-hovered .workflow-node-card__footer,
+.workflow-node-card.is-selected .workflow-node-card__footer,
+.workflow-node-card.is-dragging .workflow-node-card__footer {
+  background: rgba(255, 255, 255, 0.045);
 }
 
 .schema-node {
@@ -4115,18 +4112,11 @@ textarea {
   min-width: 320px;
   min-height: 88px;
   padding: 0 20px;
-  border-radius: 28px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.012)),
-    rgba(23, 23, 28, 0.96);
-  box-shadow:
-    0 22px 44px rgba(0, 0, 0, 0.28),
-    inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(34, 34, 39, 0.96);
   transition:
     border-color 160ms ease,
-    transform 160ms ease,
-    box-shadow 160ms ease,
     background 160ms ease;
   overflow: visible;
   cursor: default;
@@ -4135,12 +4125,7 @@ textarea {
 }
 
 .schema-node::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.025);
-  pointer-events: none;
+  display: none;
 }
 
 .schema-node::after {
@@ -4155,12 +4140,8 @@ textarea {
 
 .workflow-flow .react-flow__node:hover .schema-node,
 .schema-node.is-hovered {
-  border-color: rgba(245, 110, 15, 0.22);
-  box-shadow:
-    0 26px 54px rgba(0, 0, 0, 0.3),
-    0 0 0 1px rgba(245, 110, 15, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04);
-  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(37, 37, 42, 0.98);
 }
 
 .schema-node__label {
@@ -4172,11 +4153,8 @@ textarea {
 }
 
 .schema-node.selected {
-  border-color: rgba(245, 110, 15, 0.4);
-  box-shadow:
-    0 28px 58px rgba(0, 0, 0, 0.32),
-    0 0 0 4px rgba(245, 110, 15, 0.1);
-  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(39, 39, 44, 0.98);
 }
 
 .schema-node.selected::after {
@@ -4185,27 +4163,23 @@ textarea {
 
 .schema-node.is-dragging {
   cursor: grabbing;
-  border-color: rgba(245, 110, 15, 0.52);
-  box-shadow:
-    0 34px 70px rgba(0, 0, 0, 0.36),
-    0 0 0 6px rgba(245, 110, 15, 0.12);
-  transform: translateY(-4px) scale(1.015);
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(41, 41, 46, 0.99);
 }
 
 .schema-node__top-chip {
   position: absolute;
-  top: -22px;
-  left: 12px;
+  top: -24px;
+  left: 8px;
   display: inline-flex;
   align-items: center;
-  height: 28px;
+  height: 26px;
   padding: 0 12px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(23, 23, 28, 0.96);
-  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.18);
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(34, 34, 39, 0.98);
   color: rgba(255, 255, 255, 0.92);
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   font-weight: 600;
   letter-spacing: 0.01em;
 }
@@ -4299,8 +4273,8 @@ textarea {
 .schema-node__row {
   min-height: 48px;
   padding: 10px 14px;
-  border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
   background: rgba(255, 255, 255, 0.035);
   transition:
     border-color 160ms ease,
@@ -4350,7 +4324,11 @@ textarea {
   justify-content: space-between;
   gap: 12px;
   margin-top: 10px;
-  padding: 0 2px;
+  padding: 0 12px;
+  min-height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.035);
   color: var(--text-muted);
   font-size: 0.8rem;
 }
@@ -4370,8 +4348,8 @@ textarea {
 }
 
 .schema-node.is-hovered .schema-node__row {
-  border-color: rgba(245, 110, 15, 0.08);
-  background: rgba(255, 255, 255, 0.046);
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.045);
 }
 
 .schema-node.is-hovered .schema-node__drag-mark,
@@ -4388,14 +4366,13 @@ textarea {
 }
 
 .schema-node.is-hovered .schema-node__top-chip {
-  border-color: rgba(245, 110, 15, 0.14);
-  box-shadow:
-    0 12px 24px rgba(0, 0, 0, 0.18),
-    0 0 0 1px rgba(245, 110, 15, 0.06);
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
 .schema-node.selected .schema-node__row,
-.schema-node.is-dragging .schema-node__row {
+.schema-node.is-dragging .schema-node__row,
+.schema-node.selected .schema-node__footer,
+.schema-node.is-dragging .schema-node__footer {
   border-color: rgba(245, 110, 15, 0.14);
   background: rgba(255, 255, 255, 0.05);
 }
@@ -4659,9 +4636,10 @@ textarea {
 
   .canvas-debug-panel {
     top: auto;
-    right: 16px;
+    left: 78px;
+    right: auto;
     bottom: 16px;
-    width: min(340px, calc(100vw - 32px));
+    width: min(340px, calc(100vw - 94px));
   }
 
   .shell-overlay {

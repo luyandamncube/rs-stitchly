@@ -13,8 +13,8 @@ Purpose:
 What this sample is testing:
 
 - a quiet input header without a role chip
-- one large text-preview row as the main content surface
-- a small footer metric for length
+- one compact preview-first text body
+- a small footer summary row for type + length
 - single right-side output handle
 - shared-CSS support for literal input cards
 
@@ -40,6 +40,8 @@ Review questions:
 
 - does this feel distinct enough from trigger and compute nodes?
 - is the text preview the right primary content choice?
-- does the footer metric feel sufficient, or should literal inputs expose one
+- does the footer summary feel sufficient, or should literal inputs expose one
   more inline metadata row?
+- does this now feel visually aligned enough with the newer `Send Email`
+  compact shell direction?
 - is this a strong base for `json_input` later?

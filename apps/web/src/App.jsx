@@ -10,10 +10,32 @@ import {
   useParams
 } from 'react-router-dom';
 import CanvasWorkspace from './components/CanvasWorkspace';
-import { createWorkspace, getSession, getWorkspaceRuns, login, logout } from './lib/api';
+import {
+  createWorkspace,
+  createWorkflow,
+  deleteWorkflow,
+  getSession,
+  getWorkflow,
+  getWorkflows,
+  getWorkspaceRuns,
+  login,
+  logout,
+  updateWorkflow,
+  updateWorkflowState
+} from './lib/api';
 import { setDraggedNodeType } from './lib/canvasDnD';
+import {
+  buildBlankWorkflowDefinition,
+  buildStarterWorkflowDefinition
+} from './lib/workflowTemplates';
 
 const APP_SCREENS = [
+  {
+    id: 'workflows',
+    icon: 'W',
+    label: 'Workflows',
+    description: 'Create, open, rename, and archive workflows inside the current workspace.'
+  },
   {
     id: 'overview',
     icon: 'O',
@@ -46,7 +68,7 @@ const APP_SCREENS = [
   }
 ];
 
-const SIDEBAR_SCREEN_IDS = new Set(['overview', 'canvas', 'runs']);
+const SIDEBAR_SCREEN_IDS = new Set(['workflows', 'canvas', 'runs']);
 
 const NODE_SHELF_GROUPS = [
   {
@@ -259,6 +281,38 @@ function AppRoutes({
         }
       />
       <Route
+        path="/flow/:workflowId"
+        element={
+          <ProtectedRoute session={session}>
+            <CanvasWorkflowRoute
+              onLogout={onLogout}
+              onRefreshSession={onRefreshSession}
+              onToggleAttentionCollapsed={onToggleAttentionCollapsed}
+              isAttentionCollapsed={isAttentionCollapsed}
+              session={session}
+              setViewMode={setViewMode}
+              viewMode={viewMode}
+            />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/w/:workspaceSlug/canvas"
+        element={
+          <ProtectedRoute session={session}>
+            <WorkspaceScreenRoute
+              onLogout={onLogout}
+              onRefreshSession={onRefreshSession}
+              onToggleAttentionCollapsed={onToggleAttentionCollapsed}
+              isAttentionCollapsed={isAttentionCollapsed}
+              session={session}
+              setViewMode={setViewMode}
+              viewMode={viewMode}
+            />
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/w/:workspaceSlug/:screenId"
         element={
           <ProtectedRoute session={session}>
@@ -299,7 +353,107 @@ function WorkspaceIndexRedirect({ session }) {
     return <Navigate replace to={getDefaultAppPath(session)} />;
   }
 
-  return <Navigate replace to={`/w/${workspace.slug}/overview`} />;
+  return <Navigate replace to={buildCanvasHomePath(workspace.slug)} />;
+}
+
+function CanvasWorkflowRoute({
+  onLogout,
+  onRefreshSession,
+  onToggleAttentionCollapsed,
+  isAttentionCollapsed,
+  session,
+  setViewMode,
+  viewMode
+}) {
+  const navigate = useNavigate();
+  const { workflowId } = useParams();
+  const [resolvedWorkspace, setResolvedWorkspace] = useState(null);
+  const [resolveState, setResolveState] = useState('loading');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function resolveWorkflowWorkspace() {
+      if (!workflowId) {
+        setResolveState('missing');
+        return;
+      }
+
+      const orderedWorkspaces = [
+        ...session.workspaces.filter(
+          (workspace) => workspace.workspace_id === session.active_workspace_id
+        ),
+        ...session.workspaces.filter(
+          (workspace) => workspace.workspace_id !== session.active_workspace_id
+        )
+      ];
+
+      for (const workspace of orderedWorkspaces) {
+        try {
+          await getWorkflow(workspace.workspace_id, workflowId);
+          if (cancelled) {
+            return;
+          }
+
+          setResolvedWorkspace(workspace);
+          setResolveState('ready');
+          return;
+        } catch (error) {
+          if (error?.status === 404) {
+            continue;
+          }
+
+          if (!cancelled) {
+            setResolveState('error');
+          }
+          return;
+        }
+      }
+
+      if (!cancelled) {
+        setResolveState('missing');
+      }
+    }
+
+    setResolvedWorkspace(null);
+    setResolveState('loading');
+    void resolveWorkflowWorkspace();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session.active_workspace_id, session.workspaces, workflowId]);
+
+  if (!workflowId) {
+    return <Navigate replace to={getDefaultAppPath(session)} />;
+  }
+
+  if (resolveState === 'loading') {
+    return <LoadingScreen />;
+  }
+
+  if (!resolvedWorkspace) {
+    return <Navigate replace to={getDefaultAppPath(session)} />;
+  }
+
+  return (
+    <ProductShell
+      activeScreen={APP_SCREENS.find((screen) => screen.id === 'canvas') ?? APP_SCREENS[0]}
+      activeWorkspace={resolvedWorkspace}
+      activeWorkflowId={workflowId}
+      isAttentionCollapsed={isAttentionCollapsed}
+      onCanvasWorkflowMissing={() =>
+        navigate(buildCanvasHomePath(resolvedWorkspace.slug), { replace: true })
+      }
+      onCanvasOpenWorkflow={(nextWorkflowId) => navigate(buildWorkflowPath(nextWorkflowId))}
+      onLogout={onLogout}
+      onRefreshSession={onRefreshSession}
+      onToggleAttentionCollapsed={onToggleAttentionCollapsed}
+      session={session}
+      setViewMode={setViewMode}
+      viewMode={viewMode}
+    />
+  );
 }
 
 function WorkspaceScreenRoute({
@@ -311,23 +465,33 @@ function WorkspaceScreenRoute({
   setViewMode,
   viewMode
 }) {
+  const navigate = useNavigate();
   const { screenId, workspaceSlug } = useParams();
+  const resolvedScreenId = screenId ?? 'canvas';
   const activeWorkspace = session.workspaces.find((workspace) => workspace.slug === workspaceSlug);
 
   if (!activeWorkspace) {
     return <Navigate replace to={getDefaultAppPath(session)} />;
   }
 
-  const activeScreen = APP_SCREENS.find((screen) => screen.id === screenId);
+  const activeScreen = APP_SCREENS.find((screen) => screen.id === resolvedScreenId);
   if (!activeScreen) {
-    return <Navigate replace to={`/w/${activeWorkspace.slug}/overview`} />;
+    return <Navigate replace to={buildCanvasHomePath(activeWorkspace.slug)} />;
   }
 
   return (
     <ProductShell
       activeScreen={activeScreen}
       activeWorkspace={activeWorkspace}
+      activeWorkflowId={resolvedScreenId === 'canvas' ? null : undefined}
       isAttentionCollapsed={isAttentionCollapsed}
+      onCanvasWorkflowMissing={null}
+      onCanvasOpenWorkflow={(nextWorkflowId) => navigate(buildWorkflowPath(nextWorkflowId))}
+      onCanvasWorkflowResolved={(resolvedWorkflowId) =>
+        navigate(buildWorkflowPath(resolvedWorkflowId), {
+          replace: true
+        })
+      }
       onLogout={onLogout}
       onRefreshSession={onRefreshSession}
       onToggleAttentionCollapsed={onToggleAttentionCollapsed}
@@ -341,7 +505,11 @@ function WorkspaceScreenRoute({
 function ProductShell({
   activeScreen,
   activeWorkspace,
+  activeWorkflowId = null,
   isAttentionCollapsed,
+  onCanvasWorkflowMissing = null,
+  onCanvasOpenWorkflow = null,
+  onCanvasWorkflowResolved = null,
   onLogout,
   onRefreshSession,
   onToggleAttentionCollapsed,
@@ -350,25 +518,57 @@ function ProductShell({
   viewMode
 }) {
   const isCanvasRoute = activeScreen.id === 'canvas';
-  const [activeCanvasShelfId, setActiveCanvasShelfId] = useState(null);
+  const [activeCanvasMenuId, setActiveCanvasMenuId] = useState(null);
   const [draggedCanvasNodeType, setDraggedCanvasNodeType] = useState(null);
   const [canvasActions, setCanvasActions] = useState(null);
+  const [isCreatingCanvasWorkflow, setIsCreatingCanvasWorkflow] = useState(false);
   const activeCanvasShelfGroup =
-    NODE_SHELF_GROUPS.find((group) => group.id === activeCanvasShelfId) ?? null;
+    NODE_SHELF_GROUPS.find((group) => group.id === activeCanvasMenuId) ?? null;
+  const isCanvasBrandMenuOpen = activeCanvasMenuId === 'brand';
+  const isCanvasWorkflowPanelOpen = activeCanvasMenuId === 'workflows';
   const isSidebarCollapsedEffective = true;
 
   useEffect(() => {
-    setActiveCanvasShelfId(null);
+    setActiveCanvasMenuId(null);
     setDraggedCanvasNodeType(null);
-  }, [activeWorkspace.workspace_id, isCanvasRoute]);
+  }, [activeWorkflowId, activeWorkspace.workspace_id, isCanvasRoute]);
 
-  function handleCanvasShelfToggle(groupId) {
-    setActiveCanvasShelfId((current) => (current === groupId ? null : groupId));
+  function handleCanvasMenuToggle(nextId) {
+    setActiveCanvasMenuId((current) => (current === nextId ? null : nextId));
   }
 
   function handleCanvasNodeAdd(typeId) {
     canvasActions?.addNode?.(typeId);
-    setActiveCanvasShelfId(null);
+    setActiveCanvasMenuId(null);
+  }
+
+  async function handleCanvasNewWorkflow() {
+    if (isCreatingCanvasWorkflow) {
+      return;
+    }
+
+    setIsCreatingCanvasWorkflow(true);
+
+    try {
+      const workflow = buildBlankWorkflowDefinition();
+      const response = await createWorkflow(activeWorkspace.workspace_id, workflow);
+      const nextPath = buildWorkflowPath(
+        response.workflow.workflow_id
+      );
+
+      window.open(nextPath, '_blank', 'noopener');
+      setActiveCanvasMenuId(null);
+    } catch (error) {
+      console.error('Unable to create a new workflow tab.', error);
+    } finally {
+      setIsCreatingCanvasWorkflow(false);
+    }
+  }
+
+  async function handleCanvasOpenWorkflow(workflowId) {
+    await updateWorkflowState(activeWorkspace.workspace_id, workflowId).catch(() => {});
+    onCanvasOpenWorkflow?.(workflowId);
+    setActiveCanvasMenuId(null);
   }
 
   return (
@@ -383,15 +583,24 @@ function ProductShell({
         {isCanvasRoute ? (
           <CanvasMenuDock
             activeGroup={activeCanvasShelfGroup}
+            activeWorkspace={activeWorkspace}
+            activeWorkflowId={activeWorkflowId}
             groups={NODE_SHELF_GROUPS}
+            isCreatingWorkflow={isCreatingCanvasWorkflow}
+            isBrandMenuOpen={isCanvasBrandMenuOpen}
+            isWorkflowPanelOpen={isCanvasWorkflowPanelOpen}
             onAddNode={handleCanvasNodeAdd}
+            onBrandToggle={() => handleCanvasMenuToggle('brand')}
+            onCreateWorkflow={handleCanvasNewWorkflow}
+            onOpenWorkflow={handleCanvasOpenWorkflow}
             onNodeDragEnd={() => {
               setDraggedCanvasNodeType(null);
-              setActiveCanvasShelfId(null);
+              setActiveCanvasMenuId(null);
             }}
             onNodeDragStart={setDraggedCanvasNodeType}
-            onShelfToggle={handleCanvasShelfToggle}
+            onShelfToggle={handleCanvasMenuToggle}
             onSignOut={onLogout}
+            onWorkflowToggle={() => handleCanvasMenuToggle('workflows')}
           />
         ) : (
           <aside
@@ -558,6 +767,9 @@ function ProductShell({
                 draggedNodeType={draggedCanvasNodeType}
                 isFullScreen
                 onRegisterCanvasActions={setCanvasActions}
+                onWorkflowMissing={onCanvasWorkflowMissing}
+                onWorkflowResolved={onCanvasWorkflowResolved}
+                workflowId={activeWorkflowId}
                 workspaceId={activeWorkspace.workspace_id}
               />
             </main>
@@ -589,6 +801,9 @@ function ProductShell({
                 />
 
                 <main className="dashboard-main-card__stage" data-screen={activeScreen.id}>
+                  {activeScreen.id === 'workflows' ? (
+                    <WorkflowListScreen activeWorkspace={activeWorkspace} />
+                  ) : null}
                   {activeScreen.id === 'overview' ? (
                     <OverviewScreen activeWorkspace={activeWorkspace} viewMode={viewMode} />
                   ) : null}
@@ -615,17 +830,39 @@ function ProductShell({
 
 function CanvasMenuDock({
   activeGroup = null,
+  activeWorkspace,
+  activeWorkflowId = null,
   groups,
+  isCreatingWorkflow = false,
+  isBrandMenuOpen = false,
+  isWorkflowPanelOpen = false,
   onAddNode,
+  onBrandToggle,
+  onCreateWorkflow,
+  onOpenWorkflow,
   onNodeDragEnd,
   onNodeDragStart,
   onShelfToggle,
-  onSignOut
+  onSignOut,
+  onWorkflowToggle
 }) {
   return (
-    <aside className={`canvas-menu${activeGroup ? ' is-open' : ''}`} aria-label="Canvas menu">
+    <aside
+      className={`canvas-menu${
+        activeGroup || isBrandMenuOpen || isWorkflowPanelOpen ? ' is-open' : ''
+      }`}
+      aria-label="Canvas menu"
+    >
       <div className="canvas-menu__dock">
-        <button className="canvas-menu__button canvas-menu__button--brand" type="button" aria-label="Stitchly">
+        <button
+          aria-expanded={isBrandMenuOpen}
+          aria-label="Stitchly"
+          className={`canvas-menu__button canvas-menu__button--brand${
+            isBrandMenuOpen ? ' is-open' : ''
+          }`}
+          onClick={onBrandToggle}
+          type="button"
+        >
           <span className="canvas-menu__icon" aria-hidden="true">
             <img
               alt=""
@@ -636,9 +873,11 @@ function CanvasMenuDock({
         </button>
 
         <CanvasMenuButton
-          icon={<CanvasMenuIcon kind="canvas" />}
-          label="Canvas"
-          onClick={() => onShelfToggle(null)}
+          icon={<CanvasMenuIcon kind="workflows" />}
+          isActive={isWorkflowPanelOpen}
+          isExpanded={isWorkflowPanelOpen}
+          label="Workflows"
+          onClick={onWorkflowToggle}
         />
 
         <span className="canvas-menu__divider" aria-hidden="true" />
@@ -663,7 +902,24 @@ function CanvasMenuDock({
         />
       </div>
 
-      {activeGroup ? (
+      {isBrandMenuOpen ? (
+        <CanvasBrandMenuPanel
+          activeWorkflowId={activeWorkflowId}
+          activeWorkspace={activeWorkspace}
+          isCreatingWorkflow={isCreatingWorkflow}
+          onCreateWorkflow={onCreateWorkflow}
+          onOpenWorkflow={onOpenWorkflow}
+        />
+      ) : null}
+
+      {isWorkflowPanelOpen ? (
+        <CanvasWorkflowMenuPanel
+          activeWorkflowId={activeWorkflowId}
+          activeWorkspace={activeWorkspace}
+        />
+      ) : null}
+
+      {activeGroup && !isWorkflowPanelOpen ? (
         <CanvasNodeShelfDrawer
           group={activeGroup}
           onAddNode={onAddNode}
@@ -671,6 +927,168 @@ function CanvasMenuDock({
           onNodeDragStart={onNodeDragStart}
         />
       ) : null}
+    </aside>
+  );
+}
+
+function CanvasBrandMenuPanel({
+  activeWorkflowId = null,
+  activeWorkspace,
+  isCreatingWorkflow = false,
+  onCreateWorkflow,
+  onOpenWorkflow
+}) {
+  const [isOpenRecentOpen, setIsOpenRecentOpen] = useState(false);
+  const [recentWorkflowState, setRecentWorkflowState] = useState({
+    error: '',
+    status: 'idle',
+    workflows: []
+  });
+  const items = [
+    { label: 'Back to files', kind: 'primary' },
+    {
+      label: isCreatingWorkflow ? 'Creating…' : 'New file',
+      onClick: onCreateWorkflow
+    },
+    { id: 'open_recent', label: 'Open recent', meta: '›' },
+    { label: 'Duplicate' },
+    { label: 'Rename' },
+    { disabled: true, label: 'Share' },
+    { label: 'Keyboard shortcuts', meta: 'Ctrl + Shift + ?' },
+    { label: 'Preferences', meta: '›' }
+  ];
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadRecentWorkflows() {
+      if (!isOpenRecentOpen) {
+        return;
+      }
+
+      setRecentWorkflowState((current) => ({
+        ...current,
+        error: '',
+        status: current.workflows.length ? 'refreshing' : 'loading'
+      }));
+
+      try {
+        const response = await getWorkflows(activeWorkspace.workspace_id);
+        if (cancelled) {
+          return;
+        }
+
+        const workflows = [...(response.workflows ?? [])].sort((left, right) => {
+          const leftTime = Date.parse(left.updated_at ?? '') || 0;
+          const rightTime = Date.parse(right.updated_at ?? '') || 0;
+          return rightTime - leftTime;
+        });
+
+        setRecentWorkflowState({
+          error: '',
+          status: 'ready',
+          workflows
+        });
+      } catch (error) {
+        if (!cancelled) {
+          setRecentWorkflowState({
+            error: error.message ?? 'Unable to load recent workflows.',
+            status: 'error',
+            workflows: []
+          });
+        }
+      }
+    }
+
+    void loadRecentWorkflows();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspace.workspace_id, isOpenRecentOpen]);
+
+  return (
+    <aside className="canvas-brand-menu" aria-label="App menu">
+      <div className="canvas-brand-menu__list">
+        {items.map((item, index) => {
+          const isDividerBefore = index === 6;
+          const isOpenRecentItem = item.id === 'open_recent';
+
+          return (
+            <div
+              className={`canvas-brand-menu__item-wrap${
+                isDividerBefore ? ' canvas-brand-menu__item-wrap--divided' : ''
+              }`}
+              key={item.label}
+            >
+              <button
+                className={`canvas-brand-menu__item${
+                  item.kind === 'primary' ? ' is-primary' : ''
+                }${item.disabled ? ' is-disabled' : ''}${
+                  isOpenRecentItem && isOpenRecentOpen ? ' is-active' : ''
+                }`}
+                disabled={item.disabled}
+                onClick={
+                  isOpenRecentItem
+                    ? () => setIsOpenRecentOpen((current) => !current)
+                    : item.onClick
+                }
+                type="button"
+              >
+                <span>{item.label}</span>
+                {item.meta ? (
+                  <span className="canvas-brand-menu__item-meta">{item.meta}</span>
+                ) : null}
+              </button>
+
+              {isOpenRecentItem && isOpenRecentOpen ? (
+                <aside className="canvas-brand-menu__submenu" aria-label="Recent workflows">
+                  <div className="canvas-brand-menu__submenu-header">
+                    <strong>Recent workflows</strong>
+                    <span>{activeWorkspace.name}</span>
+                  </div>
+
+                  <div className="canvas-brand-menu__submenu-list">
+                    {recentWorkflowState.status === 'loading' ? (
+                      <span className="canvas-brand-menu__submenu-empty">
+                        Loading workflows…
+                      </span>
+                    ) : null}
+
+                    {recentWorkflowState.status === 'error' ? (
+                      <span className="canvas-brand-menu__submenu-empty">
+                        {recentWorkflowState.error}
+                      </span>
+                    ) : null}
+
+                    {recentWorkflowState.status !== 'loading' &&
+                    recentWorkflowState.status !== 'error' &&
+                    !recentWorkflowState.workflows.length ? (
+                      <span className="canvas-brand-menu__submenu-empty">
+                        No workflows yet.
+                      </span>
+                    ) : null}
+
+                    {recentWorkflowState.workflows.map((workflow) => (
+                      <button
+                        className={`canvas-brand-menu__submenu-item${
+                          workflow.workflow_id === activeWorkflowId ? ' is-current' : ''
+                        }`}
+                        key={workflow.workflow_id}
+                        onClick={() => onOpenWorkflow?.(workflow.workflow_id)}
+                        type="button"
+                      >
+                        <strong>{workflow.name}</strong>
+                        <span>{formatWorkflowTimestamp(workflow.updated_at)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </aside>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
     </aside>
   );
 }
@@ -712,7 +1130,7 @@ function WorkspaceSwitcher({ activeWorkspace, variant = 'sidebar', workspaces })
             className={`dashboard-workspace-link${
               workspace.workspace_id === activeWorkspace.workspace_id ? ' is-active' : ''
             }`}
-            to={`/w/${workspace.slug}/overview`}
+            to={`/w/${workspace.slug}`}
           >
             <strong>{workspace.name}</strong>
             <span>{workspace.role}</span>
@@ -798,8 +1216,93 @@ function CanvasNodeShelfDrawer({ group, onAddNode, onNodeDragEnd, onNodeDragStar
   );
 }
 
+function CanvasWorkflowMenuPanel({ activeWorkflowId = null, activeWorkspace }) {
+  const workflowItems = [
+    {
+      label: 'Starter workflow',
+      meta: 'Blank + starter entry points'
+    },
+    {
+      label: 'Refund review',
+      meta: 'Ops response and notification flow'
+    },
+    {
+      label: 'Billing sync',
+      meta: 'Scheduled compute + output chain'
+    }
+  ];
+
+  return (
+    <aside className="canvas-workflow-panel" aria-label="Workflow window">
+      <header className="canvas-workflow-panel__header">
+        <div className="canvas-workflow-panel__title-group">
+          <span className="canvas-workflow-panel__title-icon" aria-hidden="true">
+            <CanvasMenuIcon kind="workflows" />
+          </span>
+          <div className="canvas-workflow-panel__title-copy">
+            <strong>Workflows</strong>
+            <span>{activeWorkspace.name}</span>
+          </div>
+        </div>
+
+        <div className="canvas-workflow-panel__header-meta">
+          <span className="canvas-workflow-panel__meta-dot" aria-hidden="true" />
+          <span>{activeWorkflowId ?? 'Canvas home'}</span>
+        </div>
+      </header>
+
+      <section className="canvas-workflow-panel__section">
+        <div className="canvas-workflow-panel__summary-grid">
+          <div className="canvas-workflow-panel__summary-card">
+            <span>Workspace</span>
+            <strong>{activeWorkspace.name}</strong>
+          </div>
+          <div className="canvas-workflow-panel__summary-card">
+            <span>Mode</span>
+            <strong>Canvas home</strong>
+          </div>
+        </div>
+      </section>
+
+      <section className="canvas-workflow-panel__section">
+        <div className="canvas-workflow-panel__section-head">
+          <span>Recent workflows</span>
+          <span>Placeholder</span>
+        </div>
+
+        <div className="canvas-workflow-panel__list">
+          {workflowItems.map((workflow) => (
+            <button
+              className="canvas-workflow-panel__item"
+              key={workflow.label}
+              type="button"
+            >
+              <strong>{workflow.label}</strong>
+              <span>{workflow.meta}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <footer className="canvas-workflow-panel__footer">
+        <span>Workflow window</span>
+        <button className="canvas-workflow-panel__action" type="button">
+          Manage workflows
+        </button>
+      </footer>
+    </aside>
+  );
+}
+
 function CanvasMenuIcon({ kind }) {
   switch (kind) {
+    case 'workflows':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <rect x="4.1" y="4.1" width="11.8" height="11.8" rx="1.8" stroke="currentColor" strokeWidth="1.3" />
+          <path d="M7.9 4.3V15.7M12.1 4.3V15.7M4.3 7.9H15.7M4.3 12.1H10.9" stroke="currentColor" strokeWidth="1.15" strokeLinecap="square" opacity="0.8" />
+        </svg>
+      );
     case 'canvas':
       return (
         <svg viewBox="0 0 20 20" fill="none">
@@ -1090,7 +1593,7 @@ function CreateWorkspaceRoute({ onCreateWorkspaceComplete, session }) {
     try {
       const response = await createWorkspace(name);
       await onCreateWorkspaceComplete();
-      navigate(`/w/${response.workspace.slug}/overview`, { replace: true });
+      navigate(`/w/${response.workspace.slug}`, { replace: true });
     } catch (requestError) {
       setError(requestError.message ?? 'Unable to create workspace.');
     } finally {
@@ -1180,6 +1683,338 @@ function AuthShellLayout({ children }) {
   );
 }
 
+function WorkflowListScreen({ activeWorkspace }) {
+  const navigate = useNavigate();
+  const [workflowState, setWorkflowState] = useState({
+    error: '',
+    status: 'loading',
+    workflows: []
+  });
+  const [createMode, setCreateMode] = useState('');
+  const [archiveWorkflowId, setArchiveWorkflowId] = useState('');
+  const [renameWorkflowId, setRenameWorkflowId] = useState('');
+  const [renameDraft, setRenameDraft] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadWorkflows() {
+      try {
+        const response = await getWorkflows(activeWorkspace.workspace_id);
+        if (cancelled) {
+          return;
+        }
+
+        setWorkflowState({
+          error: '',
+          status: 'ready',
+          workflows: response.workflows ?? []
+        });
+      } catch (error) {
+        if (!cancelled) {
+          setWorkflowState({
+            error: error.message ?? 'Unable to load workflows.',
+            status: 'error',
+            workflows: []
+          });
+        }
+      }
+    }
+
+    void loadWorkflows();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspace.workspace_id]);
+
+  async function handleCreate(mode) {
+    setCreateMode(mode);
+
+    try {
+      const workflow =
+        mode === 'starter'
+          ? buildStarterWorkflowDefinition()
+          : buildBlankWorkflowDefinition();
+      const response = await createWorkflow(activeWorkspace.workspace_id, workflow);
+      await updateWorkflowState(
+        activeWorkspace.workspace_id,
+        response.workflow.workflow_id
+      ).catch(() => {});
+      navigate(buildWorkflowPath(response.workflow.workflow_id));
+    } catch (error) {
+      setWorkflowState((current) => ({
+        ...current,
+        error: error.message ?? 'Unable to create workflow.',
+        status: current.workflows.length ? 'ready' : 'error'
+      }));
+    } finally {
+      setCreateMode('');
+    }
+  }
+
+  async function handleOpenWorkflow(workflowId) {
+    await updateWorkflowState(activeWorkspace.workspace_id, workflowId).catch(() => {});
+    navigate(buildWorkflowPath(workflowId));
+  }
+
+  function startRename(workflow) {
+    setRenameWorkflowId(workflow.workflow_id);
+    setRenameDraft(workflow.name);
+  }
+
+  function cancelRename() {
+    setRenameWorkflowId('');
+    setRenameDraft('');
+  }
+
+  async function handleRename(workflowId) {
+    const nextName = renameDraft.trim();
+    if (!nextName) {
+      return;
+    }
+
+    try {
+      const existing = await getWorkflow(activeWorkspace.workspace_id, workflowId);
+      const response = await updateWorkflow(activeWorkspace.workspace_id, workflowId, {
+        ...existing.definition,
+        name: nextName
+      });
+
+      setWorkflowState((current) => ({
+        ...current,
+        workflows: current.workflows.map((workflow) =>
+          workflow.workflow_id === workflowId ? response.workflow : workflow
+        )
+      }));
+      cancelRename();
+    } catch (error) {
+      setWorkflowState((current) => ({
+        ...current,
+        error: error.message ?? 'Unable to rename workflow.'
+      }));
+    }
+  }
+
+  async function handleArchive(workflow) {
+    const shouldArchive = window.confirm(
+      `Archive workflow "${workflow.name}"? You can keep working in this workspace, but this workflow will disappear from the active list.`
+    );
+    if (!shouldArchive) {
+      return;
+    }
+
+    setArchiveWorkflowId(workflow.workflow_id);
+
+    try {
+      await deleteWorkflow(activeWorkspace.workspace_id, workflow.workflow_id);
+      setWorkflowState((current) => ({
+        ...current,
+        workflows: current.workflows.filter(
+          (candidate) => candidate.workflow_id !== workflow.workflow_id
+        )
+      }));
+      if (renameWorkflowId === workflow.workflow_id) {
+        cancelRename();
+      }
+    } catch (error) {
+      setWorkflowState((current) => ({
+        ...current,
+        error: error.message ?? 'Unable to archive workflow.'
+      }));
+    } finally {
+      setArchiveWorkflowId('');
+    }
+  }
+
+  return (
+    <div className="workflow-management">
+      <section className="dashboard-section-card workflow-management__hero">
+        <div className="dashboard-section-card__header">
+          <span className="dashboard-section-card__eyebrow">Workspace</span>
+          <h2>{activeWorkspace.name}</h2>
+          <p>
+            Create, open, rename, and archive workflows from one management surface before
+            dropping back into the canvas.
+          </p>
+        </div>
+
+        {workflowState.workflows.length ? (
+          <div className="workflow-management__actions">
+            <button
+              className="accent-button"
+              disabled={createMode === 'blank' || createMode === 'starter'}
+              onClick={() => handleCreate('blank')}
+              type="button"
+            >
+              {createMode === 'blank' ? 'Creating…' : 'Create Blank Workflow'}
+            </button>
+            <button
+              className="secondary-button"
+              disabled={createMode === 'blank' || createMode === 'starter'}
+              onClick={() => handleCreate('starter')}
+              type="button"
+            >
+              {createMode === 'starter' ? 'Creating…' : 'Create Starter Workflow'}
+            </button>
+          </div>
+        ) : null}
+      </section>
+
+      {workflowState.error ? (
+        <section className="dashboard-section-card">
+          <div className="dashboard-section-card__header">
+            <span className="dashboard-section-card__eyebrow">Workflow state</span>
+            <h2>Unable to complete the last workflow action</h2>
+            <p>{workflowState.error}</p>
+          </div>
+        </section>
+      ) : null}
+
+      {workflowState.status === 'loading' ? (
+        <section className="dashboard-section-card">
+          <div className="dashboard-section-card__header">
+            <span className="dashboard-section-card__eyebrow">Workflows</span>
+            <h2>Loading workflows…</h2>
+            <p>Fetching the active workflow list for this workspace.</p>
+          </div>
+        </section>
+      ) : null}
+
+      {workflowState.status === 'ready' && !workflowState.workflows.length ? (
+        <section className="dashboard-section-card workflow-management__empty">
+          <div className="dashboard-section-card__header">
+            <span className="dashboard-section-card__eyebrow">No workflows yet</span>
+            <h2>Create the first workflow in this workspace</h2>
+            <p>
+              Start from a blank canvas or use the current starter flow so you can jump straight
+              into node design and execution.
+            </p>
+          </div>
+          <div className="workflow-management__actions">
+            <button
+              className="accent-button"
+              disabled={Boolean(createMode)}
+              onClick={() => handleCreate('blank')}
+              type="button"
+            >
+              Create Blank Workflow
+            </button>
+            <button
+              className="secondary-button"
+              disabled={Boolean(createMode)}
+              onClick={() => handleCreate('starter')}
+              type="button"
+            >
+              Create Starter Workflow
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {workflowState.workflows.length ? (
+        <section className="dashboard-table-shell workflow-management__table">
+          <div className="workflow-management__table-header">
+            <span>Name</span>
+            <span>Description</span>
+            <span>Updated</span>
+            <span>Version</span>
+            <span>Actions</span>
+          </div>
+
+          {workflowState.workflows.map((workflow) => {
+            const isRenaming = renameWorkflowId === workflow.workflow_id;
+            const isArchiving = archiveWorkflowId === workflow.workflow_id;
+
+            return (
+              <div className="workflow-management__row" key={workflow.workflow_id}>
+                <div className="workflow-management__primary">
+                  {isRenaming ? (
+                    <input
+                      autoFocus
+                      className="workflow-management__rename-input"
+                      onChange={(event) => setRenameDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          void handleRename(workflow.workflow_id);
+                        }
+
+                        if (event.key === 'Escape') {
+                          event.preventDefault();
+                          cancelRename();
+                        }
+                      }}
+                      type="text"
+                      value={renameDraft}
+                    />
+                  ) : (
+                    <button
+                      className="workflow-management__open-button"
+                      onClick={() => handleOpenWorkflow(workflow.workflow_id)}
+                      type="button"
+                    >
+                      <strong>{workflow.name}</strong>
+                    </button>
+                  )}
+                  <span className="workflow-management__id">{workflow.workflow_id}</span>
+                </div>
+                <span className="workflow-management__description">
+                  {workflow.description ?? 'No description yet.'}
+                </span>
+                <span className="dashboard-cell--muted">
+                  {formatWorkflowTimestamp(workflow.updated_at)}
+                </span>
+                <span>v{workflow.version}</span>
+                <div className="workflow-management__row-actions">
+                  {isRenaming ? (
+                    <>
+                      <button
+                        className="secondary-button"
+                        onClick={() => void handleRename(workflow.workflow_id)}
+                        type="button"
+                      >
+                        Save
+                      </button>
+                      <button className="secondary-button" onClick={cancelRename} type="button">
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        className="secondary-button"
+                        onClick={() => handleOpenWorkflow(workflow.workflow_id)}
+                        type="button"
+                      >
+                        Open
+                      </button>
+                      <button
+                        className="secondary-button"
+                        onClick={() => startRename(workflow)}
+                        type="button"
+                      >
+                        Rename
+                      </button>
+                      <button
+                        className="secondary-button workflow-management__archive-button"
+                        disabled={isArchiving}
+                        onClick={() => void handleArchive(workflow)}
+                        type="button"
+                      >
+                        {isArchiving ? 'Archiving…' : 'Archive'}
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
 function OverviewScreen({ activeWorkspace, viewMode }) {
   const navigate = useNavigate();
 
@@ -1213,19 +2048,19 @@ function OverviewScreen({ activeWorkspace, viewMode }) {
         <section className="dashboard-section-card">
           <div className="dashboard-section-card__header">
             <span className="dashboard-section-card__eyebrow">Launch</span>
-            <h2>Start in the canvas</h2>
+            <h2>Start with workflow management</h2>
             <p>
-              Jump into the current workflow workspace and keep iterating on node, edge, and shell
-              behavior.
+              Open the workflow list, create a new blank or starter flow, and then jump into the
+              explicit canvas route for that workflow.
             </p>
           </div>
           <div className="dashboard-section-card__actions">
             <button
               className="accent-button"
-              onClick={() => navigate(`/w/${activeWorkspace.slug}/canvas`)}
+              onClick={() => navigate(`/w/${activeWorkspace.slug}/workflows`)}
               type="button"
             >
-              Open Canvas
+              Open Workflows
             </button>
           </div>
         </section>
@@ -1244,7 +2079,7 @@ function OverviewScreen({ activeWorkspace, viewMode }) {
               'Backend-owned session bootstrap',
               'Protected workspace routes',
               'Persisted workspace membership',
-              'Real login, logout, and workspace creation'
+              'Real login, logout, and workflow management'
             ]}
           />
         </section>
@@ -1254,15 +2089,15 @@ function OverviewScreen({ activeWorkspace, viewMode }) {
             <span className="dashboard-section-card__eyebrow">Next</span>
             <h2>Natural follow-on work</h2>
             <p>
-              Now that the shell is real, we can connect workflow save/load and runs to the active
-              workspace.
+              Workflow persistence is now real. The next pass can deepen versions, history, and
+              richer run detail around each workflow.
             </p>
           </div>
           <SimpleList
             items={[
-              'Persist workflow definitions by workspace',
-              'Route the runs screen to backend workspace data',
-              'Add workspace switch persistence',
+              'Expose workflow version history',
+              'Add restore/archive recovery',
+              'Connect workflow cards to run health',
               'Introduce detail routes and shareable deep links'
             ]}
           />
@@ -1276,7 +2111,10 @@ function CanvasScreen({
   draggedNodeType = null,
   isFullScreen = false,
   onRegisterCanvasActions = null,
+  onWorkflowMissing = null,
+  onWorkflowResolved = null,
   viewMode = 'desktop',
+  workflowId = null,
   workspaceId
 }) {
   const viewportVariant = isFullScreen ? 'canvas-route' : viewMode;
@@ -1289,6 +2127,9 @@ function CanvasScreen({
         <CanvasWorkspace
           draggedNodeType={draggedNodeType}
           onRegisterCanvasActions={onRegisterCanvasActions}
+          onWorkflowMissing={onWorkflowMissing}
+          onWorkflowResolved={onWorkflowResolved}
+          workflowId={workflowId}
           workspaceId={workspaceId}
         />
       </div>
@@ -1607,6 +2448,13 @@ function ViewModeToggle({ currentMode, onSelect }) {
 
 function DashboardNavIcon({ screenId }) {
   switch (screenId) {
+    case 'workflows':
+      return (
+        <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+          <rect x="3.35" y="3.35" width="11.3" height="11.3" rx="1.8" stroke="currentColor" strokeWidth="1.35" fill="none" />
+          <path d="M7 3.5V14.5M11 3.5V14.5M3.5 7H14.5M3.5 11H10.8" stroke="currentColor" strokeWidth="1.15" strokeLinecap="square" fill="none" opacity="0.82" />
+        </svg>
+      );
     case 'overview':
       return (
         <img
@@ -1758,6 +2606,24 @@ function formatRunTimestamp(timestamp) {
   }).format(value);
 }
 
+function formatWorkflowTimestamp(timestamp) {
+  if (!timestamp) {
+    return '—';
+  }
+
+  const value = new Date(timestamp);
+  if (Number.isNaN(value.getTime())) {
+    return '—';
+  }
+
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    month: 'short'
+  }).format(value);
+}
+
 function formatRunDuration(run) {
   const durationMs = runDurationMs(run);
   return durationMs ? formatDurationMs(durationMs) : '—';
@@ -1841,7 +2707,15 @@ function getDefaultAppPath(session) {
       (workspace) => workspace.workspace_id === session.active_workspace_id
     ) ?? session.workspaces[0];
 
-  return `/w/${activeWorkspace.slug}/overview`;
+  return buildCanvasHomePath(activeWorkspace.slug);
+}
+
+function buildCanvasHomePath(workspaceSlug) {
+  return `/w/${workspaceSlug}/canvas`;
+}
+
+function buildWorkflowPath(workflowId) {
+  return `/flow/${workflowId}`;
 }
 
 function readStoredViewMode() {

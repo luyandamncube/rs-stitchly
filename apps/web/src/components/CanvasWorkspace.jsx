@@ -4,16 +4,18 @@ import connectionFixture from '../../../../tests/fixtures/api/connections.json';
 import nodeDefinitionFixture from '../../../../tests/fixtures/api/node_definitions.json';
 import WorkflowCanvas from './WorkflowCanvas';
 import {
+  createWorkflow,
   createRun,
   createWorkspaceRun,
-  createWorkflow,
   getConnections,
   getNodeDefinitions,
   getRunSnapshot,
   getWorkflow,
+  getWorkflowState,
   getWorkflows,
   subscribeToRun,
   updateWorkflow,
+  updateWorkflowState,
   validateWorkflow
 } from '../lib/api';
 import {
@@ -54,6 +56,9 @@ const EMPTY_CANVAS_DEBUG_STATE = {
 export default function CanvasWorkspace({
   draggedNodeType = null,
   onRegisterCanvasActions = null,
+  onWorkflowMissing = null,
+  onWorkflowResolved = null,
+  workflowId = null,
   workspaceId = null
 }) {
   const showCanvasDebug = import.meta.env.DEV;
@@ -86,14 +91,20 @@ export default function CanvasWorkspace({
   const [activeWorkflowId, setActiveWorkflowId] = useState(
     starterWorkflowFixture.workflow_id
   );
+  const [isWorkflowTitleEditing, setIsWorkflowTitleEditing] = useState(false);
+  const [workflowTitleDraft, setWorkflowTitleDraft] = useState(
+    starterWorkflowFixture.name || 'untitled'
+  );
   const closeStreamRef = useRef(null);
   const persistedWorkflowSignatureRef = useRef(
     workflowSignature(starterWorkflowFixture)
   );
+  const workflowTitleInputRef = useRef(null);
   const deferredEvents = useDeferredValue(events);
 
   const selectedNode = workflow.nodes.find((node) => node.node_id === selectedNodeId) ?? null;
   const selectedDefinition = nodeDefinitions.find((definition) => definition.type_id === selectedNode?.type_id) ?? null;
+  const displayWorkflowTitle = workflow?.name?.trim() ? workflow.name.trim() : 'untitled';
   const problemItems = buildProblemItems(validation);
   const activeSectionMeta = SHELL_SECTIONS.find((section) => section.id === activeSection) ?? SHELL_SECTIONS[0];
   const groupedNodeDefinitions = groupNodeDefinitions(
@@ -156,6 +167,27 @@ export default function CanvasWorkspace({
     setConfigDraft(JSON.stringify(selectedNode.config, null, 2));
     setConfigError('');
   }, [selectedNode]);
+
+  useEffect(() => {
+    if (isWorkflowTitleEditing) {
+      return;
+    }
+
+    setWorkflowTitleDraft(displayWorkflowTitle);
+  }, [displayWorkflowTitle, isWorkflowTitleEditing]);
+
+  useEffect(() => {
+    setIsWorkflowTitleEditing(false);
+  }, [activeWorkflowId]);
+
+  useEffect(() => {
+    if (!isWorkflowTitleEditing || !workflowTitleInputRef.current) {
+      return;
+    }
+
+    workflowTitleInputRef.current.focus();
+    workflowTitleInputRef.current.select();
+  }, [isWorkflowTitleEditing]);
 
   useEffect(() => {
     return () => {
@@ -256,10 +288,43 @@ export default function CanvasWorkspace({
       setWorkflowSyncState('loading');
 
       try {
-        const workflowList = await getWorkflows(workspaceId);
-        const workflowResponse = workflowList.workflows[0]
-          ? await getWorkflow(workspaceId, workflowList.workflows[0].workflow_id)
-          : await createWorkflow(workspaceId, buildCanvasStarterWorkflow());
+        let workflowResponse = null;
+
+        if (workflowId) {
+          workflowResponse = await getWorkflow(workspaceId, workflowId);
+        } else {
+          const rememberedState = await getWorkflowState(workspaceId).catch(() => ({
+            last_opened_workflow_id: null
+          }));
+
+          if (rememberedState.last_opened_workflow_id) {
+            try {
+              workflowResponse = await getWorkflow(
+                workspaceId,
+                rememberedState.last_opened_workflow_id
+              );
+            } catch (error) {
+              if (error?.status !== 404) {
+                throw error;
+              }
+            }
+          }
+
+          if (!workflowResponse) {
+            const workflowList = await getWorkflows(workspaceId);
+            if (workflowList.workflows?.[0]) {
+              workflowResponse = await getWorkflow(
+                workspaceId,
+                workflowList.workflows[0].workflow_id
+              );
+            } else {
+              workflowResponse = await createWorkflow(
+                workspaceId,
+                buildCanvasStarterWorkflow()
+              );
+            }
+          }
+        }
 
         if (cancelled) {
           return;
@@ -267,9 +332,10 @@ export default function CanvasWorkspace({
 
         const persistedWorkflow = cloneWorkflow(workflowResponse.definition);
         const nextWorkflow = prepareCanvasWorkflow(persistedWorkflow);
+        const resolvedWorkflowId = workflowResponse.workflow.workflow_id;
         persistedWorkflowSignatureRef.current = workflowSignature(persistedWorkflow);
         setWorkflow(nextWorkflow);
-        setActiveWorkflowId(workflowResponse.workflow.workflow_id);
+        setActiveWorkflowId(resolvedWorkflowId);
         setWorkflowSyncState('synced');
         setValidation(null);
         setRunSnapshot(null);
@@ -278,11 +344,28 @@ export default function CanvasWorkspace({
         setSelectedNodeId(null);
         setConfigDraft('{}');
         setConfigError('');
-      } catch (error) {
-        if (!cancelled) {
-          setWorkflowSyncState('offline');
-          setBackendStatus('offline');
+
+        if (!workflowId || workflowId !== resolvedWorkflowId) {
+          onWorkflowResolved?.(resolvedWorkflowId);
         }
+
+        try {
+          await updateWorkflowState(workspaceId, resolvedWorkflowId);
+        } catch (stateError) {
+          // Remembered workflow state is helpful but not critical to canvas loading.
+        }
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        if (workflowId && error?.status === 404) {
+          onWorkflowMissing?.();
+          return;
+        }
+
+        setWorkflowSyncState('offline');
+        setBackendStatus('offline');
       }
     }
 
@@ -291,7 +374,7 @@ export default function CanvasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [workspaceId]);
+  }, [onWorkflowMissing, onWorkflowResolved, workflowId, workspaceId]);
 
   useEffect(() => {
     if (!workspaceId || !activeWorkflowId || workflowSyncState === 'loading') {
@@ -452,6 +535,32 @@ export default function CanvasWorkspace({
     setActiveSection('canvas');
     setDrawerQuery('');
     setFloatingCard(null);
+  }
+
+  function handleWorkflowTitleStart() {
+    setWorkflowTitleDraft(displayWorkflowTitle);
+    setIsWorkflowTitleEditing(true);
+  }
+
+  function handleWorkflowTitleCancel() {
+    setWorkflowTitleDraft(displayWorkflowTitle);
+    setIsWorkflowTitleEditing(false);
+  }
+
+  function handleWorkflowTitleCommit() {
+    const nextTitle = workflowTitleDraft.trim() || 'untitled';
+    setIsWorkflowTitleEditing(false);
+
+    if (nextTitle === displayWorkflowTitle) {
+      setWorkflowTitleDraft(nextTitle);
+      return;
+    }
+
+    setWorkflowTitleDraft(nextTitle);
+    applyWorkflowChange({
+      ...workflow,
+      name: nextTitle
+    });
   }
 
   function handleRailSelect(sectionId) {
@@ -629,6 +738,13 @@ export default function CanvasWorkspace({
         workflow={workflow}
       />
 
+      {selectedNode && !floatingCard ? (
+        <CanvasNodeManagementPanel
+          definition={selectedDefinition}
+          node={selectedNode}
+        />
+      ) : null}
+
       <CanvasViewportControls
         isZoomMenuOpen={isCanvasZoomMenuOpen}
         onToggleZoomMenu={() => setIsCanvasZoomMenuOpen((current) => !current)}
@@ -650,6 +766,27 @@ export default function CanvasWorkspace({
         }}
         zoomLabel={formatCanvasZoom(canvasViewport.zoom)}
       />
+
+      <div className="canvas-top-left-tools">
+        <CanvasWorkflowTitleBox
+          isEditing={isWorkflowTitleEditing}
+          onCancel={handleWorkflowTitleCancel}
+          onChange={setWorkflowTitleDraft}
+          onCommit={handleWorkflowTitleCommit}
+          onStartEditing={handleWorkflowTitleStart}
+          title={displayWorkflowTitle}
+          titleDraft={workflowTitleDraft}
+          titleInputRef={workflowTitleInputRef}
+        />
+
+        {showCanvasDebug ? (
+          <CanvasDebugPanel
+            collapsed={isCanvasDebugCollapsed}
+            debugState={canvasDebugState}
+            onToggleCollapsed={() => setIsCanvasDebugCollapsed((current) => !current)}
+          />
+        ) : null}
+      </div>
 
       <div className="shell-overlay">
         {floatingCard ? (
@@ -866,14 +1003,6 @@ export default function CanvasWorkspace({
           </section>
         ) : null}
       </div>
-
-      {showCanvasDebug ? (
-        <CanvasDebugPanel
-          collapsed={isCanvasDebugCollapsed}
-          debugState={canvasDebugState}
-          onToggleCollapsed={() => setIsCanvasDebugCollapsed((current) => !current)}
-        />
-      ) : null}
     </div>
   );
 }
@@ -1041,6 +1170,151 @@ function CanvasViewportControls({
   );
 }
 
+function CanvasNodeManagementPanel({ definition, node }) {
+  const model = buildCanvasNodeManagementModel(node, definition);
+
+  return (
+    <aside className="canvas-node-panel" aria-label="Node management panel">
+      <header className="canvas-node-panel__header">
+        <div className="canvas-node-panel__title-group">
+          <span className="canvas-node-panel__title-icon" aria-hidden="true">
+            {model.icon}
+          </span>
+          <div className="canvas-node-panel__title-copy">
+            <strong>{model.title}</strong>
+            <code className="canvas-node-panel__title-subtitle">{model.subtitle}</code>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__header-meta">
+          <span className="canvas-node-panel__meta-dot" aria-hidden="true" />
+          <span>{model.meta}</span>
+        </div>
+      </header>
+
+      <section className="canvas-node-panel__section">
+        {model.fields.map((field) => (
+          <div className="canvas-node-panel__field" key={field.label}>
+            <div className="canvas-node-panel__field-head">
+              <label>{field.label}</label>
+              <span className="canvas-node-panel__hint" aria-hidden="true">
+                i
+              </span>
+            </div>
+
+            {field.kind === 'select' ? (
+              <button className="canvas-node-panel__select" type="button">
+                <span>{field.value}</span>
+                <span className="canvas-node-panel__caret" aria-hidden="true">
+                  ⌄
+                </span>
+              </button>
+            ) : (
+              <div className="canvas-node-panel__slider-row">
+                <div className="canvas-node-panel__slider-track" aria-hidden="true">
+                  <span
+                    className="canvas-node-panel__slider-fill"
+                    style={{ width: `${field.percent}%` }}
+                  />
+                  <span
+                    className="canvas-node-panel__slider-thumb"
+                    style={{ left: `${field.percent}%` }}
+                  />
+                </div>
+                <div className="canvas-node-panel__value-box">{field.value}</div>
+              </div>
+            )}
+          </div>
+        ))}
+
+        {model.toggles.map((toggle) => (
+          <div className="canvas-node-panel__toggle-row" key={toggle.label}>
+            <label className="canvas-node-panel__checkbox">
+              <input checked={toggle.checked} readOnly type="checkbox" />
+              <span className="canvas-node-panel__checkmark" aria-hidden="true" />
+              <span>{toggle.label}</span>
+            </label>
+          </div>
+        ))}
+      </section>
+
+      <footer className="canvas-node-panel__footer">
+        <p className="canvas-node-panel__footer-eyebrow">{model.footerEyebrow}</p>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Runs</span>
+          <div className="canvas-node-panel__stepper">
+            <button aria-label="Decrease runs" type="button">-</button>
+            <strong>1</strong>
+            <button aria-label="Increase runs" type="button">+</button>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>{model.footerMetricLabel}</span>
+          <strong>{model.footerMetricValue}</strong>
+        </div>
+
+        <button className="canvas-node-panel__action" type="button">
+          <span aria-hidden="true">→</span>
+          <span>{model.actionLabel}</span>
+        </button>
+      </footer>
+    </aside>
+  );
+}
+
+function CanvasWorkflowTitleBox({
+  isEditing = false,
+  onCancel,
+  onChange,
+  onCommit,
+  onStartEditing,
+  title = 'untitled',
+  titleDraft = 'untitled',
+  titleInputRef
+}) {
+  return (
+    <div className="canvas-workflow-title">
+      {isEditing ? (
+        <form
+          className="canvas-workflow-title__form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onCommit?.();
+          }}
+        >
+          <input
+            aria-label="Workflow title"
+            className="canvas-workflow-title__input"
+            onBlur={() => onCommit?.()}
+            onChange={(event) => onChange?.(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                onCancel?.();
+              }
+            }}
+            ref={titleInputRef}
+            spellCheck={false}
+            type="text"
+            value={titleDraft}
+          />
+        </form>
+      ) : (
+        <button
+          aria-label={`Rename workflow ${title}`}
+          className="canvas-workflow-title__button"
+          onClick={() => onStartEditing?.()}
+          type="button"
+        >
+          <span className="canvas-workflow-title__label">{title}</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
 function DrawerHeader({ description, onClose, title }) {
   return (
     <header className="shell-drawer__header">
@@ -1155,10 +1429,9 @@ function CanvasDebugPanel({
       className={`canvas-debug-panel${collapsed ? ' is-collapsed' : ''}`}
     >
       <div className="canvas-debug-panel__header">
-        <div className="canvas-debug-panel__header-copy">
-          <strong>Canvas Debug</strong>
-          <span>dev only</span>
-        </div>
+      <div className="canvas-debug-panel__header-copy">
+        <strong>Canvas Debug</strong>
+      </div>
         <button
           aria-expanded={!collapsed}
           className="canvas-debug-panel__collapse"
@@ -1169,26 +1442,7 @@ function CanvasDebugPanel({
         </button>
       </div>
 
-      {collapsed ? (
-        <div className="canvas-debug-panel__stack">
-          <DebugValue
-            label="Edge"
-            value={humanizeToken(debugState.activeEdgeId ?? 'none')}
-          />
-          <DebugValue
-            label="Node"
-            value={humanizeToken(debugState.activeNodeId ?? 'none')}
-          />
-          <DebugValue
-            label="Pointer"
-            value={debugState.pointer ? `${debugState.pointer.x}, ${debugState.pointer.y}` : 'Idle'}
-          />
-          <DebugValue
-            label="Connect"
-            value={debugState.connectionInProgress ? 'live' : 'idle'}
-          />
-        </div>
-      ) : (
+      {collapsed ? null : (
         <>
           <div className="canvas-debug-panel__grid">
             <DebugValue label="Pointer" value={debugState.pointer ? `${debugState.pointer.x}, ${debugState.pointer.y}` : 'Idle'} />
@@ -1425,6 +1679,74 @@ function cardTitleFor({ floatingCard, activeProblem, activeRun, selectedNode }) 
 
 function workflowSignature(workflow) {
   return JSON.stringify(workflow);
+}
+
+function buildCanvasNodeManagementModel(node, definition) {
+  const nodeTypeId = node?.type_id ?? definition?.type_id ?? null;
+  const inputCount = definition?.inputs?.length ?? 0;
+  const outputCount = definition?.outputs?.length ?? 0;
+  const portCount = inputCount + outputCount;
+  const base = {
+    title: node?.label ?? definition?.display_name ?? humanizeToken(node?.type_id ?? 'node'),
+    subtitle: node?.node_id ?? definition?.type_id ?? humanizeToken(node?.type_id ?? 'node'),
+    meta: portCount ? `${portCount} port${portCount === 1 ? '' : 's'}` : 'Selected',
+    icon: nodeTypeId === 'send_email' ? '@' : 'T',
+    footerEyebrow: 'Run selected node',
+    footerMetricLabel: 'Estimated load',
+    footerMetricValue: '24 units',
+    actionLabel: 'Apply changes'
+  };
+
+  if (nodeTypeId === 'send_email') {
+    const subjectLength = String(node?.config?.subject ?? '').length || 32;
+
+    return {
+      ...base,
+      fields: [
+        { kind: 'slider', label: 'Delay Before Send', percent: 62, value: '15s' },
+        { kind: 'slider', label: 'Retry Attempts', percent: 42, value: '2' },
+        { kind: 'slider', label: 'Timeout', percent: 78, value: '30s' },
+        { kind: 'select', label: 'Delivery Mode', value: 'Immediate' },
+        {
+          kind: 'slider',
+          label: 'Preview Length',
+          percent: Math.max(24, Math.min(84, Math.round(subjectLength * 1.2))),
+          value: String(subjectLength)
+        },
+        { kind: 'slider', label: 'Priority', percent: 31, value: '3' }
+      ],
+      toggles: [
+        { checked: true, label: 'Track opens' },
+        { checked: true, label: 'Pin node' }
+      ]
+    };
+  }
+
+  const textLength = String(node?.config?.text ?? '').length || 120;
+
+  return {
+    ...base,
+    fields: [
+      {
+        kind: 'slider',
+        label: 'Text Length',
+        percent: Math.max(20, Math.min(86, Math.round(textLength / 3))),
+        value: String(textLength)
+      },
+      { kind: 'slider', label: 'Preview Lines', percent: 38, value: '3' },
+      { kind: 'select', label: 'Trim Mode', value: 'Automatic' },
+      { kind: 'slider', label: 'Token Budget', percent: 68, value: '120' },
+      { kind: 'select', label: 'Output Format', value: 'Plain text' },
+      { kind: 'slider', label: 'Priority', percent: 20, value: '1' }
+    ],
+    toggles: [
+      { checked: true, label: 'Preserve whitespace' },
+      { checked: true, label: 'Include line breaks' }
+    ],
+    footerMetricLabel: 'Preview bytes',
+    footerMetricValue: `${Math.max(32, textLength)} b`,
+    actionLabel: 'Preview output'
+  };
 }
 
 function appendCanvasNode(workflow, typeId, options = {}) {

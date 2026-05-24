@@ -2,10 +2,10 @@ use std::convert::Infallible;
 
 use api_contract::{
     AuthSessionResponse, ConnectionsResponse, CreateRunRequest, CreateWorkflowRequest,
-    CreateWorkspaceRequest, ErrorResponse, LoginRequest, NodeDefinitionsResponse, RunSnapshot,
-    UpdateWorkflowRequest, ValidateWorkflowRequest, ValidateWorkflowResponse,
-    WorkflowListResponse, WorkflowResponse, WorkspaceListResponse, WorkspaceResponse,
-    WorkspaceRunsResponse,
+    CreateWorkspaceRequest, DeleteWorkflowResponse, ErrorResponse, LoginRequest,
+    NodeDefinitionsResponse, RunSnapshot, UpdateWorkflowRequest, UpdateWorkflowStateRequest,
+    ValidateWorkflowRequest, ValidateWorkflowResponse, WorkflowListResponse, WorkflowResponse,
+    WorkflowStateResponse, WorkspaceListResponse, WorkspaceResponse, WorkspaceRunsResponse,
 };
 use axum::{
     extract::{Path, State},
@@ -43,7 +43,13 @@ pub fn app(runtime: RuntimeService, platform: PlatformStore) -> Router {
         )
         .route(
             "/api/workspaces/:workspace_id/workflows/:workflow_id",
-            get(get_workflow).put(update_workflow),
+            get(get_workflow)
+                .put(update_workflow)
+                .delete(delete_workflow),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/workflow-state",
+            get(get_workflow_state).put(update_workflow_state),
         )
         .route(
             "/api/workspaces/:workspace_id/runs",
@@ -202,6 +208,55 @@ async fn update_workflow(
             ))
         })?;
     Ok(Json(workflow))
+}
+
+async fn delete_workflow(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((workspace_id, workflow_id)): Path<(String, String)>,
+) -> Result<Json<DeleteWorkflowResponse>, ApiError> {
+    let session = require_session(&state, &headers)?;
+    let response = state
+        .platform
+        .archive_workflow(&session.user_id, &workspace_id, &workflow_id)
+        .map_err(map_workflow_persistence_error)?
+        .ok_or_else(|| {
+            ApiError::not_found(format!(
+                "Workflow `{workflow_id}` was not found in workspace `{workspace_id}`."
+            ))
+        })?;
+    Ok(Json(response))
+}
+
+async fn get_workflow_state(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<String>,
+) -> Result<Json<WorkflowStateResponse>, ApiError> {
+    let session = require_session(&state, &headers)?;
+    let state_response = state
+        .platform
+        .get_workflow_state(&session.user_id, &workspace_id)
+        .map_err(map_workflow_persistence_error)?;
+    Ok(Json(state_response))
+}
+
+async fn update_workflow_state(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<String>,
+    Json(request): Json<UpdateWorkflowStateRequest>,
+) -> Result<Json<WorkflowStateResponse>, ApiError> {
+    let session = require_session(&state, &headers)?;
+    let state_response = state
+        .platform
+        .update_workflow_state(
+            &session.user_id,
+            &workspace_id,
+            request.last_opened_workflow_id.as_deref(),
+        )
+        .map_err(map_workflow_persistence_error)?;
+    Ok(Json(state_response))
 }
 
 async fn list_workspace_runs(

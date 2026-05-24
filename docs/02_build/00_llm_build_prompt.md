@@ -109,6 +109,12 @@ Use these docs for these responsibilities:
 - `docs/00_foundation/20_app_auth_and_workspace_spec.md`
   Draft v1 direction for real authentication, protected routes, workspace selection, persisted workflows, and app-shell boot flow.
 
+- `docs/00_foundation/21_workflow_management_spec.md`
+  Draft v1 direction for workflow identity, workflow CRUD behavior, archive model, workflow-state persistence, and explicit workflow routing.
+
+- `docs/03_ui/06_workflow_management_ui.md`
+  Workflow list, create/open/delete UX, empty states, and how workflow management relates to the canvas route.
+
 - `docs/01_workflows/20_workflow_example_dolt.md`
   A concrete workflow example that should influence dataflow-oriented implementation decisions.
 
@@ -130,7 +136,9 @@ When docs overlap, prefer them in this order:
 12. `19_compute_model.md`
 13. `18_run_lifecycle_and_events.md`
 14. `20_app_auth_and_workspace_spec.md`
-15. the remaining foundation and UI docs
+15. `21_workflow_management_spec.md`
+16. `03_ui/06_workflow_management_ui.md`
+17. the remaining foundation and UI docs
 
 If details are missing:
 

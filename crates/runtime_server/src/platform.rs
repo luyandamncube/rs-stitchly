@@ -6,8 +6,9 @@ use std::{
 
 use anyhow::{anyhow, Context};
 use api_contract::{
-    AuthSessionResponse, SessionUserSummary, WorkspaceListResponse, WorkspaceMembershipRole,
-    RunSnapshot, WorkspaceSummary, WorkflowListResponse, WorkflowResponse, WorkflowSummary,
+    AuthSessionResponse, DeleteWorkflowResponse, RunSnapshot, SessionUserSummary,
+    WorkflowListResponse, WorkflowResponse, WorkflowStateResponse, WorkflowSummary,
+    WorkspaceListResponse, WorkspaceMembershipRole, WorkspaceSummary,
 };
 use argon2::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
@@ -260,9 +261,10 @@ impl PlatformStore {
         ensure_workspace_access(&connection, user_id, workspace_id)?;
 
         let mut stmt = connection.prepare(
-            "select workflow_id, workspace_id, name, description, current_version
+            "select workflow_id, workspace_id, name, description, current_version, updated_at
              from workflows
              where workspace_id = ?1
+               and archived_at is null
              order by updated_at desc, name asc",
         )?;
         let workflows = stmt
@@ -273,6 +275,7 @@ impl PlatformStore {
                     name: row.get(2)?,
                     description: row.get(3)?,
                     version: row.get(4)?,
+                    updated_at: row.get(5)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -291,13 +294,14 @@ impl PlatformStore {
 
         let row = connection
             .query_row(
-                "select w.workflow_id, w.workspace_id, w.name, w.description, w.current_version, v.definition_json
+                "select w.workflow_id, w.workspace_id, w.name, w.description, w.current_version, w.updated_at, v.definition_json
                  from workflows w
                  join workflow_versions v
                    on v.workspace_id = w.workspace_id
                   and v.workflow_id = w.workflow_id
                   and v.version = w.current_version
-                 where w.workspace_id = ?1 and w.workflow_id = ?2",
+                 where w.workspace_id = ?1 and w.workflow_id = ?2
+                   and w.archived_at is null",
                 params![workspace_id, workflow_id],
                 |row| {
                     Ok((
@@ -307,8 +311,9 @@ impl PlatformStore {
                             name: row.get(2)?,
                             description: row.get(3)?,
                             version: row.get(4)?,
+                            updated_at: row.get(5)?,
                         },
-                        row.get::<_, String>(5)?,
+                        row.get::<_, String>(6)?,
                     ))
                 },
             )
@@ -404,7 +409,8 @@ impl PlatformStore {
             .query_row(
                 "select current_version
                  from workflows
-                 where workspace_id = ?1 and workflow_id = ?2",
+                 where workspace_id = ?1 and workflow_id = ?2
+                   and archived_at is null",
                 params![workspace_id, workflow_id],
                 |row| row.get(0),
             )
@@ -449,6 +455,140 @@ impl PlatformStore {
             workflow,
             definition: stored_workflow,
         }))
+    }
+
+    pub fn archive_workflow(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        workflow_id: &str,
+    ) -> anyhow::Result<Option<DeleteWorkflowResponse>> {
+        let mut connection = self.connection();
+        ensure_workspace_access(&connection, user_id, workspace_id)?;
+
+        let workflow_exists: Option<String> = connection
+            .query_row(
+                "select workflow_id
+                 from workflows
+                 where workspace_id = ?1 and workflow_id = ?2
+                   and archived_at is null",
+                params![workspace_id, workflow_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(workflow_id) = workflow_exists else {
+            return Ok(None);
+        };
+
+        let now = Utc::now().to_rfc3339();
+        let tx = connection.transaction()?;
+        tx.execute(
+            "update workflows
+             set archived_at = ?3,
+                 updated_at = ?3
+             where workspace_id = ?1 and workflow_id = ?2",
+            params![workspace_id, workflow_id, now],
+        )?;
+        tx.execute(
+            "update user_workspace_state
+             set last_opened_workflow_id = null,
+                 updated_at = ?2
+             where workspace_id = ?1 and last_opened_workflow_id = ?3",
+            params![workspace_id, now, workflow_id],
+        )?;
+        tx.commit()?;
+
+        Ok(Some(DeleteWorkflowResponse {
+            workflow_id,
+            archived: true,
+        }))
+    }
+
+    pub fn get_workflow_state(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+    ) -> anyhow::Result<WorkflowStateResponse> {
+        let connection = self.connection();
+        ensure_workspace_access(&connection, user_id, workspace_id)?;
+
+        let last_opened_workflow_id: Option<String> = connection
+            .query_row(
+                "select last_opened_workflow_id
+                 from user_workspace_state
+                 where workspace_id = ?1 and user_id = ?2",
+                params![workspace_id, user_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+
+        let Some(last_opened_workflow_id) = last_opened_workflow_id else {
+            return Ok(WorkflowStateResponse::default());
+        };
+
+        let is_active: Option<String> = connection
+            .query_row(
+                "select workflow_id
+                 from workflows
+                 where workspace_id = ?1 and workflow_id = ?2
+                   and archived_at is null",
+                params![workspace_id, last_opened_workflow_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        Ok(WorkflowStateResponse {
+            last_opened_workflow_id: is_active,
+        })
+    }
+
+    pub fn update_workflow_state(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        last_opened_workflow_id: Option<&str>,
+    ) -> anyhow::Result<WorkflowStateResponse> {
+        let connection = self.connection();
+        ensure_workspace_access(&connection, user_id, workspace_id)?;
+
+        if let Some(workflow_id) = last_opened_workflow_id {
+            let workflow_exists: Option<String> = connection
+                .query_row(
+                    "select workflow_id
+                     from workflows
+                     where workspace_id = ?1 and workflow_id = ?2
+                       and archived_at is null",
+                    params![workspace_id, workflow_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if workflow_exists.is_none() {
+                return Err(anyhow!(
+                    "workflow `{workflow_id}` was not found in workspace `{workspace_id}`"
+                ));
+            }
+        }
+
+        let now = Utc::now().to_rfc3339();
+        connection.execute(
+            "insert into user_workspace_state (
+                workspace_id,
+                user_id,
+                last_opened_workflow_id,
+                created_at,
+                updated_at
+             )
+             values (?1, ?2, ?3, ?4, ?4)
+             on conflict(workspace_id, user_id) do update set
+                last_opened_workflow_id = excluded.last_opened_workflow_id,
+                updated_at = excluded.updated_at",
+            params![workspace_id, user_id, last_opened_workflow_id, now],
+        )?;
+
+        Ok(WorkflowStateResponse {
+            last_opened_workflow_id: last_opened_workflow_id.map(str::to_string),
+        })
     }
 
     pub fn save_run_snapshot(
@@ -570,6 +710,7 @@ impl PlatformStore {
                 name text not null,
                 description text null,
                 current_version integer not null,
+                archived_at text null,
                 created_at text not null,
                 updated_at text not null,
                 primary key (workspace_id, workflow_id),
@@ -600,8 +741,21 @@ impl PlatformStore {
                 primary key (workspace_id, run_id),
                 foreign key (workspace_id) references workspaces (workspace_id) on delete cascade
             );
+
+            create table if not exists user_workspace_state (
+                workspace_id text not null,
+                user_id text not null,
+                last_opened_workflow_id text null,
+                created_at text not null,
+                updated_at text not null,
+                primary key (workspace_id, user_id),
+                foreign key (workspace_id) references workspaces (workspace_id) on delete cascade,
+                foreign key (user_id) references users (user_id) on delete cascade
+            );
             ",
         )?;
+
+        ensure_nullable_text_column(&connection, "workflows", "archived_at")?;
 
         if find_user_by_email(&connection, DEMO_EMAIL)?.is_none() {
             let password_hash = hash_password(DEMO_PASSWORD)?;
@@ -759,7 +913,30 @@ fn workflow_summary(workspace_id: &str, workflow: &WorkflowDefinition) -> Workfl
         name: workflow.name.clone(),
         description: workflow.description.clone(),
         version: workflow.version,
+        updated_at: Utc::now().to_rfc3339(),
     }
+}
+
+fn ensure_nullable_text_column(
+    connection: &Connection,
+    table_name: &str,
+    column_name: &str,
+) -> anyhow::Result<()> {
+    let pragma = format!("pragma table_info({table_name})");
+    let mut stmt = connection.prepare(&pragma)?;
+    let existing_columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if existing_columns.iter().any(|existing| existing == column_name) {
+        return Ok(());
+    }
+
+    connection.execute(
+        &format!("alter table {table_name} add column {column_name} text null"),
+        [],
+    )?;
+    Ok(())
 }
 
 fn ensure_parent_dir(database_path: &str) -> anyhow::Result<()> {

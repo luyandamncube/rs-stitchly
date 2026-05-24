@@ -634,20 +634,14 @@ function TextInputNode({ data, dragging, selected }) {
 
       <section className="workflow-node-card__body">
         <div className="workflow-node-card__row workflow-node-card__row--primary">
-          <span className="workflow-node-card__label">Text</span>
-          <strong className="workflow-node-card__value workflow-node-card__value--multiline">
+          <span className="workflow-node-card__value workflow-node-card__value--multiline">
             {textValue}
-          </strong>
+          </span>
         </div>
       </section>
 
       <footer className="workflow-node-card__footer">
-        <span className="workflow-node-card__footer-meta">
-          <span className="workflow-node-card__footer-icon" aria-hidden="true">
-            #
-          </span>
-          <span>Length</span>
-        </span>
+        <span className="workflow-node-card__footer-meta">Text</span>
         <strong>{charCount} chars</strong>
       </footer>
 
@@ -668,11 +662,14 @@ function SendEmailNode({ data, dragging, selected }) {
 
   return (
     <div
-      className={buildWorkflowNodeCardClassName('workflow-node-card--output-result', {
-        dragging,
-        hovered: Boolean(data.uiState?.interaction?.hovered),
-        selected
-      })}
+      className={buildWorkflowNodeCardClassName(
+        'workflow-node-card--output-result workflow-node-card--send-email',
+        {
+          dragging,
+          hovered: Boolean(data.uiState?.interaction?.hovered),
+          selected
+        }
+      )}
       title="Click to select. Drag to move. Double-click to inspect."
     >
       <Handle
@@ -681,8 +678,6 @@ function SendEmailNode({ data, dragging, selected }) {
         position={Position.Left}
         type="target"
       />
-
-      <span className="workflow-node-card__top-chip">Notify</span>
 
       <header className="workflow-node-card__header">
         <div className="workflow-node-card__heading">
@@ -697,31 +692,23 @@ function SendEmailNode({ data, dragging, selected }) {
       </header>
 
       <section className="workflow-node-card__body">
-        <div className="workflow-node-card__row workflow-node-card__row--kv">
-          <span className="workflow-node-card__label">
-            <span className="workflow-node-card__label-icon" aria-hidden="true">
-              T
-            </span>
-            <span>To</span>
-          </span>
-          <strong className="workflow-node-card__value">{recipient}</strong>
-        </div>
+        <div className="workflow-node-card__row workflow-node-card__row--summary">
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__label">To</span>
+            <span className="workflow-node-card__summary-target">{recipient}</span>
+          </div>
 
-        <div className="workflow-node-card__row workflow-node-card__row--primary">
-          <span className="workflow-node-card__label">Subject</span>
-          <strong className="workflow-node-card__value workflow-node-card__value--truncate">
-            {subject}
-          </strong>
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Subject</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {subject}
+            </span>
+          </div>
         </div>
       </section>
 
       <footer className="workflow-node-card__footer">
-        <span className="workflow-node-card__footer-meta">
-          <span className="workflow-node-card__footer-icon" aria-hidden="true">
-            S
-          </span>
-          <span>Last send</span>
-        </span>
+        <span className="workflow-node-card__footer-meta">Last send</span>
         <strong>Idle</strong>
       </footer>
     </div>
@@ -843,11 +830,14 @@ function buildSchemaNodeClassName(variant = 'node', { dragging, hovered, selecte
 }
 
 function buildTextInputClassName({ dragging, hovered, selected }) {
-  return buildWorkflowNodeCardClassName('workflow-node-card--input-literal', {
-    dragging,
-    hovered,
-    selected
-  })
+  return buildWorkflowNodeCardClassName(
+    'workflow-node-card--input-literal workflow-node-card--text-input',
+    {
+      dragging,
+      hovered,
+      selected
+    }
+  )
 }
 
 function buildWorkflowNodeCardClassName(variantClassName, { dragging, hovered, selected }) {

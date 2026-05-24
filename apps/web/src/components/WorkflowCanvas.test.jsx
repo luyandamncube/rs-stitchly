@@ -55,7 +55,6 @@ describe('WorkflowCanvas', () => {
     ).toBeInTheDocument()
     expect(within(textInputNode).getByText('73 chars')).toBeInTheDocument()
     expect(sendEmailNode).toHaveClass('workflow-node-card')
-    expect(within(sendEmailNode).getByText('Notify')).toBeInTheDocument()
     expect(within(sendEmailNode).getByText('ops@stitchly.dev')).toBeInTheDocument()
     expect(
       within(sendEmailNode).getByText('Failed refunds need review from the latest sync')

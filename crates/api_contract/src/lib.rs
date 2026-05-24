@@ -291,6 +291,7 @@ pub struct WorkflowSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub version: u32,
+    pub updated_at: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -305,6 +306,12 @@ pub struct WorkflowResponse {
     pub definition: WorkflowDefinition,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkflowStateResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_opened_workflow_id: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct CreateWorkflowRequest {
     pub workflow: WorkflowDefinition,
@@ -313,6 +320,18 @@ pub struct CreateWorkflowRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct UpdateWorkflowRequest {
     pub workflow: WorkflowDefinition,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UpdateWorkflowStateRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_opened_workflow_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeleteWorkflowResponse {
+    pub workflow_id: String,
+    pub archived: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]

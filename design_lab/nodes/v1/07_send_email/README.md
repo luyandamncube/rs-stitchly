@@ -11,10 +11,8 @@ Purpose:
 
 What this sample is testing:
 
-- a `Notify` role chip
 - single left-side input handle
-- compact recipient row
-- stronger subject row as the main content surface
+- one combined body surface for target + subject intent
 - quiet footer summary for send state
 - shared-CSS support for notification-style output nodes
 
@@ -25,10 +23,9 @@ Reference direction:
 
 Still unresolved:
 
-- whether notification nodes should use `Notify` or `Output` as the role chip
-- whether recipient and subject should stay visible together in the compact shell
-- whether send-state nodes should show status, last timestamp, or delivery mode
-  in the footer
+- whether recipient detail should stay literal or collapse to counts/`From input`
+- whether send-state nodes should show status, timestamp, or delivery mode in
+  the footer
 
 Shared styling:
 
@@ -40,6 +37,7 @@ Review questions:
 
 - does this feel meaningfully different from `Preview output` while still being
   in the same family?
-- is the `Notify` chip a good role marker?
-- is subject the right primary emphasis for this node?
+- is one summary body better than splitting `To` and `Subject` into separate
+  rows?
+- is subject the right primary emphasis inside that summary block?
 - is this a good first concrete notification-style sink?

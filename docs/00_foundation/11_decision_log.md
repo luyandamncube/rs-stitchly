@@ -13,6 +13,13 @@ Use this file to capture important product and technical decisions in a compact 
 
 ## Entries
 
+### 2026-05-24 - Workflow management should move from implicit starter loading to explicit workflow routes and per-workspace CRUD
+
+- status: proposed
+- context: workflows are now persisted per workspace, but the product still behaves like a single implicit canvas because users cannot yet list, create, choose, or delete workflows intentionally.
+- decision: draft a dedicated workflow-management direction built around explicit workflow routes, backend-owned workflow selection state, list/create/open/archive flows, and per-workspace workflow management screens.
+- consequence: implementation should wait for approval of the workflow-management keys captured in `21_workflow_management_spec.md` and the matching UI behavior in `03_ui/06_workflow_management_ui.md`.
+
 ### 2026-05-21 - Real app shell should move to backend auth, protected routes, and persisted workspaces
 
 - status: proposed

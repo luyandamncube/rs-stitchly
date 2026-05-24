@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Node Management Panel Lab</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="canvas-lab">
+      <section class="canvas-lab__note">
+        <span class="canvas-lab__eyebrow">Canvas Lab</span>
+        <h1 class="canvas-lab__title">02 Node Management Panel</h1>
+        <p class="canvas-lab__caption">
+          Static study for the selected-node management panel and its right-side canvas placement.
+        </p>
+      </section>
+
+      <section class="canvas-stage">
+        <article class="sample-node sample-node--selected" aria-label="Selected node">
+          <span class="sample-node__chip">Notify</span>
+
+          <header class="sample-node__header">
+            <div class="sample-node__heading">
+              <span class="sample-node__icon" aria-hidden="true">@</span>
+              <strong>Send Email</strong>
+            </div>
+            <span class="sample-node__menu" aria-hidden="true">...</span>
+          </header>
+
+          <div class="sample-node__body">
+            <div class="sample-node__row sample-node__row--kv">
+              <span class="sample-node__label">To</span>
+              <strong class="sample-node__value">ops@stitchly.dev</strong>
+            </div>
+            <div class="sample-node__row sample-node__row--primary">
+              <span class="sample-node__label">Subject</span>
+              <strong class="sample-node__value sample-node__value--truncate">
+                Failed refunds need review from the latest sync
+              </strong>
+            </div>
+          </div>
+
+          <footer class="sample-node__footer">
+            <span class="sample-node__footer-meta">Last send</span>
+            <strong>Idle</strong>
+          </footer>
+        </article>
+
+        <aside class="node-panel" aria-label="Node management panel">
+          <header class="node-panel__header">
+            <div class="node-panel__title-group">
+              <span class="node-panel__title-icon" aria-hidden="true">@</span>
+              <strong>Send Email</strong>
+            </div>
+
+            <div class="node-panel__header-meta">
+              <span class="node-panel__meta-dot" aria-hidden="true"></span>
+              <span>2 ports</span>
+            </div>
+          </header>
+
+          <section class="node-panel__section">
+            <div class="node-panel__field">
+              <div class="node-panel__field-head">
+                <label>Delay Before Send</label>
+                <span class="node-panel__hint" aria-hidden="true">i</span>
+              </div>
+              <div class="node-panel__slider-row">
+                <div class="node-panel__slider-track">
+                  <span class="node-panel__slider-fill" style="width: 62%"></span>
+                  <span class="node-panel__slider-thumb" style="left: 62%"></span>
+                </div>
+                <div class="node-panel__value-box">15s</div>
+              </div>
+            </div>
+
+            <div class="node-panel__field">
+              <div class="node-panel__field-head">
+                <label>Retry Attempts</label>
+                <span class="node-panel__hint" aria-hidden="true">i</span>
+              </div>
+              <div class="node-panel__slider-row">
+                <div class="node-panel__slider-track">
+                  <span class="node-panel__slider-fill" style="width: 42%"></span>
+                  <span class="node-panel__slider-thumb" style="left: 42%"></span>
+                </div>
+                <div class="node-panel__value-box">2</div>
+              </div>
+            </div>
+
+            <div class="node-panel__field">
+              <div class="node-panel__field-head">
+                <label>Timeout</label>
+                <span class="node-panel__hint" aria-hidden="true">i</span>
+              </div>
+              <div class="node-panel__slider-row">
+                <div class="node-panel__slider-track">
+                  <span class="node-panel__slider-fill" style="width: 78%"></span>
+                  <span class="node-panel__slider-thumb" style="left: 78%"></span>
+                </div>
+                <div class="node-panel__value-box">30s</div>
+              </div>
+            </div>
+
+            <div class="node-panel__field">
+              <div class="node-panel__field-head">
+                <label>Delivery Mode</label>
+                <span class="node-panel__hint" aria-hidden="true">i</span>
+              </div>
+              <button class="node-panel__select" type="button">
+                <span>Immediate</span>
+                <span class="node-panel__caret" aria-hidden="true">⌄</span>
+              </button>
+            </div>
+
+            <div class="node-panel__field">
+              <div class="node-panel__field-head">
+                <label>Preview Length</label>
+                <span class="node-panel__hint" aria-hidden="true">i</span>
+              </div>
+              <div class="node-panel__slider-row">
+                <div class="node-panel__slider-track">
+                  <span class="node-panel__slider-fill" style="width: 68%"></span>
+                  <span class="node-panel__slider-thumb" style="left: 68%"></span>
+                </div>
+                <div class="node-panel__value-box">120</div>
+              </div>
+            </div>
+
+            <div class="node-panel__field">
+              <div class="node-panel__field-head">
+                <label>Priority</label>
+                <span class="node-panel__hint" aria-hidden="true">i</span>
+              </div>
+              <div class="node-panel__slider-row">
+                <div class="node-panel__slider-track">
+                  <span class="node-panel__slider-fill" style="width: 31%"></span>
+                  <span class="node-panel__slider-thumb" style="left: 31%"></span>
+                </div>
+                <div class="node-panel__value-box">3</div>
+              </div>
+            </div>
+
+            <div class="node-panel__toggle-row">
+              <label class="node-panel__checkbox">
+                <input type="checkbox" checked />
+                <span class="node-panel__checkmark" aria-hidden="true"></span>
+                <span>Track opens</span>
+              </label>
+            </div>
+
+            <div class="node-panel__toggle-row">
+              <label class="node-panel__checkbox">
+                <input type="checkbox" checked />
+                <span class="node-panel__checkmark" aria-hidden="true"></span>
+                <span>Pin node</span>
+              </label>
+            </div>
+          </section>
+
+          <footer class="node-panel__footer">
+            <p class="node-panel__footer-eyebrow">Run selected node</p>
+
+            <div class="node-panel__footer-row">
+              <span>Runs</span>
+              <div class="node-panel__stepper">
+                <button type="button" aria-label="Decrease runs">-</button>
+                <strong>1</strong>
+                <button type="button" aria-label="Increase runs">+</button>
+              </div>
+            </div>
+
+            <div class="node-panel__footer-row">
+              <span>Estimated load</span>
+              <strong>24 units</strong>
+            </div>
+
+            <button class="node-panel__action" type="button">
+              <span aria-hidden="true">→</span>
+              <span>Apply changes</span>
+            </button>
+          </footer>
+        </aside>
+      </section>
+    </main>
+  </body>
+</html>

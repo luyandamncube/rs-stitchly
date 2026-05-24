@@ -22,6 +22,7 @@ async function request(pathname, options = {}) {
   if (!response.ok) {
     const error = new Error(payload.message ?? `Request failed with status ${response.status}`);
     error.payload = payload;
+    error.status = response.status;
     throw error;
   }
 
@@ -76,6 +77,23 @@ export function createWorkflow(workspaceId, workflow) {
 export function updateWorkflow(workspaceId, workflowId, workflow) {
   return request(`/api/workspaces/${workspaceId}/workflows/${workflowId}`, {
     body: JSON.stringify({ workflow }),
+    method: 'PUT'
+  });
+}
+
+export function deleteWorkflow(workspaceId, workflowId) {
+  return request(`/api/workspaces/${workspaceId}/workflows/${workflowId}`, {
+    method: 'DELETE'
+  });
+}
+
+export function getWorkflowState(workspaceId) {
+  return request(`/api/workspaces/${workspaceId}/workflow-state`);
+}
+
+export function updateWorkflowState(workspaceId, lastOpenedWorkflowId) {
+  return request(`/api/workspaces/${workspaceId}/workflow-state`, {
+    body: JSON.stringify({ last_opened_workflow_id: lastOpenedWorkflowId }),
     method: 'PUT'
   });
 }

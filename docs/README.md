@@ -43,6 +43,7 @@ The goal is to document:
 - `00_foundation/18_run_lifecycle_and_events.md`: run states, node states, retries, cancellation, and event streams
 - `00_foundation/19_compute_model.md`: compute lanes, executor kinds, isolation strategy, and scaling path
 - `00_foundation/20_app_auth_and_workspace_spec.md`: v1 draft for auth, protected routes, workspace persistence, and the real application shell
+- `00_foundation/21_workflow_management_spec.md`: v1 draft for workflow identity, storage, lifecycle, routing, archive behavior, and per-workspace workflow management
 
 ## UI
 
@@ -52,6 +53,7 @@ The goal is to document:
 - `03_ui/03_node_reference_analysis.md`: detailed analysis of the sample node design language, spacing, hierarchy, handles, and practical implications for Stitchly
 - `03_ui/04_ui_lab_workflow.md`: workflow for building isolated HTML/CSS design samples, reviewing variants, and graduating approved patterns into the real UI
 - `03_ui/05_node_design_inventory.md`: node-design approval backlog, shared visual archetypes, and the candidate node list keyed for approve/reject decisions
+- `03_ui/06_workflow_management_ui.md`: workflow-list, create/open/delete flow, canvas relationship, and workflow-management screen behavior
 
 ## Workflows
 

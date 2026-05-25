@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Runs Node Lab · Node Run State Planning</title>
+    <link rel="stylesheet" href="../shared.css" />
+  </head>
+  <body>
+    <main class="runs-node-lab">
+      <section class="runs-node-lab__note">
+        <span class="runs-node-lab__eyebrow">Runs Node Lab</span>
+        <h1 class="runs-node-lab__title">00 Node Run State Planning</h1>
+        <p class="runs-node-lab__caption">
+          Planning board for canonical node-level runtime states so we can design how nodes
+          themselves should look during workflow execution, separate from top-level workflow run
+          surfaces.
+        </p>
+      </section>
+
+      <section class="runs-node-stage">
+        <section class="runs-node-panel" aria-label="Node run states">
+          <div class="runs-node-panel__heading">
+            <h2>Node Run States</h2>
+            <p>
+              These are the canonical node-level runtime states from the current lifecycle docs and
+              API contract. They describe what an individual node is doing inside a workflow run.
+            </p>
+          </div>
+
+          <div class="runs-node-grid">
+            <article class="runs-node-state-card">
+              <div class="runs-node-state-card__top">
+                <span class="runs-node-state-card__status runs-node-state-card__status--pending">
+                  <span class="runs-node-state-card__status-dot" aria-hidden="true"></span>
+                  Pending
+                </span>
+                <span class="runs-node-state-card__system">pending</span>
+              </div>
+              <div class="runs-node-state-card__copy">
+                <strong>Known to the graph, not yet ready to execute</strong>
+                <p>The node is still blocked by upstream work or graph ordering.</p>
+              </div>
+              <div class="runs-node-state-card__notes">
+                <span>Design family: pre-execution</span>
+              </div>
+            </article>
+
+            <article class="runs-node-state-card">
+              <div class="runs-node-state-card__top">
+                <span class="runs-node-state-card__status runs-node-state-card__status--ready">
+                  <span class="runs-node-state-card__status-dot" aria-hidden="true"></span>
+                  Ready
+                </span>
+                <span class="runs-node-state-card__system">ready</span>
+              </div>
+              <div class="runs-node-state-card__copy">
+                <strong>Eligible to execute as soon as it is scheduled</strong>
+                <p>The node is now unblocked and waiting for its turn to run.</p>
+              </div>
+              <div class="runs-node-state-card__notes">
+                <span>Design family: pre-execution</span>
+              </div>
+            </article>
+
+            <article class="runs-node-state-card">
+              <div class="runs-node-state-card__top">
+                <span class="runs-node-state-card__status runs-node-state-card__status--running">
+                  <span class="runs-node-state-card__status-dot" aria-hidden="true"></span>
+                  Running
+                </span>
+                <span class="runs-node-state-card__system">running</span>
+              </div>
+              <div class="runs-node-state-card__copy">
+                <strong>Actively executing right now</strong>
+                <p>The node is the current live unit of work and should feel energized.</p>
+              </div>
+              <div class="runs-node-state-card__notes">
+                <span>Design family: active</span>
+              </div>
+            </article>
+
+            <article class="runs-node-state-card">
+              <div class="runs-node-state-card__top">
+                <span class="runs-node-state-card__status runs-node-state-card__status--succeeded">
+                  <span class="runs-node-state-card__status-dot" aria-hidden="true"></span>
+                  Succeeded
+                </span>
+                <span class="runs-node-state-card__system">succeeded</span>
+              </div>
+              <div class="runs-node-state-card__copy">
+                <strong>Completed successfully</strong>
+                <p>The node finished and can provide quiet success confirmation.</p>
+              </div>
+              <div class="runs-node-state-card__notes">
+                <span>Design family: terminal success</span>
+              </div>
+            </article>
+
+            <article class="runs-node-state-card">
+              <div class="runs-node-state-card__top">
+                <span class="runs-node-state-card__status runs-node-state-card__status--failed">
+                  <span class="runs-node-state-card__status-dot" aria-hidden="true"></span>
+                  Failed
+                </span>
+                <span class="runs-node-state-card__system">failed</span>
+              </div>
+              <div class="runs-node-state-card__copy">
+                <strong>Stopped due to a node-level error</strong>
+                <p>The node failed and should clearly explain where the graph broke.</p>
+              </div>
+              <div class="runs-node-state-card__notes">
+                <span>Design family: terminal error</span>
+              </div>
+            </article>
+
+            <article class="runs-node-state-card">
+              <div class="runs-node-state-card__top">
+                <span class="runs-node-state-card__status runs-node-state-card__status--skipped">
+                  <span class="runs-node-state-card__status-dot" aria-hidden="true"></span>
+                  Skipped
+                </span>
+                <span class="runs-node-state-card__system">skipped</span>
+              </div>
+              <div class="runs-node-state-card__copy">
+                <strong>Intentionally bypassed during execution</strong>
+                <p>The node did not run, but not because it failed.</p>
+              </div>
+              <div class="runs-node-state-card__notes">
+                <span>Design family: de-emphasized terminal</span>
+              </div>
+            </article>
+
+            <article class="runs-node-state-card">
+              <div class="runs-node-state-card__top">
+                <span class="runs-node-state-card__status runs-node-state-card__status--retrying">
+                  <span class="runs-node-state-card__status-dot" aria-hidden="true"></span>
+                  Retrying
+                </span>
+                <span class="runs-node-state-card__system">retrying</span>
+              </div>
+              <div class="runs-node-state-card__copy">
+                <strong>Recovering after a failed attempt</strong>
+                <p>The node is between attempts and needs special retry-aware treatment.</p>
+              </div>
+              <div class="runs-node-state-card__notes">
+                <span>Design family: active nuance</span>
+              </div>
+            </article>
+
+            <article class="runs-node-state-card">
+              <div class="runs-node-state-card__top">
+                <span class="runs-node-state-card__status runs-node-state-card__status--cancelling">
+                  <span class="runs-node-state-card__status-dot" aria-hidden="true"></span>
+                  Cancelling
+                </span>
+                <span class="runs-node-state-card__system">cancelling</span>
+              </div>
+              <div class="runs-node-state-card__copy">
+                <strong>Stopping is in progress</strong>
+                <p>The node has received a stop signal, but cleanup is still active.</p>
+              </div>
+              <div class="runs-node-state-card__notes">
+                <span>Design family: interruption</span>
+              </div>
+            </article>
+
+            <article class="runs-node-state-card">
+              <div class="runs-node-state-card__top">
+                <span class="runs-node-state-card__status runs-node-state-card__status--cancelled">
+                  <span class="runs-node-state-card__status-dot" aria-hidden="true"></span>
+                  Cancelled
+                </span>
+                <span class="runs-node-state-card__system">cancelled</span>
+              </div>
+              <div class="runs-node-state-card__copy">
+                <strong>Stopped before normal completion</strong>
+                <p>The node reached its final interrupted state after cancellation completed.</p>
+              </div>
+              <div class="runs-node-state-card__notes">
+                <span>Design family: interruption terminal</span>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="runs-node-panel" aria-label="Planning notes">
+          <div class="runs-node-panel__heading">
+            <h2>Recommended Design Order</h2>
+            <p>
+              We should start with the most common and visually important node states first, then
+              layer in the more nuanced edge cases once the core node language is stable.
+            </p>
+          </div>
+
+          <div class="runs-node-list">
+            <div class="runs-node-list__item">
+              <strong>01 Pending + Ready</strong>
+              <p>
+                These define the pre-execution family and help us separate "not yet" from
+                "unblocked and waiting".
+              </p>
+            </div>
+
+            <div class="runs-node-list__item">
+              <strong>02 Running</strong>
+              <p>
+                This is the most important live state and will likely drive the edge and handle
+                language too.
+              </p>
+            </div>
+
+            <div class="runs-node-list__item">
+              <strong>03 Succeeded</strong>
+              <p>Quiet confirmation of successful completion without making the node feel frozen.</p>
+            </div>
+
+            <div class="runs-node-list__item">
+              <strong>04 Failed</strong>
+              <p>
+                Strong diagnostic emphasis so the graph failure point is obvious at a glance.
+              </p>
+            </div>
+
+            <div class="runs-node-list__item">
+              <strong>05 Skipped</strong>
+              <p>
+                A visibly de-emphasized state that still remains readable and intentional.
+              </p>
+            </div>
+
+            <div class="runs-node-list__item">
+              <strong>06 Retrying</strong>
+              <p>
+                Important active nuance that sits between failure and recovery, especially for
+                integrations.
+              </p>
+            </div>
+
+            <div class="runs-node-list__item">
+              <strong>07 Cancelling + Cancelled</strong>
+              <p>
+                Interruption states are useful, but less central than the execution and retry
+                family.
+              </p>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>

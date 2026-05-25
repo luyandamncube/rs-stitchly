@@ -19,3 +19,7 @@ Current studies:
   Bottom-center viewport dock and zoom popout.
 - `02_node_management_panel/`
   Right-side selected-node management panel study.
+- `03_send_email_node_manager/`
+  Real `Send Email` node manager study with concrete editable settings.
+- `04_text_input_node_manager/`
+  Real `Text Input` node manager study with text-first editable settings.

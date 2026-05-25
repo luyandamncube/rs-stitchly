@@ -13,6 +13,13 @@ Use this file to capture important product and technical decisions in a compact 
 
 ## Entries
 
+### 2026-05-25 - Run persistence should move from latest snapshot only toward durable history plus debugging layers
+
+- status: proposed
+- context: runs are already persisted per workspace as latest snapshots, but durable event and log history are not yet stored separately, which limits later debugging and replay.
+- decision: draft a dedicated run-history direction built around a summary `runs` table, append-only `run_events`, separate `run_logs`, summary-first detail retrieval, and simple v1 retention.
+- consequence: implementation should wait for approval of the run-history keys captured in `22_run_history_and_debugging_spec.md`.
+
 ### 2026-05-24 - Workflow management should move from implicit starter loading to explicit workflow routes and per-workspace CRUD
 
 - status: proposed

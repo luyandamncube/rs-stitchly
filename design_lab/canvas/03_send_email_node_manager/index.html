@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Canvas Lab · Send Email Node Manager</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="canvas-lab">
+      <section class="canvas-lab__note">
+        <span class="canvas-lab__eyebrow">Canvas Lab</span>
+        <h1 class="canvas-lab__title">03 Send Email Node Manager</h1>
+        <p class="canvas-lab__caption">
+          Static study for a real node-specific management panel, using the agreed V1 settings for
+          <code>send_email</code>.
+        </p>
+      </section>
+
+      <section class="canvas-stage">
+        <article class="sample-node sample-node--selected" aria-label="Selected send email node">
+          <span class="sample-node__handle" aria-hidden="true"></span>
+
+          <header class="sample-node__header">
+            <div class="sample-node__heading">
+              <span class="sample-node__icon" aria-hidden="true">@</span>
+              <strong>Send Email</strong>
+            </div>
+            <span class="sample-node__menu" aria-hidden="true">...</span>
+          </header>
+
+          <div class="sample-node__body">
+            <div class="sample-node__summary-line">
+              <span class="sample-node__label">To</span>
+              <span class="sample-node__value">ops@stitchly.dev</span>
+            </div>
+
+            <div class="sample-node__summary-line">
+              <span class="sample-node__label">Subject</span>
+              <span class="sample-node__value sample-node__value--truncate">New workflow alert</span>
+            </div>
+          </div>
+
+          <footer class="sample-node__footer">
+            <span class="sample-node__footer-meta">Last send</span>
+            <span class="sample-node__footer-value">Idle</span>
+          </footer>
+        </article>
+
+        <aside class="node-panel" aria-label="Send email node settings">
+          <header class="node-panel__header">
+            <div class="node-panel__title-group">
+              <span class="node-panel__title-icon" aria-hidden="true">@</span>
+              <div class="node-panel__title-copy">
+                <strong>Send Email</strong>
+                <span class="node-panel__subtitle">send_email_notification</span>
+              </div>
+            </div>
+
+            <div class="node-panel__header-meta">
+              <span class="node-panel__meta-dot" aria-hidden="true"></span>
+              <span>1 input</span>
+            </div>
+          </header>
+
+          <section class="node-panel__section">
+            <div class="node-panel__field">
+              <div class="node-panel__field-head">
+                <label for="lab-send-email-label">Label</label>
+              </div>
+              <input id="lab-send-email-label" class="node-panel__input" type="text" value="Send Email" />
+            </div>
+
+            <div class="node-panel__field">
+              <div class="node-panel__field-head">
+                <label for="lab-send-email-to">To</label>
+              </div>
+              <input
+                id="lab-send-email-to"
+                class="node-panel__input"
+                type="text"
+                value="ops@stitchly.dev"
+              />
+            </div>
+
+            <div class="node-panel__field">
+              <div class="node-panel__field-head">
+                <label for="lab-send-email-subject">Subject</label>
+              </div>
+              <input
+                id="lab-send-email-subject"
+                class="node-panel__input"
+                type="text"
+                value="New workflow alert"
+              />
+            </div>
+
+            <div class="node-panel__field">
+              <div class="node-panel__field-head">
+                <label for="lab-send-email-body-mode">Body source</label>
+                <span class="node-panel__hint" aria-hidden="true">i</span>
+              </div>
+              <button id="lab-send-email-body-mode" class="node-panel__select" type="button">
+                <span>Custom text</span>
+                <span class="node-panel__caret" aria-hidden="true">⌄</span>
+              </button>
+            </div>
+
+            <div class="node-panel__field">
+              <div class="node-panel__field-head">
+                <label for="lab-send-email-body-text">Custom body</label>
+              </div>
+              <textarea
+                id="lab-send-email-body-text"
+                class="node-panel__textarea"
+                rows="5"
+              >New workflow alert
+
+Review the latest run in Stitchly and confirm the supplier retry state.</textarea>
+            </div>
+
+            <div class="node-panel__field">
+              <div class="node-panel__field-head">
+                <label for="lab-send-email-connection">Connection</label>
+              </div>
+              <button id="lab-send-email-connection" class="node-panel__select" type="button">
+                <span>Default workspace mailer</span>
+                <span class="node-panel__caret" aria-hidden="true">⌄</span>
+              </button>
+            </div>
+
+            <div class="node-panel__field">
+              <div class="node-panel__field-head">
+                <label>Format</label>
+              </div>
+              <div class="node-panel__segmented" aria-label="Message format">
+                <button class="node-panel__segment node-panel__segment--active" type="button">
+                  Plain text
+                </button>
+                <button class="node-panel__segment" type="button">HTML</button>
+              </div>
+            </div>
+          </section>
+
+          <footer class="node-panel__footer">
+            <p class="node-panel__footer-eyebrow">Current workflow</p>
+
+            <div class="node-panel__footer-row">
+              <span>Autosave</span>
+              <strong>Enabled</strong>
+            </div>
+
+            <div class="node-panel__footer-row">
+              <span>Node ID</span>
+              <strong>send_email_notification</strong>
+            </div>
+
+            <button class="node-panel__action" type="button">
+              <span aria-hidden="true">→</span>
+              <span>Save to workflow</span>
+            </button>
+          </footer>
+        </aside>
+      </section>
+    </main>
+  </body>
+</html>

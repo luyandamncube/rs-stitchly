@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Runs Node Lab · Cancelled</title>
+    <link rel="stylesheet" href="../../../nodes/v1/shared.css" />
+    <link rel="stylesheet" href="../shared.css" />
+  </head>
+  <body>
+    <main class="runs-node-lab">
+      <section class="runs-node-lab__note">
+        <span class="runs-node-lab__eyebrow">Runs Node Lab</span>
+        <h1 class="runs-node-lab__title">09 Cancelled</h1>
+        <p class="runs-node-lab__caption">
+          First pass for the `cancelled` node runtime state. The interruption is complete and the
+          node is now terminal, but it should still feel calmer than a true failure.
+        </p>
+      </section>
+
+      <section class="runs-node-stage runs-node-stage--showcase">
+        <section class="runs-node-canvas" aria-label="Cancelled node state study">
+          <div class="runs-node-flow">
+            <span
+              class="runs-node-runtime-pill runs-node-runtime-pill--cancelled"
+              style="left: 504px; top: 176px"
+            >
+              Cancelled
+            </span>
+
+            <article
+              class="node-card node-card--input-literal node-card--text-input node-card--runtime-succeeded runs-node-flow__card runs-node-flow__card--text-input"
+              aria-label="Upstream text input node completed before cancellation"
+              data-node-kind="input-literal"
+            >
+              <header class="node-card__header">
+                <div class="node-card__heading">
+                  <span class="node-card__icon" aria-hidden="true">T</span>
+                  <strong>Text input</strong>
+                </div>
+                <span class="node-card__menu" aria-hidden="true">...</span>
+              </header>
+
+              <section class="node-card__body">
+                <div class="node-card__row node-card__row--primary">
+                  <span class="node-card__value node-card__value--multiline">
+                    Summarize failed refund requests from the last sync
+                  </span>
+                </div>
+              </section>
+
+              <footer class="node-card__footer">
+                <span class="node-card__footer-meta">Text</span>
+                <strong>51 chars</strong>
+              </footer>
+
+              <span class="node-card__handle node-card__handle--right" aria-hidden="true"></span>
+            </article>
+
+            <svg
+              class="runs-node-edge runs-node-edge--cancelled"
+              width="240"
+              height="92"
+              viewBox="0 0 240 92"
+              style="left: 364px; top: 264px"
+              aria-hidden="true"
+            >
+              <path d="M8 46 C 72 46, 92 14, 146 14 S 214 46, 232 46"></path>
+            </svg>
+
+            <article
+              class="node-card node-card--output-result node-card--send-email node-card--runtime-cancelled runs-node-flow__card runs-node-flow__card--send-email"
+              aria-label="Send email node in cancelled state"
+              data-node-kind="output-result"
+            >
+              <span class="node-card__handle node-card__handle--left" aria-hidden="true"></span>
+
+              <header class="node-card__header">
+                <div class="node-card__heading">
+                  <span class="node-card__icon" aria-hidden="true">@</span>
+                  <strong>Send email</strong>
+                </div>
+                <span class="node-card__menu" aria-hidden="true">...</span>
+              </header>
+
+              <section class="node-card__body">
+                <div class="node-card__row node-card__row--summary">
+                  <div class="node-card__summary-head">
+                    <span class="node-card__label">To</span>
+                    <span class="node-card__summary-target">ops@stitchly.dev</span>
+                  </div>
+                  <div class="node-card__summary-head">
+                    <span class="node-card__summary-label">Subject</span>
+                    <strong class="node-card__summary-target node-card__summary-target--subject">
+                      New workflow alert
+                    </strong>
+                  </div>
+                </div>
+              </section>
+
+              <footer class="node-card__footer">
+                <span class="node-card__footer-meta">Last send</span>
+                <strong>Stopped</strong>
+              </footer>
+            </article>
+
+            <aside class="runs-node-caption-card" aria-label="Cancelled state notes">
+              <h2>Cancelled Direction</h2>
+              <p>
+                The node has fully stopped after a cancellation request. This is terminal, but it
+                should feel gentler and more neutral than a real failure.
+              </p>
+              <div class="runs-node-caption-card__list">
+                <div class="runs-node-caption-card__item">
+                  <strong>Terminal but calm</strong>
+                  <span>Cancellation completion should settle the node down rather than spike it.</span>
+                </div>
+                <div class="runs-node-caption-card__item">
+                  <strong>Not the same as failed</strong>
+                  <span>The node stopped, but that does not automatically mean an execution error.</span>
+                </div>
+                <div class="runs-node-caption-card__item">
+                  <strong>Footer confirms final stop</strong>
+                  <span>The wording should feel complete and neutral, not urgent.</span>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>

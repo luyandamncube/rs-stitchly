@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Runs Lab · Created And Queued</title>
+    <link rel="stylesheet" href="../shared.css" />
+  </head>
+  <body>
+    <main class="runs-lab">
+      <section class="runs-lab__note">
+        <span class="runs-lab__eyebrow">Runs Lab</span>
+        <h1 class="runs-lab__title">01 Created And Queued</h1>
+        <p class="runs-lab__caption">
+          The preflight family for workflow runs. Both states feel related, but `queued` carries
+          more operational pressure and scheduler context than `created`.
+        </p>
+      </section>
+
+      <section class="runs-stage runs-stage--showcase">
+        <section class="run-showcase run-showcase--split" aria-label="Created and queued run states">
+          <article class="run-detail run-detail--created">
+            <header class="run-detail__header">
+              <div class="run-detail__workflow">
+                <span class="run-detail__eyebrow">Preflight</span>
+                <h2>Orders Import Sweep</h2>
+                <p>run_6728 · workspace_1 · version 18</p>
+              </div>
+              <span class="run-detail__status run-detail__status--created">
+                <span class="run-detail__status-dot" aria-hidden="true"></span>
+                Created
+              </span>
+            </header>
+
+            <section class="run-detail__metric-grid" aria-label="Created metrics">
+              <div class="run-metric">
+                <span>Requested at</span>
+                <strong>11:24:08</strong>
+              </div>
+              <div class="run-metric">
+                <span>Trigger</span>
+                <strong>Manual run</strong>
+              </div>
+              <div class="run-metric">
+                <span>Requested by</span>
+                <strong>Alex A.</strong>
+              </div>
+              <div class="run-metric">
+                <span>Input shape</span>
+                <strong>12 records</strong>
+              </div>
+            </section>
+
+            <section class="run-detail__section">
+              <h3>Admission</h3>
+              <p class="run-detail__section-copy">
+                The run has been accepted and assigned an identifier, but no planning or worker
+                claim has started yet.
+              </p>
+              <div class="run-phase-list">
+                <div class="run-phase-list__item">
+                  <div class="run-phase-list__item-copy">
+                    <strong>Run accepted</strong>
+                    <span>Payload stored and execution slot requested.</span>
+                  </div>
+                  <span class="run-phase-pill run-phase-pill--done">Done</span>
+                </div>
+                <div class="run-phase-list__item">
+                  <div class="run-phase-list__item-copy">
+                    <strong>Scheduler claim</strong>
+                    <span>Waiting for the runtime coordinator to claim this run.</span>
+                  </div>
+                  <span class="run-phase-pill run-phase-pill--pending">Pending</span>
+                </div>
+                <div class="run-phase-list__item">
+                  <div class="run-phase-list__item-copy">
+                    <strong>Planning</strong>
+                    <span>Graph validation and adapter setup have not started yet.</span>
+                  </div>
+                  <span class="run-phase-pill run-phase-pill--pending">Pending</span>
+                </div>
+              </div>
+            </section>
+
+            <footer class="run-detail__footer">
+              <div class="run-detail__summary">
+                <strong>Run is admitted and waiting for its first scheduler touch.</strong>
+                <span>No worker or adapter activity has started yet.</span>
+              </div>
+              <div class="run-detail__actions">
+                <button class="run-button" type="button">Open payload</button>
+                <button class="run-button run-button--danger" type="button">Cancel run</button>
+              </div>
+            </footer>
+          </article>
+
+          <article class="run-detail run-detail--queued">
+            <header class="run-detail__header">
+              <div class="run-detail__workflow">
+                <span class="run-detail__eyebrow">Preflight</span>
+                <h2>Billing Reconciliation</h2>
+                <p>run_6729 · workspace_1 · version 18</p>
+              </div>
+              <span class="run-detail__status run-detail__status--queued">
+                <span class="run-detail__status-dot" aria-hidden="true"></span>
+                Queued
+              </span>
+            </header>
+
+            <section class="run-detail__metric-grid" aria-label="Queued metrics">
+              <div class="run-metric">
+                <span>Queue position</span>
+                <strong>#3</strong>
+              </div>
+              <div class="run-metric">
+                <span>Waiting since</span>
+                <strong>42s</strong>
+              </div>
+              <div class="run-metric">
+                <span>Estimated start</span>
+                <strong>~ 18s</strong>
+              </div>
+              <div class="run-metric">
+                <span>Worker pool</span>
+                <strong>Retail sync</strong>
+              </div>
+            </section>
+
+            <section class="run-detail__section">
+              <h3>Queue Context</h3>
+              <div class="run-callout">
+                <strong>Waiting behind two active supplier sync runs and one retry.</strong>
+                <p>
+                  This run is fully admitted. The remaining delay is scheduler capacity, not graph
+                  validation or input issues.
+                </p>
+              </div>
+              <div class="run-node-stream">
+                <div class="run-node-stream__item">
+                  <div class="run-node-stream__copy">
+                    <strong>Capacity gate</strong>
+                    <span>Shared `retail-sync` worker pool is saturated.</span>
+                  </div>
+                  <span class="run-phase-pill run-phase-pill--active">Waiting</span>
+                </div>
+                <div class="run-node-stream__item">
+                  <div class="run-node-stream__copy">
+                    <strong>Next action</strong>
+                    <span>Scheduler will claim the run as soon as a slot is released.</span>
+                  </div>
+                  <span class="run-phase-pill run-phase-pill--pending">Queued</span>
+                </div>
+              </div>
+            </section>
+
+            <footer class="run-detail__footer">
+              <div class="run-detail__summary">
+                <strong>Run is healthy, but still waiting on execution capacity.</strong>
+                <span>Queue pressure is the only blocker right now.</span>
+              </div>
+              <div class="run-detail__actions">
+                <button class="run-button" type="button">View queue</button>
+                <button class="run-button run-button--danger" type="button">Cancel run</button>
+              </div>
+            </footer>
+          </article>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>

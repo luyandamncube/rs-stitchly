@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Runs Lab · Run State Planning</title>
+    <link rel="stylesheet" href="../shared.css" />
+  </head>
+  <body>
+    <main class="runs-lab">
+      <section class="runs-lab__note">
+        <span class="runs-lab__eyebrow">Runs Lab</span>
+        <h1 class="runs-lab__title">00 Run State Planning</h1>
+        <p class="runs-lab__caption">
+          Planning board for the canonical workflow run states defined in the foundation docs and
+          runtime contract, before we start designing each run surface.
+        </p>
+      </section>
+
+      <section class="runs-stage">
+        <section class="runs-panel" aria-label="Workflow run states">
+          <div class="runs-panel__heading">
+            <h2>Workflow Run States</h2>
+            <p>
+              These are the top-level workflow run states we should design for. They come directly
+              from the current runtime and API contract.
+            </p>
+          </div>
+
+          <div class="runs-grid">
+            <article class="run-state-card">
+              <div class="run-state-card__top">
+                <span class="run-state-card__status run-state-card__status--created">
+                  <span class="run-state-card__status-dot" aria-hidden="true"></span>
+                  Created
+                </span>
+                <span class="run-state-card__system">created</span>
+              </div>
+              <div class="run-state-card__copy">
+                <strong>Accepted but not active yet</strong>
+                <p>The run exists, but no meaningful planning or execution work has started.</p>
+              </div>
+              <div class="run-state-card__notes">
+                <span>Design family: preflight</span>
+              </div>
+            </article>
+
+            <article class="run-state-card">
+              <div class="run-state-card__top">
+                <span class="run-state-card__status run-state-card__status--queued">
+                  <span class="run-state-card__status-dot" aria-hidden="true"></span>
+                  Queued
+                </span>
+                <span class="run-state-card__system">queued</span>
+              </div>
+              <div class="run-state-card__copy">
+                <strong>Waiting for execution capacity</strong>
+                <p>The run is ready to start, but it is still waiting in line.</p>
+              </div>
+              <div class="run-state-card__notes">
+                <span>Design family: preflight</span>
+              </div>
+            </article>
+
+            <article class="run-state-card">
+              <div class="run-state-card__top">
+                <span class="run-state-card__status run-state-card__status--planning">
+                  <span class="run-state-card__status-dot" aria-hidden="true"></span>
+                  Planning
+                </span>
+                <span class="run-state-card__system">planning</span>
+              </div>
+              <div class="run-state-card__copy">
+                <strong>Preparing the run graph</strong>
+                <p>Validation, compilation, adapter preparation, or setup is in progress.</p>
+              </div>
+              <div class="run-state-card__notes">
+                <span>Design family: distinct</span>
+              </div>
+            </article>
+
+            <article class="run-state-card">
+              <div class="run-state-card__top">
+                <span class="run-state-card__status run-state-card__status--running">
+                  <span class="run-state-card__status-dot" aria-hidden="true"></span>
+                  Running
+                </span>
+                <span class="run-state-card__system">running</span>
+              </div>
+              <div class="run-state-card__copy">
+                <strong>Actively executing nodes</strong>
+                <p>The workflow is now doing real work and emitting live progress or logs.</p>
+              </div>
+              <div class="run-state-card__notes">
+                <span>Design family: active</span>
+              </div>
+            </article>
+
+            <article class="run-state-card">
+              <div class="run-state-card__top">
+                <span class="run-state-card__status run-state-card__status--succeeded">
+                  <span class="run-state-card__status-dot" aria-hidden="true"></span>
+                  Succeeded
+                </span>
+                <span class="run-state-card__system">succeeded</span>
+              </div>
+              <div class="run-state-card__copy">
+                <strong>Completed successfully</strong>
+                <p>The workflow finished, and the final outcome is healthy and complete.</p>
+              </div>
+              <div class="run-state-card__notes">
+                <span>Design family: terminal success</span>
+              </div>
+            </article>
+
+            <article class="run-state-card">
+              <div class="run-state-card__top">
+                <span class="run-state-card__status run-state-card__status--failed">
+                  <span class="run-state-card__status-dot" aria-hidden="true"></span>
+                  Failed
+                </span>
+                <span class="run-state-card__system">failed</span>
+              </div>
+              <div class="run-state-card__copy">
+                <strong>Stopped due to an error</strong>
+                <p>The workflow reached a terminal error state and needs diagnosis or retry.</p>
+              </div>
+              <div class="run-state-card__notes">
+                <span>Design family: terminal error</span>
+              </div>
+            </article>
+
+            <article class="run-state-card">
+              <div class="run-state-card__top">
+                <span class="run-state-card__status run-state-card__status--cancelling">
+                  <span class="run-state-card__status-dot" aria-hidden="true"></span>
+                  Cancelling
+                </span>
+                <span class="run-state-card__system">cancelling</span>
+              </div>
+              <div class="run-state-card__copy">
+                <strong>Interruption in progress</strong>
+                <p>The run has been asked to stop, but cleanup or shutdown is still underway.</p>
+              </div>
+              <div class="run-state-card__notes">
+                <span>Design family: interruption</span>
+              </div>
+            </article>
+
+            <article class="run-state-card">
+              <div class="run-state-card__top">
+                <span class="run-state-card__status run-state-card__status--cancelled">
+                  <span class="run-state-card__status-dot" aria-hidden="true"></span>
+                  Cancelled
+                </span>
+                <span class="run-state-card__system">cancelled</span>
+              </div>
+              <div class="run-state-card__copy">
+                <strong>Stopped before normal completion</strong>
+                <p>The run has reached its final interrupted state after cancellation completed.</p>
+              </div>
+              <div class="run-state-card__notes">
+                <span>Design family: terminal interruption</span>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="runs-panel" aria-label="Planning notes">
+          <div class="runs-panel__heading">
+            <h2>Recommended Design Order</h2>
+            <p>
+              We do not need to visually invent the lifecycle yet. We just need to agree on which
+              states are canonical and which ones can share a family.
+            </p>
+          </div>
+
+          <div class="runs-list">
+            <div class="runs-list__item">
+              <strong>01 Created + Queued</strong>
+              <p>
+                These can share an early/preflight visual family, while still keeping distinct copy
+                and state labels.
+              </p>
+            </div>
+
+            <div class="runs-list__item">
+              <strong>02 Planning</strong>
+              <p>
+                Planning should stand on its own because it can fail before active execution ever
+                begins.
+              </p>
+            </div>
+
+            <div class="runs-list__item">
+              <strong>03 Running</strong>
+              <p>
+                This is the primary active state and will likely define most of the live
+                observability language.
+              </p>
+            </div>
+
+            <div class="runs-list__item">
+              <strong>04 Succeeded</strong>
+              <p>
+                Quiet terminal success with just enough confidence and completion language.
+              </p>
+            </div>
+
+            <div class="runs-list__item">
+              <strong>05 Failed</strong>
+              <p>
+                Stronger error emphasis plus room for retry, diagnostics, and partial outputs.
+              </p>
+            </div>
+
+            <div class="runs-list__item">
+              <strong>06 Cancelling + Cancelled</strong>
+              <p>
+                These belong together as interruption states, but `cancelling` should remain visibly
+                in progress while `cancelled` is terminal.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section class="runs-panel" aria-label="Node-only states">
+          <div class="runs-panel__heading">
+            <h2>Node-Only States</h2>
+            <p>
+              These are real runtime states too, but they belong to node execution, not top-level
+              workflow run surfaces.
+            </p>
+          </div>
+
+          <div class="runs-list">
+            <div class="runs-list__item">
+              <strong>Pending, Ready, Skipped</strong>
+              <p>
+                Useful for node rows and execution maps, but not top-level workflow run chips.
+              </p>
+            </div>
+
+            <div class="runs-list__item">
+              <strong>Retrying</strong>
+              <p>
+                Important for node-level observability and retry UX. We may design it later as a
+                run-detail sub-state rather than a workflow terminal state.
+              </p>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>

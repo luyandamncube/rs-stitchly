@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Runs Lab · Succeeded</title>
+    <link rel="stylesheet" href="../shared.css" />
+  </head>
+  <body>
+    <main class="runs-lab">
+      <section class="runs-lab__note">
+        <span class="runs-lab__eyebrow">Runs Lab</span>
+        <h1 class="runs-lab__title">04 Succeeded</h1>
+        <p class="runs-lab__caption">
+          The success state should feel calm and confident, with just enough evidence of completion,
+          outputs, and rerun affordances.
+        </p>
+      </section>
+
+      <section class="runs-stage runs-stage--showcase">
+        <section class="run-showcase run-showcase--single" aria-label="Succeeded run state">
+          <article class="run-detail run-detail--succeeded">
+            <header class="run-detail__header">
+              <div class="run-detail__workflow">
+                <span class="run-detail__eyebrow">Completed</span>
+                <h2>Refund Alert Pipeline</h2>
+                <p>run_6732 · workspace_1 · version 41</p>
+              </div>
+              <span class="run-detail__status run-detail__status--succeeded">
+                <span class="run-detail__status-dot" aria-hidden="true"></span>
+                Succeeded
+              </span>
+            </header>
+
+            <section class="run-detail__metric-grid" aria-label="Succeeded metrics">
+              <div class="run-metric">
+                <span>Duration</span>
+                <strong>44.8s</strong>
+              </div>
+              <div class="run-metric">
+                <span>Completed nodes</span>
+                <strong>6 / 6</strong>
+              </div>
+              <div class="run-metric">
+                <span>Outputs</span>
+                <strong>2 artifacts</strong>
+              </div>
+              <div class="run-metric">
+                <span>Retries</span>
+                <strong>0</strong>
+              </div>
+            </section>
+
+            <section class="run-detail__section">
+              <h3>Outcome</h3>
+              <div class="run-callout run-callout--succeeded">
+                <strong>The workflow completed normally and delivered the alert digest.</strong>
+                <p>
+                  Eight refund events were included in the final notification and the delivery
+                  receipt was written back to the run outputs.
+                </p>
+              </div>
+            </section>
+
+            <section class="run-detail__section">
+              <h3>Outputs</h3>
+              <div class="run-output-list">
+                <div class="run-output-list__item">
+                  <div class="run-output-list__copy">
+                    <strong>Email delivery receipt</strong>
+                    <span>status=accepted · provider=default_mailer · message_id=9f1a2c</span>
+                  </div>
+                  <span class="run-phase-pill run-phase-pill--done">Stored</span>
+                </div>
+                <div class="run-output-list__item">
+                  <div class="run-output-list__copy">
+                    <strong>Preview payload</strong>
+                    <span>8 refund events included in final body preview.</span>
+                  </div>
+                  <span class="run-phase-pill run-phase-pill--done">Stored</span>
+                </div>
+              </div>
+            </section>
+
+            <footer class="run-detail__footer">
+              <div class="run-detail__summary">
+                <strong>Everything finished cleanly and the outputs are ready to inspect.</strong>
+                <span>This state should feel quiet, not celebratory.</span>
+              </div>
+              <div class="run-detail__actions">
+                <button class="run-button" type="button">Open outputs</button>
+                <button class="run-button" type="button">Export logs</button>
+                <button class="run-button run-button--success" type="button">Run again</button>
+              </div>
+            </footer>
+          </article>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>

@@ -44,6 +44,7 @@ The goal is to document:
 - `00_foundation/19_compute_model.md`: compute lanes, executor kinds, isolation strategy, and scaling path
 - `00_foundation/20_app_auth_and_workspace_spec.md`: v1 draft for auth, protected routes, workspace persistence, and the real application shell
 - `00_foundation/21_workflow_management_spec.md`: v1 draft for workflow identity, storage, lifecycle, routing, archive behavior, and per-workspace workflow management
+- `00_foundation/22_run_history_and_debugging_spec.md`: v1 draft for durable run summaries, event history, log persistence, retrieval layers, and retention direction
 
 ## UI
 

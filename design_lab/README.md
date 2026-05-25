@@ -20,6 +20,10 @@ Structure:
   Canvas chrome and overlay control studies.
 - `menu/`
   Collapsed rail, tooltip, and popout node-shelf studies.
+- `runs/`
+  Workflow run-state and run-surface studies.
+- `runs_node/`
+  Node-level runtime state and execution-appearance studies.
 
 Current convention:
 

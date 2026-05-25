@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Runs Lab · Running</title>
+    <link rel="stylesheet" href="../shared.css" />
+  </head>
+  <body>
+    <main class="runs-lab">
+      <section class="runs-lab__note">
+        <span class="runs-lab__eyebrow">Runs Lab</span>
+        <h1 class="runs-lab__title">03 Running</h1>
+        <p class="runs-lab__caption">
+          The primary active state. This surface should feel operational, current, and easy to scan
+          when the workflow is doing real work.
+        </p>
+      </section>
+
+      <section class="runs-stage runs-stage--showcase">
+        <section class="run-showcase run-showcase--single" aria-label="Running run state">
+          <article class="run-detail run-detail--running">
+            <header class="run-detail__header">
+              <div class="run-detail__workflow">
+                <span class="run-detail__eyebrow">Live Execution</span>
+                <h2>Refund Alert Pipeline</h2>
+                <p>run_6731 · workspace_1 · version 41</p>
+              </div>
+              <span class="run-detail__status run-detail__status--running">
+                <span class="run-detail__status-dot" aria-hidden="true"></span>
+                Running
+              </span>
+            </header>
+
+            <section class="run-detail__metric-grid" aria-label="Running metrics">
+              <div class="run-metric">
+                <span>Elapsed</span>
+                <strong>38.2s</strong>
+              </div>
+              <div class="run-metric">
+                <span>Completed nodes</span>
+                <strong>4 / 6</strong>
+              </div>
+              <div class="run-metric">
+                <span>Active node</span>
+                <strong>Send Email</strong>
+              </div>
+              <div class="run-metric">
+                <span>Retries</span>
+                <strong>0</strong>
+              </div>
+            </section>
+
+            <section class="run-detail__section">
+              <h3>Node Stream</h3>
+              <div class="run-node-stream">
+                <div class="run-node-stream__item">
+                  <div class="run-node-stream__copy">
+                    <strong>Text Input</strong>
+                    <span>Prepared alert message body with 214 chars.</span>
+                  </div>
+                  <span class="run-phase-pill run-phase-pill--done">Done</span>
+                </div>
+                <div class="run-node-stream__item">
+                  <div class="run-node-stream__copy">
+                    <strong>HTTP API Request</strong>
+                    <span>Fetched refund events from `/v1/refunds?status=failed`.</span>
+                  </div>
+                  <span class="run-phase-pill run-phase-pill--done">Done</span>
+                </div>
+                <div class="run-node-stream__item">
+                  <div class="run-node-stream__copy">
+                    <strong>Conditional</strong>
+                    <span>8 failed refunds crossed the alert threshold.</span>
+                  </div>
+                  <span class="run-phase-pill run-phase-pill--done">Done</span>
+                </div>
+                <div class="run-node-stream__item">
+                  <div class="run-node-stream__copy">
+                    <strong>Send Email</strong>
+                    <span>Opening SMTP session and sending `Refund alert digest`.</span>
+                  </div>
+                  <span class="run-phase-pill run-phase-pill--active">Active</span>
+                </div>
+                <div class="run-node-stream__item">
+                  <div class="run-node-stream__copy">
+                    <strong>Preview Output</strong>
+                    <span>Will collect the final delivery receipt after completion.</span>
+                  </div>
+                  <span class="run-phase-pill run-phase-pill--pending">Pending</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="run-detail__section">
+              <h3>Recent Log Frames</h3>
+              <div class="run-log-list">
+                <div class="run-log-list__item">
+                  <code>[send_email] smtp handshake complete with default_mailer</code>
+                </div>
+                <div class="run-log-list__item">
+                  <code>[send_email] preparing body from upstream input_text output</code>
+                </div>
+                <div class="run-log-list__item">
+                  <code>[send_email] sending to ops@stitchly.dev with subject "Refund alert digest"</code>
+                </div>
+              </div>
+            </section>
+
+            <footer class="run-detail__footer">
+              <div class="run-detail__summary">
+                <strong>The run is in its delivery phase and actively emitting live progress.</strong>
+                <span>The SMTP send is the only active step right now.</span>
+              </div>
+              <div class="run-detail__actions">
+                <button class="run-button" type="button">Open live logs</button>
+                <button class="run-button" type="button">Inspect nodes</button>
+                <button class="run-button run-button--danger" type="button">Cancel run</button>
+              </div>
+            </footer>
+          </article>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>

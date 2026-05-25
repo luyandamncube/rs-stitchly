@@ -112,6 +112,9 @@ Use these docs for these responsibilities:
 - `docs/00_foundation/21_workflow_management_spec.md`
   Draft v1 direction for workflow identity, workflow CRUD behavior, archive model, workflow-state persistence, and explicit workflow routing.
 
+- `docs/00_foundation/22_run_history_and_debugging_spec.md`
+  Draft v1 direction for durable run summaries, stored event history, log persistence, retrieval layering, and simple retention behavior.
+
 - `docs/03_ui/06_workflow_management_ui.md`
   Workflow list, create/open/delete UX, empty states, and how workflow management relates to the canvas route.
 
@@ -137,8 +140,9 @@ When docs overlap, prefer them in this order:
 13. `18_run_lifecycle_and_events.md`
 14. `20_app_auth_and_workspace_spec.md`
 15. `21_workflow_management_spec.md`
-16. `03_ui/06_workflow_management_ui.md`
-17. the remaining foundation and UI docs
+16. `22_run_history_and_debugging_spec.md`
+17. `03_ui/06_workflow_management_ui.md`
+18. the remaining foundation and UI docs
 
 If details are missing:
 

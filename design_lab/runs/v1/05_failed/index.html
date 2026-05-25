@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Runs Lab · Failed</title>
+    <link rel="stylesheet" href="../shared.css" />
+  </head>
+  <body>
+    <main class="runs-lab">
+      <section class="runs-lab__note">
+        <span class="runs-lab__eyebrow">Runs Lab</span>
+        <h1 class="runs-lab__title">05 Failed</h1>
+        <p class="runs-lab__caption">
+          The terminal error state needs stronger diagnosis and retry emphasis without becoming a
+          wall of panic or raw stack traces.
+        </p>
+      </section>
+
+      <section class="runs-stage runs-stage--showcase">
+        <section class="run-showcase run-showcase--single" aria-label="Failed run state">
+          <article class="run-detail run-detail--failed">
+            <header class="run-detail__header">
+              <div class="run-detail__workflow">
+                <span class="run-detail__eyebrow">Terminal Error</span>
+                <h2>Refund Alert Pipeline</h2>
+                <p>run_6733 · workspace_1 · version 41</p>
+              </div>
+              <span class="run-detail__status run-detail__status--failed">
+                <span class="run-detail__status-dot" aria-hidden="true"></span>
+                Failed
+              </span>
+            </header>
+
+            <section class="run-detail__metric-grid" aria-label="Failed metrics">
+              <div class="run-metric">
+                <span>Duration</span>
+                <strong>29.3s</strong>
+              </div>
+              <div class="run-metric">
+                <span>Completed nodes</span>
+                <strong>4 / 6</strong>
+              </div>
+              <div class="run-metric">
+                <span>Failed node</span>
+                <strong>Send Email</strong>
+              </div>
+              <div class="run-metric">
+                <span>Retry count</span>
+                <strong>1 / 3</strong>
+              </div>
+            </section>
+
+            <section class="run-detail__section">
+              <h3>Failure Summary</h3>
+              <div class="run-callout run-callout--failed">
+                <strong>SMTP provider rejected the delivery handshake.</strong>
+                <p>
+                  The workflow reached the send phase, retried once, and then exited after the
+                  provider returned a `421 Temporary channel unavailable` response twice in a row.
+                </p>
+              </div>
+            </section>
+
+            <section class="run-detail__section">
+              <h3>Failure Point</h3>
+              <div class="run-node-stream">
+                <div class="run-node-stream__item">
+                  <div class="run-node-stream__copy">
+                    <strong>Conditional</strong>
+                    <span>8 refund events passed the threshold check.</span>
+                  </div>
+                  <span class="run-phase-pill run-phase-pill--done">Done</span>
+                </div>
+                <div class="run-node-stream__item">
+                  <div class="run-node-stream__copy">
+                    <strong>Send Email</strong>
+                    <span>Failed during outbound delivery handshake after one retry.</span>
+                  </div>
+                  <span class="run-phase-pill run-phase-pill--error">Failed</span>
+                </div>
+                <div class="run-node-stream__item">
+                  <div class="run-node-stream__copy">
+                    <strong>Preview Output</strong>
+                    <span>Never executed because the delivery node terminated the run.</span>
+                  </div>
+                  <span class="run-phase-pill run-phase-pill--pending">Skipped</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="run-detail__section">
+              <h3>Recent Log Frames</h3>
+              <div class="run-log-list">
+                <div class="run-log-list__item">
+                  <code>[send_email] attempt 1 failed with 421 Temporary channel unavailable</code>
+                </div>
+                <div class="run-log-list__item">
+                  <code>[send_email] retry budget decremented, waiting 2.0s before retry</code>
+                </div>
+                <div class="run-log-list__item">
+                  <code>[send_email] attempt 2 failed, terminal delivery handshake error</code>
+                </div>
+              </div>
+            </section>
+
+            <footer class="run-detail__footer">
+              <div class="run-detail__summary">
+                <strong>The run failed late enough that most of the graph already completed.</strong>
+                <span>Retry and diagnosis are the main actions from here.</span>
+              </div>
+              <div class="run-detail__actions">
+                <button class="run-button" type="button">Inspect failure</button>
+                <button class="run-button" type="button">Open logs</button>
+                <button class="run-button run-button--danger" type="button">Retry run</button>
+              </div>
+            </footer>
+          </article>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Runs Lab · Planning</title>
+    <link rel="stylesheet" href="../shared.css" />
+  </head>
+  <body>
+    <main class="runs-lab">
+      <section class="runs-lab__note">
+        <span class="runs-lab__eyebrow">Runs Lab</span>
+        <h1 class="runs-lab__title">02 Planning</h1>
+        <p class="runs-lab__caption">
+          Planning is a distinct technical state before node execution begins. It needs to feel
+          live, but calmer and more setup-oriented than `running`.
+        </p>
+      </section>
+
+      <section class="runs-stage runs-stage--showcase">
+        <section class="run-showcase run-showcase--single" aria-label="Planning run state">
+          <article class="run-detail run-detail--planning">
+            <header class="run-detail__header">
+              <div class="run-detail__workflow">
+                <span class="run-detail__eyebrow">Preparation</span>
+                <h2>Customer Risk Monitor</h2>
+                <p>run_6730 · workspace_1 · version 41</p>
+              </div>
+              <span class="run-detail__status run-detail__status--planning">
+                <span class="run-detail__status-dot" aria-hidden="true"></span>
+                Planning
+              </span>
+            </header>
+
+            <section class="run-detail__metric-grid" aria-label="Planning metrics">
+              <div class="run-metric">
+                <span>Elapsed</span>
+                <strong>6.4s</strong>
+              </div>
+              <div class="run-metric">
+                <span>Completed phases</span>
+                <strong>3 / 5</strong>
+              </div>
+              <div class="run-metric">
+                <span>Connections</span>
+                <strong>2 resolved</strong>
+              </div>
+              <div class="run-metric">
+                <span>Graph hash</span>
+                <strong>3c91d4</strong>
+              </div>
+            </section>
+
+            <section class="run-detail__section">
+              <h3>Planning Phases</h3>
+              <div class="run-phase-list">
+                <div class="run-phase-list__item">
+                  <div class="run-phase-list__item-copy">
+                    <strong>Validate workflow schema</strong>
+                    <span>Ports, config payloads, and node registry checks passed.</span>
+                  </div>
+                  <span class="run-phase-pill run-phase-pill--done">Done</span>
+                </div>
+                <div class="run-phase-list__item">
+                  <div class="run-phase-list__item-copy">
+                    <strong>Resolve workspace secrets</strong>
+                    <span>Mailer and warehouse connections have been loaded.</span>
+                  </div>
+                  <span class="run-phase-pill run-phase-pill--done">Done</span>
+                </div>
+                <div class="run-phase-list__item">
+                  <div class="run-phase-list__item-copy">
+                    <strong>Compile execution graph</strong>
+                    <span>Deterministic node order and edges are now locked in.</span>
+                  </div>
+                  <span class="run-phase-pill run-phase-pill--done">Done</span>
+                </div>
+                <div class="run-phase-list__item">
+                  <div class="run-phase-list__item-copy">
+                    <strong>Warm runtime adapters</strong>
+                    <span>Preparing the email adapter and loading guardrail rules.</span>
+                  </div>
+                  <span class="run-phase-pill run-phase-pill--active">Active</span>
+                </div>
+                <div class="run-phase-list__item">
+                  <div class="run-phase-list__item-copy">
+                    <strong>Hand off to execution</strong>
+                    <span>Node execution will begin once the runtime sandbox is ready.</span>
+                  </div>
+                  <span class="run-phase-pill run-phase-pill--pending">Pending</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="run-detail__section">
+              <h3>Planner Notes</h3>
+              <div class="run-log-list">
+                <div class="run-log-list__item">
+                  <code>[planner] workflow schema validated against registry v14</code>
+                </div>
+                <div class="run-log-list__item">
+                  <code>[planner] resolved connection default_mailer in 180ms</code>
+                </div>
+                <div class="run-log-list__item">
+                  <code>[planner] warming outbound email adapter and retry budget</code>
+                </div>
+              </div>
+            </section>
+
+            <footer class="run-detail__footer">
+              <div class="run-detail__summary">
+                <strong>Graph setup is nearly complete, but no business nodes have executed yet.</strong>
+                <span>Planning remains a distinct technical stage before active work begins.</span>
+              </div>
+              <div class="run-detail__actions">
+                <button class="run-button" type="button">Open planner log</button>
+                <button class="run-button run-button--danger" type="button">Cancel run</button>
+              </div>
+            </footer>
+          </article>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>

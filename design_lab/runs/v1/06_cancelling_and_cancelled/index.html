@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Runs Lab · Cancelling And Cancelled</title>
+    <link rel="stylesheet" href="../shared.css" />
+  </head>
+  <body>
+    <main class="runs-lab">
+      <section class="runs-lab__note">
+        <span class="runs-lab__eyebrow">Runs Lab</span>
+        <h1 class="runs-lab__title">06 Cancelling And Cancelled</h1>
+        <p class="runs-lab__caption">
+          Interruption states belong together, but `cancelling` should still feel active while
+          `cancelled` reads as a neutral terminal stop rather than a full error.
+        </p>
+      </section>
+
+      <section class="runs-stage runs-stage--showcase">
+        <section class="run-showcase run-showcase--split" aria-label="Cancelling and cancelled run states">
+          <article class="run-detail run-detail--cancelling">
+            <header class="run-detail__header">
+              <div class="run-detail__workflow">
+                <span class="run-detail__eyebrow">Interruption</span>
+                <h2>Inventory Backfill</h2>
+                <p>run_6734 · workspace_1 · version 9</p>
+              </div>
+              <span class="run-detail__status run-detail__status--cancelling">
+                <span class="run-detail__status-dot" aria-hidden="true"></span>
+                Cancelling
+              </span>
+            </header>
+
+            <section class="run-detail__metric-grid" aria-label="Cancelling metrics">
+              <div class="run-metric">
+                <span>Stop requested</span>
+                <strong>7s ago</strong>
+              </div>
+              <div class="run-metric">
+                <span>Completed nodes</span>
+                <strong>5 / 8</strong>
+              </div>
+              <div class="run-metric">
+                <span>Active cleanup</span>
+                <strong>2 tasks</strong>
+              </div>
+              <div class="run-metric">
+                <span>Partial outputs</span>
+                <strong>1 saved</strong>
+              </div>
+            </section>
+
+            <section class="run-detail__section">
+              <h3>Shutdown Work</h3>
+              <div class="run-phase-list">
+                <div class="run-phase-list__item">
+                  <div class="run-phase-list__item-copy">
+                    <strong>Stop new node dispatch</strong>
+                    <span>No further node executions will begin from this point.</span>
+                  </div>
+                  <span class="run-phase-pill run-phase-pill--done">Done</span>
+                </div>
+                <div class="run-phase-list__item">
+                  <div class="run-phase-list__item-copy">
+                    <strong>Drain outbound warehouse writer</strong>
+                    <span>Flushing an in-flight batch to avoid partial write corruption.</span>
+                  </div>
+                  <span class="run-phase-pill run-phase-pill--active">Active</span>
+                </div>
+                <div class="run-phase-list__item">
+                  <div class="run-phase-list__item-copy">
+                    <strong>Persist partial outputs</strong>
+                    <span>Saving the current reconciliation preview before the run stops.</span>
+                  </div>
+                  <span class="run-phase-pill run-phase-pill--active">Active</span>
+                </div>
+              </div>
+            </section>
+
+            <footer class="run-detail__footer">
+              <div class="run-detail__summary">
+                <strong>The run is actively unwinding and has not reached a terminal state yet.</strong>
+                <span>Cancellation is in progress, not complete.</span>
+              </div>
+              <div class="run-detail__actions">
+                <button class="run-button" type="button">Open cleanup log</button>
+                <button class="run-button run-button--danger" type="button">Force terminate</button>
+              </div>
+            </footer>
+          </article>
+
+          <article class="run-detail run-detail--cancelled">
+            <header class="run-detail__header">
+              <div class="run-detail__workflow">
+                <span class="run-detail__eyebrow">Interrupted</span>
+                <h2>Inventory Backfill</h2>
+                <p>run_6735 · workspace_1 · version 9</p>
+              </div>
+              <span class="run-detail__status run-detail__status--cancelled">
+                <span class="run-detail__status-dot" aria-hidden="true"></span>
+                Cancelled
+              </span>
+            </header>
+
+            <section class="run-detail__metric-grid" aria-label="Cancelled metrics">
+              <div class="run-metric">
+                <span>Stopped at</span>
+                <strong>11:41:19</strong>
+              </div>
+              <div class="run-metric">
+                <span>Completed nodes</span>
+                <strong>5 / 8</strong>
+              </div>
+              <div class="run-metric">
+                <span>Requested by</span>
+                <strong>Alex A.</strong>
+              </div>
+              <div class="run-metric">
+                <span>Partial outputs</span>
+                <strong>1 saved</strong>
+              </div>
+            </section>
+
+            <section class="run-detail__section">
+              <h3>Cancellation Summary</h3>
+              <div class="run-callout">
+                <strong>The run stopped on request before reaching normal completion.</strong>
+                <p>
+                  Cleanup finished successfully, no additional nodes were dispatched, and the latest
+                  partial preview was preserved for inspection.
+                </p>
+              </div>
+            </section>
+
+            <section class="run-detail__section">
+              <h3>Partial Outputs</h3>
+              <div class="run-output-list">
+                <div class="run-output-list__item">
+                  <div class="run-output-list__copy">
+                    <strong>Warehouse preview snapshot</strong>
+                    <span>Last consistent preview saved before shutdown completed.</span>
+                  </div>
+                  <span class="run-phase-pill run-phase-pill--done">Stored</span>
+                </div>
+                <div class="run-output-list__item">
+                  <div class="run-output-list__copy">
+                    <strong>Remaining nodes</strong>
+                    <span>Three downstream publish nodes never executed.</span>
+                  </div>
+                  <span class="run-phase-pill run-phase-pill--pending">Not run</span>
+                </div>
+              </div>
+            </section>
+
+            <footer class="run-detail__footer">
+              <div class="run-detail__summary">
+                <strong>The interruption is complete and the run is now terminal.</strong>
+                <span>This should feel calmer and more neutral than a true failure.</span>
+              </div>
+              <div class="run-detail__actions">
+                <button class="run-button" type="button">Inspect partials</button>
+                <button class="run-button run-button--accent" type="button">Duplicate and rerun</button>
+              </div>
+            </footer>
+          </article>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>

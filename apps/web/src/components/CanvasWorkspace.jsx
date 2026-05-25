@@ -742,6 +742,28 @@ export default function CanvasWorkspace({
         <CanvasNodeManagementPanel
           definition={selectedDefinition}
           node={selectedNode}
+          onNodeConfigChange={(nextConfigUpdater) => {
+            if (!selectedNode) {
+              return;
+            }
+
+            const currentConfig = selectedNode.config ?? {};
+            const nextConfig =
+              typeof nextConfigUpdater === 'function'
+                ? nextConfigUpdater(currentConfig)
+                : nextConfigUpdater;
+
+            applyWorkflowChange(updateNodeConfig(workflow, selectedNode.node_id, nextConfig));
+          }}
+          onNodeLabelChange={(nextLabel) => {
+            if (!selectedNode) {
+              return;
+            }
+
+            applyWorkflowChange(updateNodeLabel(workflow, selectedNode.node_id, nextLabel));
+          }}
+          workflow={workflow}
+          workflowSyncState={workflowSyncState}
         />
       ) : null}
 
@@ -1170,7 +1192,39 @@ function CanvasViewportControls({
   );
 }
 
-function CanvasNodeManagementPanel({ definition, node }) {
+function CanvasNodeManagementPanel({
+  definition,
+  node,
+  onNodeConfigChange,
+  onNodeLabelChange,
+  workflow,
+  workflowSyncState = 'local'
+}) {
+  if (node?.type_id === 'send_email') {
+    return (
+      <CanvasSendEmailManagementPanel
+        definition={definition}
+        node={node}
+        onNodeConfigChange={onNodeConfigChange}
+        onNodeLabelChange={onNodeLabelChange}
+        workflow={workflow}
+        workflowSyncState={workflowSyncState}
+      />
+    );
+  }
+
+  if (node?.type_id === 'text_input') {
+    return (
+      <CanvasTextInputManagementPanel
+        definition={definition}
+        node={node}
+        onNodeConfigChange={onNodeConfigChange}
+        onNodeLabelChange={onNodeLabelChange}
+        workflowSyncState={workflowSyncState}
+      />
+    );
+  }
+
   const model = buildCanvasNodeManagementModel(node, definition);
 
   return (
@@ -1258,6 +1312,382 @@ function CanvasNodeManagementPanel({ definition, node }) {
         <button className="canvas-node-panel__action" type="button">
           <span aria-hidden="true">→</span>
           <span>{model.actionLabel}</span>
+        </button>
+      </footer>
+    </aside>
+  );
+}
+
+function CanvasSendEmailManagementPanel({
+  definition,
+  node,
+  onNodeConfigChange,
+  onNodeLabelChange,
+  workflow,
+  workflowSyncState = 'local'
+}) {
+  const config = normalizeSendEmailPanelConfig(node, workflow);
+  const connectionOptions = buildSendEmailConnectionOptions(config.connection_id);
+
+  return (
+    <aside className="canvas-node-panel" aria-label="Node management panel">
+      <header className="canvas-node-panel__header">
+        <div className="canvas-node-panel__title-group">
+          <span className="canvas-node-panel__title-icon" aria-hidden="true">
+            @
+          </span>
+          <div className="canvas-node-panel__title-copy">
+            <strong>{node?.label ?? definition?.display_name ?? 'Send Email'}</strong>
+            <code className="canvas-node-panel__title-subtitle">
+              {node?.node_id ?? 'send_email'}
+            </code>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__header-meta">
+          <span className="canvas-node-panel__meta-dot" aria-hidden="true" />
+          <span>{definition?.inputs?.length === 1 ? '1 input' : `${definition?.inputs?.length ?? 0} inputs`}</span>
+        </div>
+      </header>
+
+      <section className="canvas-node-panel__section">
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-send-email-label">Label</label>
+          </div>
+          <input
+            id="canvas-send-email-label"
+            className="canvas-node-panel__input"
+            onChange={(event) => onNodeLabelChange?.(event.target.value)}
+            type="text"
+            value={node?.label ?? ''}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-send-email-to">To</label>
+          </div>
+          <input
+            id="canvas-send-email-to"
+            className="canvas-node-panel__input"
+            onChange={(event) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applySendEmailConfigUpdate(currentConfig, {
+                  to: event.target.value
+                })
+              )
+            }
+            type="text"
+            value={config.to}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-send-email-subject">Subject</label>
+          </div>
+          <input
+            id="canvas-send-email-subject"
+            className="canvas-node-panel__input"
+            onChange={(event) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applySendEmailConfigUpdate(currentConfig, {
+                  subject: event.target.value
+                })
+              )
+            }
+            type="text"
+            value={config.subject}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-send-email-body-mode">Body source</label>
+            <span className="canvas-node-panel__hint" aria-hidden="true">
+              i
+            </span>
+          </div>
+          <div className="canvas-node-panel__select-wrap">
+            <select
+              id="canvas-send-email-body-mode"
+              className="canvas-node-panel__select"
+              onChange={(event) =>
+                onNodeConfigChange?.((currentConfig) =>
+                  applySendEmailConfigUpdate(currentConfig, {
+                    body_mode: event.target.value
+                  })
+                )
+              }
+              value={config.body_mode}
+            >
+              <option value="input">From input</option>
+              <option value="custom">Custom text</option>
+            </select>
+            <span className="canvas-node-panel__caret" aria-hidden="true">
+              ⌄
+            </span>
+          </div>
+        </div>
+
+        {config.body_mode === 'custom' ? (
+          <div className="canvas-node-panel__field">
+            <div className="canvas-node-panel__field-head">
+              <label htmlFor="canvas-send-email-body">Custom body</label>
+            </div>
+            <textarea
+              id="canvas-send-email-body"
+              className="canvas-node-panel__textarea"
+              onChange={(event) =>
+                onNodeConfigChange?.((currentConfig) =>
+                  applySendEmailConfigUpdate(currentConfig, {
+                    body_text: event.target.value
+                  })
+                )
+              }
+              rows={5}
+              value={config.body_text}
+            />
+          </div>
+        ) : null}
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-send-email-connection">Connection</label>
+          </div>
+          <div className="canvas-node-panel__select-wrap">
+            <select
+              id="canvas-send-email-connection"
+              className="canvas-node-panel__select"
+              onChange={(event) =>
+                onNodeConfigChange?.((currentConfig) =>
+                  applySendEmailConfigUpdate(currentConfig, {
+                    connection_id: event.target.value
+                  })
+                )
+              }
+              value={config.connection_id}
+            >
+              {connectionOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <span className="canvas-node-panel__caret" aria-hidden="true">
+              ⌄
+            </span>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label>Format</label>
+          </div>
+          <div className="canvas-node-panel__segmented" aria-label="Message format">
+            <button
+              className={`canvas-node-panel__segment${
+                config.content_type === 'text/plain' ? ' is-active' : ''
+              }`}
+              onClick={() =>
+                onNodeConfigChange?.((currentConfig) =>
+                  applySendEmailConfigUpdate(currentConfig, {
+                    content_type: 'text/plain'
+                  })
+                )
+              }
+              type="button"
+            >
+              Plain text
+            </button>
+            <button
+              className={`canvas-node-panel__segment${
+                config.content_type === 'text/html' ? ' is-active' : ''
+              }`}
+              onClick={() =>
+                onNodeConfigChange?.((currentConfig) =>
+                  applySendEmailConfigUpdate(currentConfig, {
+                    content_type: 'text/html'
+                  })
+                )
+              }
+              type="button"
+            >
+              HTML
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <footer className="canvas-node-panel__footer">
+        <p className="canvas-node-panel__footer-eyebrow">Current workflow</p>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Autosave</span>
+          <strong>Enabled</strong>
+        </div>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Node ID</span>
+          <strong>{node?.node_id ?? 'send_email'}</strong>
+        </div>
+
+        <button className="canvas-node-panel__action" type="button">
+          <span aria-hidden="true">→</span>
+          <span>{workflowSyncStateLabel(workflowSyncState)}</span>
+        </button>
+      </footer>
+    </aside>
+  );
+}
+
+function CanvasTextInputManagementPanel({
+  definition,
+  node,
+  onNodeConfigChange,
+  onNodeLabelChange,
+  workflowSyncState = 'local'
+}) {
+  const config = normalizeTextInputPanelConfig(node);
+
+  return (
+    <aside className="canvas-node-panel" aria-label="Node management panel">
+      <header className="canvas-node-panel__header">
+        <div className="canvas-node-panel__title-group">
+          <span className="canvas-node-panel__title-icon" aria-hidden="true">
+            T
+          </span>
+          <div className="canvas-node-panel__title-copy">
+            <strong>{node?.label ?? definition?.display_name ?? 'Text Input'}</strong>
+            <code className="canvas-node-panel__title-subtitle">
+              {node?.node_id ?? 'text_input'}
+            </code>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__header-meta">
+          <span className="canvas-node-panel__meta-dot" aria-hidden="true" />
+          <span>{definition?.outputs?.length === 1 ? '1 output' : `${definition?.outputs?.length ?? 0} outputs`}</span>
+        </div>
+      </header>
+
+      <section className="canvas-node-panel__section">
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-text-input-label">Label</label>
+          </div>
+          <input
+            id="canvas-text-input-label"
+            className="canvas-node-panel__input"
+            onChange={(event) => onNodeLabelChange?.(event.target.value)}
+            type="text"
+            value={node?.label ?? ''}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-text-input-text">Text</label>
+          </div>
+          <textarea
+            id="canvas-text-input-text"
+            className="canvas-node-panel__textarea canvas-node-panel__textarea--tall"
+            onChange={(event) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyTextInputConfigUpdate(currentConfig, {
+                  text: event.target.value
+                })
+              )
+            }
+            rows={7}
+            value={config.text}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-text-input-trim-mode">Trim mode</label>
+            <span className="canvas-node-panel__hint" aria-hidden="true">
+              i
+            </span>
+          </div>
+          <div className="canvas-node-panel__select-wrap">
+            <select
+              id="canvas-text-input-trim-mode"
+              className="canvas-node-panel__select"
+              onChange={(event) =>
+                onNodeConfigChange?.((currentConfig) =>
+                  applyTextInputConfigUpdate(currentConfig, {
+                    trim_mode: event.target.value
+                  })
+                )
+              }
+              value={config.trim_mode}
+            >
+              <option value="automatic">Automatic</option>
+              <option value="trim">Trim edges</option>
+              <option value="exact">Keep exact</option>
+            </select>
+            <span className="canvas-node-panel__caret" aria-hidden="true">
+              ⌄
+            </span>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__toggle-row">
+          <label className="canvas-node-panel__checkbox">
+            <input
+              checked={config.preserve_whitespace}
+              onChange={(event) =>
+                onNodeConfigChange?.((currentConfig) =>
+                  applyTextInputConfigUpdate(currentConfig, {
+                    preserve_whitespace: event.target.checked
+                  })
+                )
+              }
+              type="checkbox"
+            />
+            <span className="canvas-node-panel__checkmark" aria-hidden="true" />
+            <span>Preserve whitespace</span>
+          </label>
+        </div>
+
+        <div className="canvas-node-panel__toggle-row">
+          <label className="canvas-node-panel__checkbox">
+            <input
+              checked={config.include_line_breaks}
+              onChange={(event) =>
+                onNodeConfigChange?.((currentConfig) =>
+                  applyTextInputConfigUpdate(currentConfig, {
+                    include_line_breaks: event.target.checked
+                  })
+                )
+              }
+              type="checkbox"
+            />
+            <span className="canvas-node-panel__checkmark" aria-hidden="true" />
+            <span>Include line breaks</span>
+          </label>
+        </div>
+      </section>
+
+      <footer className="canvas-node-panel__footer">
+        <p className="canvas-node-panel__footer-eyebrow">Current workflow</p>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Autosave</span>
+          <strong>Enabled</strong>
+        </div>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Length</span>
+          <strong>{`${config.text.length} chars`}</strong>
+        </div>
+
+        <button className="canvas-node-panel__action" type="button">
+          <span aria-hidden="true">→</span>
+          <span>{workflowSyncStateLabel(workflowSyncState)}</span>
         </button>
       </footer>
     </aside>
@@ -1749,6 +2179,158 @@ function buildCanvasNodeManagementModel(node, definition) {
   };
 }
 
+function normalizeSendEmailPanelConfig(node, workflow) {
+  const config = node?.config ?? {};
+  const hasIncomingBody = hasInputConnection(workflow, node?.node_id, 'body');
+  const inferredBodyMode =
+    config.body_mode === 'custom' || config.body_mode === 'input'
+      ? config.body_mode
+      : hasIncomingBody
+        ? 'input'
+        : typeof config.body === 'string' && config.body.trim()
+          ? 'custom'
+          : 'input';
+
+  return {
+    body: typeof config.body === 'string' ? config.body : '',
+    body_mode: inferredBodyMode,
+    body_text:
+      typeof config.body_text === 'string'
+        ? config.body_text
+        : typeof config.body === 'string'
+          ? config.body
+          : '',
+    connection_id:
+      typeof config.connection_id === 'string' && config.connection_id.trim()
+        ? config.connection_id
+        : 'default_mailer',
+    content_type:
+      config.content_type === 'text/html' ? 'text/html' : 'text/plain',
+    subject: typeof config.subject === 'string' ? config.subject : '',
+    to: typeof config.to === 'string' ? config.to : ''
+  };
+}
+
+function normalizeTextInputPanelConfig(node) {
+  const config = node?.config ?? {};
+
+  return {
+    include_line_breaks:
+      typeof config.include_line_breaks === 'boolean'
+        ? config.include_line_breaks
+        : true,
+    preserve_whitespace:
+      typeof config.preserve_whitespace === 'boolean'
+        ? config.preserve_whitespace
+        : true,
+    text: typeof config.text === 'string' ? config.text : '',
+    trim_mode:
+      config.trim_mode === 'trim' || config.trim_mode === 'exact'
+        ? config.trim_mode
+        : 'automatic'
+  };
+}
+
+function applySendEmailConfigUpdate(currentConfig = {}, patch = {}) {
+  const next = {
+    ...normalizeSendEmailPanelConfig({ config: currentConfig }, null),
+    ...currentConfig,
+    ...patch
+  };
+
+  const normalizedBodyText =
+    typeof next.body_text === 'string'
+      ? next.body_text
+      : typeof next.body === 'string'
+        ? next.body
+        : '';
+
+  return {
+    ...next,
+    body: normalizedBodyText,
+    body_mode: next.body_mode === 'custom' ? 'custom' : 'input',
+    body_text: normalizedBodyText,
+    connection_id:
+      typeof next.connection_id === 'string' && next.connection_id.trim()
+        ? next.connection_id
+        : 'default_mailer',
+    content_type: next.content_type === 'text/html' ? 'text/html' : 'text/plain',
+    subject: typeof next.subject === 'string' ? next.subject : '',
+    to: typeof next.to === 'string' ? next.to : ''
+  };
+}
+
+function applyTextInputConfigUpdate(currentConfig = {}, patch = {}) {
+  const next = {
+    ...normalizeTextInputPanelConfig({ config: currentConfig }),
+    ...currentConfig,
+    ...patch
+  };
+
+  return {
+    ...next,
+    include_line_breaks:
+      typeof next.include_line_breaks === 'boolean'
+        ? next.include_line_breaks
+        : true,
+    preserve_whitespace:
+      typeof next.preserve_whitespace === 'boolean'
+        ? next.preserve_whitespace
+        : true,
+    text: typeof next.text === 'string' ? next.text : '',
+    trim_mode:
+      next.trim_mode === 'trim' || next.trim_mode === 'exact'
+        ? next.trim_mode
+        : 'automatic'
+  };
+}
+
+function buildSendEmailConnectionOptions(activeConnectionId) {
+  const options = [
+    {
+      label: 'Default workspace mailer',
+      value: 'default_mailer'
+    }
+  ];
+
+  if (
+    activeConnectionId &&
+    !options.some((option) => option.value === activeConnectionId)
+  ) {
+    options.push({
+      label: activeConnectionId,
+      value: activeConnectionId
+    });
+  }
+
+  return options;
+}
+
+function hasInputConnection(workflow, nodeId, portId) {
+  if (!workflow || !nodeId || !portId) {
+    return false;
+  }
+
+  return workflow.edges.some(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === portId
+  );
+}
+
+function workflowSyncStateLabel(syncState) {
+  switch (syncState) {
+    case 'saving':
+      return 'Saving…';
+    case 'synced':
+      return 'Saved to workflow';
+    case 'offline':
+      return 'Save unavailable';
+    case 'loading':
+      return 'Loading workflow…';
+    default:
+      return 'Local draft';
+  }
+}
+
 function appendCanvasNode(workflow, typeId, options = {}) {
   const { position = null, selectedNodeId = null } = options;
 
@@ -1772,8 +2354,18 @@ function appendCanvasNode(workflow, typeId, options = {}) {
     label: typeId === 'text_input' ? 'Text Input' : 'Send Email',
     config:
       typeId === 'text_input'
-        ? { text: 'Draft the next message body here.' }
+        ? {
+            include_line_breaks: true,
+            preserve_whitespace: true,
+            text: 'Draft the next message body here.',
+            trim_mode: 'automatic'
+          }
         : {
+            body: '',
+            body_mode: 'input',
+            body_text: '',
+            connection_id: 'default_mailer',
+            content_type: 'text/plain',
             to: 'ops@stitchly.dev',
             subject: 'New workflow alert'
           },

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   BrowserRouter,
   Link,
@@ -19,6 +19,7 @@ import {
   getWorkflows,
   getWorkspaceRuns,
   login,
+  loginWithGoogleCode,
   logout,
   updateWorkflow,
   updateWorkflowState
@@ -69,6 +70,9 @@ const APP_SCREENS = [
 ];
 
 const SIDEBAR_SCREEN_IDS = new Set(['workflows', 'canvas', 'runs']);
+const GOOGLE_CLIENT_ID =
+  import.meta.env.VITE_GOOGLE_CLIENT_ID ??
+  (import.meta.env.MODE === 'test' ? 'test-google-client-id' : '');
 
 const NODE_SHELF_GROUPS = [
   {
@@ -208,6 +212,12 @@ export default function App() {
     return session;
   }
 
+  async function handleGoogleLogin(code) {
+    const session = normalizeSession(await loginWithGoogleCode(code));
+    setSessionState({ status: 'ready', session });
+    return session;
+  }
+
   async function handleLogout() {
     await logout();
     setSessionState({ status: 'ready', session: UNAUTHENTICATED_SESSION });
@@ -225,6 +235,7 @@ export default function App() {
     <BrowserRouter>
       <AppRoutes
         onCreateWorkspaceComplete={handleRefreshSession}
+        onGoogleLogin={handleGoogleLogin}
         onLogin={handleLogin}
         onLogout={handleLogout}
         onRefreshSession={handleRefreshSession}
@@ -240,6 +251,7 @@ export default function App() {
 
 function AppRoutes({
   onCreateWorkspaceComplete,
+  onGoogleLogin,
   onLogin,
   onLogout,
   onRefreshSession,
@@ -257,7 +269,7 @@ function AppRoutes({
           session.authenticated ? (
             <Navigate replace to={getDefaultAppPath(session)} />
           ) : (
-            <LoginRoute onLogin={onLogin} />
+            <LoginRoute onGoogleLogin={onGoogleLogin} onLogin={onLogin} />
           )
         }
       />
@@ -474,6 +486,10 @@ function WorkspaceScreenRoute({
     return <Navigate replace to={getDefaultAppPath(session)} />;
   }
 
+  if (resolvedScreenId === 'workflows') {
+    return <Navigate replace to={buildCanvasHomePath(activeWorkspace.slug)} />;
+  }
+
   const activeScreen = APP_SCREENS.find((screen) => screen.id === resolvedScreenId);
   if (!activeScreen) {
     return <Navigate replace to={buildCanvasHomePath(activeWorkspace.slug)} />;
@@ -517,6 +533,7 @@ function ProductShell({
   setViewMode,
   viewMode
 }) {
+  const navigate = useNavigate();
   const isCanvasRoute = activeScreen.id === 'canvas';
   const [activeCanvasMenuId, setActiveCanvasMenuId] = useState(null);
   const [draggedCanvasNodeType, setDraggedCanvasNodeType] = useState(null);
@@ -525,6 +542,7 @@ function ProductShell({
   const activeCanvasShelfGroup =
     NODE_SHELF_GROUPS.find((group) => group.id === activeCanvasMenuId) ?? null;
   const isCanvasBrandMenuOpen = activeCanvasMenuId === 'brand';
+  const isCanvasWorkspacePanelOpen = activeCanvasMenuId === 'workspace';
   const isCanvasWorkflowPanelOpen = activeCanvasMenuId === 'workflows';
   const isSidebarCollapsedEffective = true;
 
@@ -565,9 +583,35 @@ function ProductShell({
     }
   }
 
-  async function handleCanvasOpenWorkflow(workflowId) {
-    await updateWorkflowState(activeWorkspace.workspace_id, workflowId).catch(() => {});
+  async function handleCanvasOpenWorkflow(
+    workflowId,
+    workspaceId = activeWorkspace.workspace_id
+  ) {
+    await updateWorkflowState(workspaceId, workflowId).catch(() => {});
     onCanvasOpenWorkflow?.(workflowId);
+    setActiveCanvasMenuId(null);
+  }
+
+  async function handleCanvasManagedWorkflowCreate(mode) {
+    const workflow =
+      mode === 'starter'
+        ? buildStarterWorkflowDefinition()
+        : buildBlankWorkflowDefinition();
+    const response = await createWorkflow(activeWorkspace.workspace_id, workflow);
+    await updateWorkflowState(activeWorkspace.workspace_id, response.workflow.workflow_id).catch(
+      () => {}
+    );
+    onCanvasOpenWorkflow?.(response.workflow.workflow_id);
+    return response.workflow;
+  }
+
+  function handleCanvasOpenWorkspace(workspaceSlug) {
+    navigate(buildCanvasHomePath(workspaceSlug));
+    setActiveCanvasMenuId(null);
+  }
+
+  function handleCanvasCreateWorkspace() {
+    navigate('/workspaces/new');
     setActiveCanvasMenuId(null);
   }
 
@@ -588,10 +632,14 @@ function ProductShell({
             groups={NODE_SHELF_GROUPS}
             isCreatingWorkflow={isCreatingCanvasWorkflow}
             isBrandMenuOpen={isCanvasBrandMenuOpen}
+            isWorkspacePanelOpen={isCanvasWorkspacePanelOpen}
             isWorkflowPanelOpen={isCanvasWorkflowPanelOpen}
             onAddNode={handleCanvasNodeAdd}
             onBrandToggle={() => handleCanvasMenuToggle('brand')}
+            onCreateWorkspace={handleCanvasCreateWorkspace}
+            onCreateManagedWorkflow={handleCanvasManagedWorkflowCreate}
             onCreateWorkflow={handleCanvasNewWorkflow}
+            onOpenWorkspace={handleCanvasOpenWorkspace}
             onOpenWorkflow={handleCanvasOpenWorkflow}
             onNodeDragEnd={() => {
               setDraggedCanvasNodeType(null);
@@ -600,7 +648,9 @@ function ProductShell({
             onNodeDragStart={setDraggedCanvasNodeType}
             onShelfToggle={handleCanvasMenuToggle}
             onSignOut={onLogout}
+            onWorkspaceToggle={() => handleCanvasMenuToggle('workspace')}
             onWorkflowToggle={() => handleCanvasMenuToggle('workflows')}
+            workspaces={session.workspaces}
           />
         ) : (
           <aside
@@ -835,21 +885,30 @@ function CanvasMenuDock({
   groups,
   isCreatingWorkflow = false,
   isBrandMenuOpen = false,
+  isWorkspacePanelOpen = false,
   isWorkflowPanelOpen = false,
   onAddNode,
   onBrandToggle,
+  onCreateWorkspace,
+  onCreateManagedWorkflow,
   onCreateWorkflow,
+  onOpenWorkspace,
   onOpenWorkflow,
   onNodeDragEnd,
   onNodeDragStart,
   onShelfToggle,
   onSignOut,
+  onWorkspaceToggle,
   onWorkflowToggle
+  ,
+  workspaces = []
 }) {
   return (
     <aside
       className={`canvas-menu${
-        activeGroup || isBrandMenuOpen || isWorkflowPanelOpen ? ' is-open' : ''
+        activeGroup || isBrandMenuOpen || isWorkspacePanelOpen || isWorkflowPanelOpen
+          ? ' is-open'
+          : ''
       }`}
       aria-label="Canvas menu"
     >
@@ -871,6 +930,14 @@ function CanvasMenuDock({
             />
           </span>
         </button>
+
+        <CanvasMenuButton
+          icon={<CanvasMenuIcon kind="workspace" />}
+          isActive={isWorkspacePanelOpen}
+          isExpanded={isWorkspacePanelOpen}
+          label="Workspaces"
+          onClick={onWorkspaceToggle}
+        />
 
         <CanvasMenuButton
           icon={<CanvasMenuIcon kind="workflows" />}
@@ -912,14 +979,27 @@ function CanvasMenuDock({
         />
       ) : null}
 
+      {isWorkspacePanelOpen ? (
+        <CanvasWorkspaceDirectoryPanel
+          activeWorkflowId={activeWorkflowId}
+          activeWorkspace={activeWorkspace}
+          onCreateWorkspace={onCreateWorkspace}
+          onOpenWorkspace={onOpenWorkspace}
+          onOpenWorkflow={onOpenWorkflow}
+          workspaces={workspaces}
+        />
+      ) : null}
+
       {isWorkflowPanelOpen ? (
         <CanvasWorkflowMenuPanel
           activeWorkflowId={activeWorkflowId}
           activeWorkspace={activeWorkspace}
+          onCreateWorkflow={onCreateManagedWorkflow}
+          onOpenWorkflow={onOpenWorkflow}
         />
       ) : null}
 
-      {activeGroup && !isWorkflowPanelOpen ? (
+      {activeGroup && !isWorkspacePanelOpen && !isWorkflowPanelOpen ? (
         <CanvasNodeShelfDrawer
           group={activeGroup}
           onAddNode={onAddNode}
@@ -1216,21 +1296,321 @@ function CanvasNodeShelfDrawer({ group, onAddNode, onNodeDragEnd, onNodeDragStar
   );
 }
 
-function CanvasWorkflowMenuPanel({ activeWorkflowId = null, activeWorkspace }) {
-  const workflowItems = [
-    {
-      label: 'Starter workflow',
-      meta: 'Blank + starter entry points'
-    },
-    {
-      label: 'Refund review',
-      meta: 'Ops response and notification flow'
-    },
-    {
-      label: 'Billing sync',
-      meta: 'Scheduled compute + output chain'
+function CanvasWorkspaceDirectoryPanel({
+  activeWorkflowId = null,
+  activeWorkspace,
+  onCreateWorkspace,
+  onOpenWorkspace,
+  onOpenWorkflow,
+  workspaces = []
+}) {
+  const [directoryState, setDirectoryState] = useState({
+    error: '',
+    status: 'loading',
+    workspaceEntries: []
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function hydrate() {
+      const workspaceEntries = await Promise.all(
+        workspaces.map(async (workspace) => {
+          const response = await getWorkflows(workspace.workspace_id);
+          const workflows = [...(response.workflows ?? [])]
+            .sort((left, right) => {
+              const leftTime = Date.parse(left.updated_at ?? '') || 0;
+              const rightTime = Date.parse(right.updated_at ?? '') || 0;
+              return rightTime - leftTime;
+            })
+            .slice(0, 10);
+
+          return {
+            workspace,
+            workflows
+          };
+        })
+      );
+
+      if (cancelled) {
+        return;
+      }
+
+      setDirectoryState({
+        error: '',
+        status: 'ready',
+        workspaceEntries
+      });
     }
-  ];
+
+    setDirectoryState((current) => ({
+      ...current,
+      error: '',
+      status: current.workspaceEntries.length ? 'refreshing' : 'loading'
+    }));
+
+    hydrate().catch((error) => {
+      if (!cancelled) {
+        setDirectoryState({
+          error: error.message ?? 'Unable to load workspace directory.',
+          status: 'error',
+          workspaceEntries: []
+        });
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaces]);
+
+  return (
+    <aside className="canvas-workspace-panel" aria-label="Workspace directory">
+      <header className="canvas-workspace-panel__header">
+        <div className="canvas-workspace-panel__title-group">
+          <span className="canvas-workspace-panel__title-icon" aria-hidden="true">
+            <CanvasMenuIcon kind="workspace" />
+          </span>
+          <div className="canvas-workspace-panel__title-copy">
+            <strong>Workspaces</strong>
+            <span>Directory view</span>
+          </div>
+        </div>
+
+        <div className="canvas-workspace-panel__header-actions">
+          <div className="canvas-workspace-panel__header-meta">
+            <span className="canvas-workspace-panel__meta-dot" aria-hidden="true" />
+            <span>{workspaces.length}</span>
+          </div>
+          <button
+            aria-label="New workspace"
+            className="canvas-workspace-panel__add"
+            onClick={onCreateWorkspace}
+            type="button"
+          >
+            <span aria-hidden="true">+</span>
+            <span className="canvas-workspace-panel__tooltip" role="tooltip">
+              New Workspace
+            </span>
+          </button>
+        </div>
+      </header>
+
+      {directoryState.status === 'loading' ? (
+        <div className="canvas-workspace-panel__empty">Loading workspaces…</div>
+      ) : null}
+
+      {directoryState.status === 'error' ? (
+        <div className="canvas-workspace-panel__empty">{directoryState.error}</div>
+      ) : null}
+
+      {directoryState.status !== 'loading' && !directoryState.workspaceEntries.length ? (
+        <div className="canvas-workspace-panel__empty">No workspaces yet.</div>
+      ) : null}
+
+      {directoryState.workspaceEntries.map(({ workspace, workflows }) => {
+        const isActiveWorkspace = workspace.workspace_id === activeWorkspace.workspace_id;
+
+        return (
+          <section
+            className={`canvas-workspace-panel__section${
+              isActiveWorkspace ? ' is-active' : ''
+            }`}
+            key={workspace.workspace_id}
+          >
+            <button
+              className="canvas-workspace-panel__workspace"
+              onClick={() => onOpenWorkspace?.(workspace.slug)}
+              type="button"
+            >
+              <strong>
+                {workspace.name}
+                {isActiveWorkspace ? ' · Current' : ''}
+              </strong>
+              <span>{workspace.role}</span>
+            </button>
+
+            <div className="canvas-workspace-panel__tree">
+              {workflows.length ? (
+                workflows.map((workflow) => (
+                  <button
+                    className={`canvas-workspace-panel__workflow${
+                      workflow.workflow_id === activeWorkflowId ? ' is-current' : ''
+                    }`}
+                    key={workflow.workflow_id}
+                    onClick={() => onOpenWorkflow?.(workflow.workflow_id, workspace.workspace_id)}
+                    type="button"
+                  >
+                    <span className="canvas-workspace-panel__tree-glyph" aria-hidden="true">
+                      ∟
+                    </span>
+                    <span className="canvas-workspace-panel__workflow-copy">
+                      <span className="canvas-workspace-panel__workflow-line">
+                        <strong>{workflow.name}</strong>
+                        <span>{formatWorkflowTimestamp(workflow.updated_at)}</span>
+                      </span>
+                    </span>
+                  </button>
+                ))
+              ) : (
+                <span className="canvas-workspace-panel__tree-empty">No workflows yet.</span>
+              )}
+            </div>
+          </section>
+        );
+      })}
+    </aside>
+  );
+}
+
+function CanvasWorkflowMenuPanel({
+  activeWorkflowId = null,
+  activeWorkspace,
+  onCreateWorkflow,
+  onOpenWorkflow
+}) {
+  const [workflowState, setWorkflowState] = useState({
+    error: '',
+    status: 'loading',
+    workflows: []
+  });
+  const [createMode, setCreateMode] = useState('');
+  const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
+  const [archiveWorkflowId, setArchiveWorkflowId] = useState('');
+  const [renameWorkflowId, setRenameWorkflowId] = useState('');
+  const [renameDraft, setRenameDraft] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function hydrate() {
+      const response = await getWorkflows(activeWorkspace.workspace_id);
+      if (cancelled) {
+        return;
+      }
+
+      const workflows = [...(response.workflows ?? [])].sort((left, right) => {
+        const leftTime = Date.parse(left.updated_at ?? '') || 0;
+        const rightTime = Date.parse(right.updated_at ?? '') || 0;
+        return rightTime - leftTime;
+      });
+
+      setWorkflowState({
+        error: '',
+        status: 'ready',
+        workflows
+      });
+    }
+
+    setWorkflowState((current) => ({
+      ...current,
+      error: '',
+      status: current.workflows.length ? 'refreshing' : 'loading'
+    }));
+    hydrate().catch((error) => {
+      if (!cancelled) {
+        setWorkflowState({
+          error: error.message ?? 'Unable to load workflows.',
+          status: 'error',
+          workflows: []
+        });
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspace.workspace_id]);
+
+  async function handleCreate(mode) {
+    if (!onCreateWorkflow || createMode) {
+      return;
+    }
+
+    setCreateMode(mode);
+
+    try {
+      await onCreateWorkflow(mode);
+      setIsCreateMenuOpen(false);
+    } catch (error) {
+      setWorkflowState((current) => ({
+        ...current,
+        error: error.message ?? 'Unable to create workflow.',
+        status: current.workflows.length ? 'ready' : 'error'
+      }));
+    } finally {
+      setCreateMode('');
+    }
+  }
+
+  function startRename(workflow) {
+    setRenameWorkflowId(workflow.workflow_id);
+    setRenameDraft(workflow.name);
+  }
+
+  function cancelRename() {
+    setRenameWorkflowId('');
+    setRenameDraft('');
+  }
+
+  async function handleRename(workflowId) {
+    const nextName = renameDraft.trim();
+    if (!nextName) {
+      return;
+    }
+
+    try {
+      const existing = await getWorkflow(activeWorkspace.workspace_id, workflowId);
+      const response = await updateWorkflow(activeWorkspace.workspace_id, workflowId, {
+        ...existing.definition,
+        name: nextName
+      });
+
+      setWorkflowState((current) => ({
+        ...current,
+        workflows: current.workflows.map((workflow) =>
+          workflow.workflow_id === workflowId ? response.workflow : workflow
+        )
+      }));
+      cancelRename();
+    } catch (error) {
+      setWorkflowState((current) => ({
+        ...current,
+        error: error.message ?? 'Unable to rename workflow.'
+      }));
+    }
+  }
+
+  async function handleArchive(workflow) {
+    const shouldArchive = window.confirm(
+      `Archive workflow "${workflow.name}" from ${activeWorkspace.name}?`
+    );
+    if (!shouldArchive) {
+      return;
+    }
+
+    setArchiveWorkflowId(workflow.workflow_id);
+
+    try {
+      await deleteWorkflow(activeWorkspace.workspace_id, workflow.workflow_id);
+      setWorkflowState((current) => ({
+        ...current,
+        workflows: current.workflows.filter(
+          (candidate) => candidate.workflow_id !== workflow.workflow_id
+        )
+      }));
+      if (renameWorkflowId === workflow.workflow_id) {
+        cancelRename();
+      }
+    } catch (error) {
+      setWorkflowState((current) => ({
+        ...current,
+        error: error.message ?? 'Unable to archive workflow.'
+      }));
+    } finally {
+      setArchiveWorkflowId('');
+    }
+  }
 
   return (
     <aside className="canvas-workflow-panel" aria-label="Workflow window">
@@ -1245,57 +1625,210 @@ function CanvasWorkflowMenuPanel({ activeWorkflowId = null, activeWorkspace }) {
           </div>
         </div>
 
-        <div className="canvas-workflow-panel__header-meta">
-          <span className="canvas-workflow-panel__meta-dot" aria-hidden="true" />
-          <span>{activeWorkflowId ?? 'Canvas home'}</span>
+        <div className="canvas-workflow-panel__header-actions">
+          <div className="canvas-workflow-panel__header-meta">
+            <span className="canvas-workflow-panel__meta-dot" aria-hidden="true" />
+            <span>{activeWorkflowId ?? 'Canvas home'}</span>
+          </div>
+          <button
+            aria-label="New workflow"
+            className="canvas-workflow-panel__add"
+            onClick={() => setIsCreateMenuOpen((current) => !current)}
+            type="button"
+          >
+            <span aria-hidden="true">+</span>
+            <span className="canvas-workflow-panel__tooltip" role="tooltip">
+              New Workflow
+            </span>
+          </button>
         </div>
       </header>
 
-      <section className="canvas-workflow-panel__section">
-        <div className="canvas-workflow-panel__summary-grid">
-          <div className="canvas-workflow-panel__summary-card">
-            <span>Workspace</span>
-            <strong>{activeWorkspace.name}</strong>
+      {isCreateMenuOpen ? (
+        <section className="canvas-workflow-panel__section canvas-workflow-panel__section--create">
+          <div className="canvas-workflow-panel__section-head">
+            <span>Create workflow</span>
+            <span>Canvas</span>
           </div>
-          <div className="canvas-workflow-panel__summary-card">
-            <span>Mode</span>
-            <strong>Canvas home</strong>
+
+          <div className="canvas-workflow-panel__actions">
+            <button
+              className="canvas-workflow-panel__button canvas-workflow-panel__button--accent"
+              disabled={Boolean(createMode)}
+              onClick={() => void handleCreate('blank')}
+              type="button"
+            >
+              {createMode === 'blank' ? 'Creating…' : 'Blank'}
+            </button>
+            <button
+              className="canvas-workflow-panel__button"
+              disabled={Boolean(createMode)}
+              onClick={() => void handleCreate('starter')}
+              type="button"
+            >
+              {createMode === 'starter' ? 'Creating…' : 'Starter'}
+            </button>
           </div>
-        </div>
-      </section>
+        </section>
+      ) : null}
+
+      {workflowState.error ? (
+        <section className="canvas-workflow-panel__section">
+          <div className="canvas-workflow-panel__error">{workflowState.error}</div>
+        </section>
+      ) : null}
 
       <section className="canvas-workflow-panel__section">
         <div className="canvas-workflow-panel__section-head">
           <span>Recent workflows</span>
-          <span>Placeholder</span>
+          <span>
+            {workflowState.status === 'loading'
+              ? 'Loading'
+              : workflowState.status === 'error'
+                ? 'Unavailable'
+                : 'Live'}
+          </span>
         </div>
 
         <div className="canvas-workflow-panel__list">
-          {workflowItems.map((workflow) => (
-            <button
-              className="canvas-workflow-panel__item"
-              key={workflow.label}
-              type="button"
-            >
-              <strong>{workflow.label}</strong>
-              <span>{workflow.meta}</span>
+          {workflowState.status === 'loading' ? (
+            <button className="canvas-workflow-panel__item" disabled type="button">
+              <strong>Loading workflows…</strong>
+              <span>Pulling the latest saved flows for this workspace.</span>
             </button>
-          ))}
+          ) : null}
+
+          {workflowState.status === 'error' ? (
+            <button className="canvas-workflow-panel__item" disabled type="button">
+              <strong>Workflow list unavailable</strong>
+              <span>{workflowState.error}</span>
+            </button>
+          ) : null}
+
+          {workflowState.status !== 'loading' && !workflowState.workflows.length ? (
+            <button className="canvas-workflow-panel__item" disabled type="button">
+              <strong>No workflows yet</strong>
+              <span>Create a new workflow from the app menu to get started.</span>
+            </button>
+          ) : null}
+
+          {workflowState.workflows.map((workflow) => {
+            const isRenaming = renameWorkflowId === workflow.workflow_id;
+            const isArchiving = archiveWorkflowId === workflow.workflow_id;
+            const isCurrent = workflow.workflow_id === activeWorkflowId;
+
+            return (
+              <div className="canvas-workflow-panel__item" key={workflow.workflow_id}>
+                {isRenaming ? (
+                  <input
+                    autoFocus
+                    className="canvas-workflow-panel__rename-input"
+                    onChange={(event) => setRenameDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        void handleRename(workflow.workflow_id);
+                      }
+
+                      if (event.key === 'Escape') {
+                        event.preventDefault();
+                        cancelRename();
+                      }
+                    }}
+                    type="text"
+                    value={renameDraft}
+                  />
+                ) : (
+                  <button
+                    className="canvas-workflow-panel__open"
+                    onClick={() => onOpenWorkflow?.(workflow.workflow_id)}
+                    type="button"
+                  >
+                    <strong>{workflow.name}</strong>
+                  </button>
+                )}
+
+                <span>
+                  {isCurrent ? 'Current · ' : ''}
+                  {formatWorkflowTimestamp(workflow.updated_at)}
+                </span>
+
+                <code className="canvas-workflow-panel__item-id">{workflow.workflow_id}</code>
+
+                <div className="canvas-workflow-panel__item-actions">
+                  {isRenaming ? (
+                    <>
+                      <button
+                        className="canvas-workflow-panel__button canvas-workflow-panel__button--small canvas-workflow-panel__button--accent"
+                        onClick={() => void handleRename(workflow.workflow_id)}
+                        type="button"
+                      >
+                        Save
+                      </button>
+                      <button
+                        className="canvas-workflow-panel__button canvas-workflow-panel__button--small"
+                        onClick={cancelRename}
+                        type="button"
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        className="canvas-workflow-panel__button canvas-workflow-panel__button--small"
+                        onClick={() => onOpenWorkflow?.(workflow.workflow_id)}
+                        type="button"
+                      >
+                        Open
+                      </button>
+                      <button
+                        className="canvas-workflow-panel__button canvas-workflow-panel__button--small"
+                        onClick={() => startRename(workflow)}
+                        type="button"
+                      >
+                        Rename
+                      </button>
+                      <button
+                        className="canvas-workflow-panel__button canvas-workflow-panel__button--small"
+                        disabled={isArchiving || isCurrent}
+                        onClick={() => void handleArchive(workflow)}
+                        type="button"
+                      >
+                        {isCurrent ? 'Current' : isArchiving ? 'Archiving…' : 'Archive'}
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </section>
-
-      <footer className="canvas-workflow-panel__footer">
-        <span>Workflow window</span>
-        <button className="canvas-workflow-panel__action" type="button">
-          Manage workflows
-        </button>
-      </footer>
     </aside>
   );
 }
 
 function CanvasMenuIcon({ kind }) {
   switch (kind) {
+    case 'workspace':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <path
+            d="M4.6 6.15H8.1L9.2 7.5H15.4V13.85H4.6V6.15Z"
+            stroke="currentColor"
+            strokeWidth="1.3"
+            strokeLinejoin="miter"
+          />
+          <path
+            d="M4.6 8.3H15.4"
+            stroke="currentColor"
+            strokeWidth="1.15"
+            strokeLinecap="square"
+            opacity="0.8"
+          />
+        </svg>
+      );
     case 'workflows':
       return (
         <svg viewBox="0 0 20 20" fill="none">
@@ -1438,7 +1971,7 @@ function CanvasShelfItemIcon({ groupId, typeId }) {
   }
 }
 
-function LoginRoute({ onLogin }) {
+function LoginRoute({ onGoogleLogin, onLogin }) {
   const navigate = useNavigate();
   const [authDraft, setAuthDraft] = useState({
     email: 'builder@stitchly.dev',
@@ -1446,7 +1979,30 @@ function LoginRoute({ onLogin }) {
   });
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
+  const googleEnabled = Boolean(GOOGLE_CLIENT_ID);
+  const { isReady: isGoogleReady, requestCode: requestGoogleCode } = useGoogleCodeClient({
+    clientId: GOOGLE_CLIENT_ID,
+    enabled: googleEnabled,
+    onCode: async (code) => {
+      setError('');
+      setIsGoogleSubmitting(true);
+
+      try {
+        const session = await onGoogleLogin(code);
+        navigate(getDefaultAppPath(session), { replace: true });
+      } catch (requestError) {
+        setError(requestError.message ?? 'Unable to sign in with Google.');
+      } finally {
+        setIsGoogleSubmitting(false);
+      }
+    },
+    onError: (message) => {
+      setError(message);
+      setIsGoogleSubmitting(false);
+    }
+  });
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -1494,17 +2050,50 @@ function LoginRoute({ onLogin }) {
       <section className="auth-shell__panel auth-form-panel">
         <div className="auth-form-card">
           <div className="auth-form-card__topbar">
-            <span className="auth-form-card__topmeta">builder@stitchly.dev / stitchly</span>
+            <span className="auth-form-card__topmeta">Create an account</span>
           </div>
 
           <div className="auth-form-card__content auth-form-card__content--login">
-            <div className="auth-form-card__intro">
-              <p className="auth-form-card__eyebrow">Backend session login</p>
-              <h1 className="auth-form-card__title">Log in</h1>
-              <p className="auth-form-card__summary">
-                Real backend sessions are now part of the app shell. Sign in to enter the
-                protected workspace routes.
-              </p>
+            <h1 className="auth-form-card__title">Log in</h1>
+
+            <button
+              className="auth-login-provider"
+              disabled={isGoogleSubmitting || isSubmitting}
+              onClick={() => {
+                setError('');
+
+                if (!googleEnabled) {
+                  setError(
+                    'Google sign-in is not configured yet. Set VITE_GOOGLE_CLIENT_ID on the web app and the matching Google credentials on the Rust backend.'
+                  );
+                  return;
+                }
+
+                if (!isGoogleReady) {
+                  setError('Google sign-in is still loading.');
+                  return;
+                }
+
+                setIsGoogleSubmitting(true);
+                requestGoogleCode();
+              }}
+              type="button"
+            >
+              <span className="auth-login-provider__label">Google</span>
+              <span className="auth-login-provider__track">
+                <span className="auth-login-provider__value">
+                  {isGoogleSubmitting ? 'Opening Google…' : 'Continue with Google'}
+                </span>
+                <span className="auth-login-provider__icon" aria-hidden="true">
+                  <GoogleMarkIcon />
+                </span>
+              </span>
+            </button>
+
+            <div className="auth-login-divider" aria-hidden="true">
+              <span className="auth-login-divider__line"></span>
+              <span className="auth-login-divider__label">or use your email</span>
+              <span className="auth-login-divider__line"></span>
             </div>
 
             <form className="auth-login-form" onSubmit={handleSubmit}>
@@ -1562,7 +2151,11 @@ function LoginRoute({ onLogin }) {
 
               <div className="auth-login-form__spacer" aria-hidden="true" />
 
-              <button className="auth-form-card__cta" disabled={isSubmitting} type="submit">
+              <button
+                className="auth-form-card__cta"
+                disabled={isSubmitting || isGoogleSubmitting}
+                type="submit"
+              >
                 {isSubmitting ? 'Signing in…' : 'Sign in'}
               </button>
             </form>
@@ -1578,12 +2171,7 @@ function CreateWorkspaceRoute({ onCreateWorkspaceComplete, session }) {
   const [name, setName] = useState('Default Workspace');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  useEffect(() => {
-    if (session.workspaces.length > 0) {
-      navigate(getDefaultAppPath(session), { replace: true });
-    }
-  }, [navigate, session]);
+  const isFirstWorkspace = session.workspaces.length === 0;
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -1602,35 +2190,59 @@ function CreateWorkspaceRoute({ onCreateWorkspaceComplete, session }) {
   }
 
   return (
-    <div className="auth-screen">
-      <div className="auth-screen__backdrop" />
-      <section className="auth-card">
-        <div className="auth-card__brand">
-          <div className="auth-card__mark">W</div>
-          <div>
-            <p>Workspace Setup</p>
-            <h1>Create your first workspace</h1>
+    <div className="workspace-setup-screen">
+      <div className="workspace-setup-screen__backdrop" />
+
+      <div className="workspace-setup-screen__layout">
+        <aside className="workspace-setup-rail" aria-hidden="true">
+          <div className="workspace-setup-rail__dock">
+            <span className="workspace-setup-rail__brand">
+              <img alt="" src="/brand/symbol/stitchly-symbol-mark-white.svg" />
+            </span>
+            <span className="workspace-setup-rail__divider" />
+            <span className="workspace-setup-rail__node">W</span>
           </div>
-        </div>
+        </aside>
 
-        <p className="auth-card__summary">
-          Workspaces are now real persisted containers for Stitchly. Create one before entering the
-          protected app shell.
-        </p>
+        <section className="workspace-setup-panel">
+          <p className="workspace-setup-panel__eyebrow">Workspace Setup</p>
 
-        <form className="auth-card__form" onSubmit={handleSubmit}>
-          <label className="shell-field">
-            <span>Workspace name</span>
-            <input onChange={(event) => setName(event.target.value)} type="text" value={name} />
-          </label>
+          <div className="workspace-setup-panel__header">
+            <div className="workspace-setup-panel__mark">W</div>
+            <div className="workspace-setup-panel__copy">
+              <h1>{isFirstWorkspace ? 'Create your first workspace' : 'Create a workspace'}</h1>
+              <p>
+                {isFirstWorkspace
+                  ? 'Start with a real persisted workspace, then open flows, runs, and node settings from the canvas shell.'
+                  : 'Add another persisted workspace and switch between separate canvas, flow, and run histories.'}
+              </p>
+            </div>
+          </div>
 
-          {error ? <p className="auth-card__error">{error}</p> : null}
+          <form className="workspace-setup-panel__form" onSubmit={handleSubmit}>
+            <label className="workspace-setup-field">
+              <span>Workspace name</span>
+              <input onChange={(event) => setName(event.target.value)} type="text" value={name} />
+            </label>
 
-          <button className="accent-button accent-button--wide" disabled={isSubmitting} type="submit">
-            {isSubmitting ? 'Creating…' : 'Create Workspace'}
-          </button>
-        </form>
-      </section>
+            {error ? <p className="workspace-setup-panel__error">{error}</p> : null}
+
+            <div className="workspace-setup-panel__footer">
+              <span className="workspace-setup-panel__hint">
+                This becomes your default canvas home.
+              </span>
+
+              <button
+                className="workspace-setup-panel__submit"
+                disabled={isSubmitting}
+                type="submit"
+              >
+                {isSubmitting ? 'Creating…' : 'Create Workspace'}
+              </button>
+            </div>
+          </form>
+        </section>
+      </div>
     </div>
   );
 }
@@ -2669,6 +3281,126 @@ function countRunRetries(run) {
 function countRunErrors(run) {
   const nodeFailures = (run?.node_runs ?? []).filter((nodeRun) => nodeRun.error).length;
   return run?.error ? Math.max(nodeFailures, 1) : nodeFailures;
+}
+
+function useGoogleCodeClient({ clientId, enabled, onCode, onError }) {
+  const clientRef = useRef(null);
+  const [isReady, setIsReady] = useState(false);
+
+  useEffect(() => {
+    if (!enabled || !clientId || typeof window === 'undefined') {
+      clientRef.current = null;
+      setIsReady(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    function initializeClient() {
+      const google = window.google;
+      if (!google?.accounts?.oauth2?.initCodeClient) {
+        return false;
+      }
+
+      clientRef.current = google.accounts.oauth2.initCodeClient({
+        callback: (response) => {
+          if (response?.error) {
+            onError?.('Google sign-in was cancelled or could not be completed.');
+            return;
+          }
+
+          if (!response?.code) {
+            onError?.('Google did not return an authorization code.');
+            return;
+          }
+
+          void onCode(response.code);
+        },
+        client_id: clientId,
+        scope: 'openid email profile',
+        ux_mode: 'popup'
+      });
+
+      if (!cancelled) {
+        setIsReady(true);
+      }
+      return true;
+    }
+
+    if (initializeClient()) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const existingScript = document.querySelector('script[data-google-gsi-client="true"]');
+    const script =
+      existingScript ??
+      Object.assign(document.createElement('script'), {
+        async: true,
+        defer: true,
+        src: 'https://accounts.google.com/gsi/client'
+      });
+
+    if (!existingScript) {
+      script.dataset.googleGsiClient = 'true';
+      document.head.appendChild(script);
+    }
+
+    function handleLoad() {
+      initializeClient();
+    }
+
+    function handleError() {
+      if (!cancelled) {
+        setIsReady(false);
+        onError?.('Google sign-in could not be loaded.');
+      }
+    }
+
+    script.addEventListener('load', handleLoad);
+    script.addEventListener('error', handleError);
+
+    return () => {
+      cancelled = true;
+      script.removeEventListener('load', handleLoad);
+      script.removeEventListener('error', handleError);
+    };
+  }, [clientId, enabled, onCode, onError]);
+
+  function requestCode() {
+    if (!clientRef.current) {
+      onError?.('Google sign-in is not ready yet.');
+      return;
+    }
+
+    clientRef.current.requestCode();
+  }
+
+  return { isReady, requestCode };
+}
+
+function GoogleMarkIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none">
+      <path
+        d="M21.64 12.2046C21.64 11.3875 21.5667 10.6012 21.4305 9.84668H12V13.7242H17.3891C17.157 14.9743 16.4523 16.0334 15.3933 16.7501V19.2652H18.6324C20.5289 17.5198 21.64 14.9429 21.64 12.2046Z"
+        fill="currentColor"
+      />
+      <path
+        d="M12 22.0001C14.7 22.0001 16.9625 21.1048 18.6324 19.2653L15.3933 16.7502C14.4979 17.3503 13.3541 17.7049 12 17.7049C9.3959 17.7049 7.19317 15.9459 6.407 13.5818H3.05884V16.1787C4.71912 19.477 8.12948 22.0001 12 22.0001Z"
+        fill="currentColor"
+      />
+      <path
+        d="M6.407 13.5818C6.207 12.9817 6.09308 12.3409 6.09308 11.6818C6.09308 11.0228 6.207 10.3819 6.407 9.78183V7.18494H3.05884C2.37587 8.54606 2 10.0788 2 11.6818C2 13.2848 2.37587 14.8176 3.05884 16.1787L6.407 13.5818Z"
+        fill="currentColor"
+      />
+      <path
+        d="M12 5.65932C13.4778 5.65932 14.8042 6.1685 15.8463 7.16675L18.7058 4.30726C16.9584 2.70418 14.696 1.36395 12 1.36395C8.12948 1.36395 4.71912 3.88703 3.05884 7.18491L6.407 9.7818C7.19317 7.4177 9.3959 5.65932 12 5.65932Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
 }
 
 async function refreshSession(setSessionState) {

@@ -115,6 +115,24 @@ Use these docs for these responsibilities:
 - `docs/00_foundation/22_run_history_and_debugging_spec.md`
   Draft v1 direction for durable run summaries, stored event history, log persistence, retrieval layering, and simple retention behavior.
 
+- `docs/00_foundation/23_storage_root_and_identity_architecture.md`
+  Draft v1 direction for rooted local-first storage, user/workspace/workflow file ownership, Google-backed identity mapping into local users, and future cloud-hosted transplant strategy.
+
+- `docs/04_execution/01_node_io_and_execution_contracts.md`
+  Shared node input/output rules, v1 fan-out behavior, and the running per-node execution contract table.
+
+- `docs/04_execution/02_output_contract.md`
+  Node output rules, inline-vs-ref direction, and the running per-node output contract table.
+
+- `docs/04_execution/03_execution_contract.md`
+  Runtime execution shape, preconditions, outcomes, and the running per-node execution contract table.
+
+- `docs/04_execution/04_adapter_contract.md`
+  Runtime-to-adapter boundary, return/error rules, and the running per-node adapter contract table.
+
+- `docs/04_execution/05_multi_edge_semantics.md`
+  Outbound fan-out rules, deferred fan-in semantics, and the running per-node edge-participation contract table.
+
 - `docs/03_ui/06_workflow_management_ui.md`
   Workflow list, create/open/delete UX, empty states, and how workflow management relates to the canvas route.
 
@@ -141,8 +159,14 @@ When docs overlap, prefer them in this order:
 14. `20_app_auth_and_workspace_spec.md`
 15. `21_workflow_management_spec.md`
 16. `22_run_history_and_debugging_spec.md`
-17. `03_ui/06_workflow_management_ui.md`
-18. the remaining foundation and UI docs
+17. `23_storage_root_and_identity_architecture.md`
+18. `04_execution/01_node_io_and_execution_contracts.md`
+19. `04_execution/02_output_contract.md`
+20. `04_execution/03_execution_contract.md`
+21. `04_execution/04_adapter_contract.md`
+22. `04_execution/05_multi_edge_semantics.md`
+23. `03_ui/06_workflow_management_ui.md`
+24. the remaining foundation and UI docs
 
 If details are missing:
 

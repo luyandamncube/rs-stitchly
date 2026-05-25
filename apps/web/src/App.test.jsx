@@ -18,6 +18,7 @@ const api = vi.hoisted(() => ({
   getWorkflowState: vi.fn(),
   getWorkspaceRuns: vi.fn(),
   login: vi.fn(),
+  loginWithGoogleCode: vi.fn(),
   logout: vi.fn(),
   updateWorkflow: vi.fn(),
   updateWorkflowState: vi.fn()
@@ -54,6 +55,7 @@ describe('App platform shell', () => {
   beforeEach(() => {
     window.localStorage.clear();
     window.history.replaceState({}, '', '/');
+    delete window.google;
     api.createWorkspace.mockReset();
     api.createWorkflow.mockReset();
     api.deleteWorkflow.mockReset();
@@ -63,6 +65,7 @@ describe('App platform shell', () => {
     api.getWorkflowState.mockReset();
     api.getWorkspaceRuns.mockReset();
     api.login.mockReset();
+    api.loginWithGoogleCode.mockReset();
     api.logout.mockReset();
     api.updateWorkflow.mockReset();
     api.updateWorkflowState.mockReset();
@@ -87,6 +90,42 @@ describe('App platform shell', () => {
     await waitFor(() => {
       expect(screen.getByTestId('canvas-workspace')).toBeInTheDocument();
     });
+  });
+
+  it('exchanges a Google auth code and enters the canvas after sign-in', async () => {
+    const requestCode = vi.fn();
+    const initCodeClient = vi.fn((config) => {
+      requestCode.mockImplementation(() => {
+        config.callback({ code: 'google-auth-code-123' });
+      });
+      return { requestCode };
+    });
+
+    window.google = {
+      accounts: {
+        oauth2: {
+          initCodeClient
+        }
+      }
+    };
+    api.loginWithGoogleCode.mockResolvedValue(AUTHENTICATED_SESSION);
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole('heading', { name: /log in/i })
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /continue with google/i }));
+
+    await waitFor(() => {
+      expect(api.loginWithGoogleCode).toHaveBeenCalledWith('google-auth-code-123');
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('canvas-workspace')).toBeInTheDocument();
+    });
+
+    delete window.google;
   });
 
   it('navigates to the canvas home route with a collapsed overlay rail', async () => {
@@ -169,6 +208,18 @@ describe('App platform shell', () => {
 
   it('opens the workflow popup on click from the collapsed rail', async () => {
     api.login.mockResolvedValue(AUTHENTICATED_SESSION);
+    api.getWorkflows.mockResolvedValue({
+      workflows: [
+        {
+          workflow_id: 'wf_text_preview',
+          workspace_id: 'ws_default',
+          name: 'Text Preview',
+          description: 'Starter text preview flow.',
+          version: 1,
+          updated_at: '2026-05-24T10:00:00Z'
+        }
+      ]
+    });
 
     const { container } = render(<App />);
 
@@ -184,7 +235,80 @@ describe('App platform shell', () => {
     expect(container.querySelector('.canvas-menu.is-open')).not.toBeNull();
     expect(screen.getByLabelText('Workflow window')).toBeInTheDocument();
     expect(screen.getByText('Recent workflows')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Manage workflows' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'New workflow' }));
+    expect(screen.getByRole('button', { name: 'Blank' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Starter' })).toBeInTheDocument();
+    expect(await screen.findByText('Text Preview')).toBeInTheDocument();
+  });
+
+  it('opens the workspace directory popup and shows workspace workflows as a tree', async () => {
+    api.login.mockResolvedValue({
+      ...AUTHENTICATED_SESSION,
+      workspaces: [
+        ...AUTHENTICATED_SESSION.workspaces,
+        {
+          workspace_id: 'ws_ops',
+          slug: 'ops-space',
+          name: 'Ops Space',
+          role: 'editor'
+        }
+      ]
+    });
+    api.getWorkflows.mockImplementation(async (workspaceId) => {
+      if (workspaceId === 'ws_default') {
+        return {
+          workflows: [
+            {
+              workflow_id: 'wf_text_preview',
+              workspace_id: 'ws_default',
+              name: 'Text Preview',
+              description: 'Starter text preview flow.',
+              version: 1,
+              updated_at: '2026-05-24T10:00:00Z'
+            }
+          ]
+        };
+      }
+
+      return {
+        workflows: [
+          {
+            workflow_id: 'wf_ops_alerts',
+            workspace_id: 'ws_ops',
+            name: 'Ops Alerts',
+            description: 'Ops workflow.',
+            version: 1,
+            updated_at: '2026-05-24T11:00:00Z'
+          }
+        ]
+      };
+    });
+
+    render(<App />);
+
+    await screen.findByRole('heading', { name: /log in/i });
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+
+    const workspacesButton = await screen.findByRole('button', { name: 'Workspaces' });
+    fireEvent.click(workspacesButton);
+
+    expect(await screen.findByLabelText('Workspace directory')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New workspace' })).toBeInTheDocument();
+    expect(await screen.findByText('Default Workspace · Current')).toBeInTheDocument();
+    expect(await screen.findByText('Ops Space')).toBeInTheDocument();
+    expect(await screen.findByText('Text Preview')).toBeInTheDocument();
+    expect(await screen.findByText('Ops Alerts')).toBeInTheDocument();
+  });
+
+  it('keeps /workspaces/new accessible for authenticated users with existing workspaces', async () => {
+    api.getSession.mockResolvedValue(AUTHENTICATED_SESSION);
+    window.history.replaceState({}, '', '/workspaces/new');
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole('heading', { name: /create a workspace/i })
+    ).toBeInTheDocument();
   });
 
   it('opens the brand menu popup from the top logo button', async () => {
@@ -354,11 +478,11 @@ describe('App platform shell', () => {
 
   it('collapses the attention panel to a compact summary', async () => {
     api.getSession.mockResolvedValue(AUTHENTICATED_SESSION);
-    window.history.replaceState({}, '', '/w/default-workspace/workflows');
+    window.history.replaceState({}, '', '/w/default-workspace/runs');
 
     render(<App />);
 
-    expect(await screen.findByRole('heading', { name: 'Workflows' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Runs' })).toBeInTheDocument();
     expect(screen.getByText(/orders import failed/i)).toBeInTheDocument();
     expect(screen.getByText(/pending approvals/i)).toBeInTheDocument();
 
@@ -372,9 +496,8 @@ describe('App platform shell', () => {
     expect(screen.queryByText(/pending approvals/i)).toBeNull();
   });
 
-  it('creates a starter workflow and opens its explicit canvas route', async () => {
-    api.getSession.mockResolvedValue(AUTHENTICATED_SESSION);
-    window.history.replaceState({}, '', '/w/default-workspace/workflows');
+  it('creates a starter workflow from the workflow popup and opens its explicit canvas route', async () => {
+    api.login.mockResolvedValue(AUTHENTICATED_SESSION);
     api.createWorkflow.mockResolvedValue({
       workflow: {
         workflow_id: 'tFRXIL9X4YxHMVYqbeFH2T',
@@ -398,9 +521,14 @@ describe('App platform shell', () => {
 
     const { container } = render(<App />);
 
-    expect(await screen.findByRole('heading', { name: 'Workflows' })).toBeInTheDocument();
+    await screen.findByRole('heading', { name: /log in/i });
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
 
-    fireEvent.click(screen.getByRole('button', { name: /create starter workflow/i }));
+    const workflowsButton = await screen.findByRole('button', { name: 'Workflows' });
+    fireEvent.click(workflowsButton);
+    fireEvent.click(await screen.findByRole('button', { name: 'New workflow' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Starter' }));
 
     await waitFor(() => {
       expect(container.querySelector('.dashboard-app--canvas')).not.toBeNull();
@@ -412,5 +540,16 @@ describe('App platform shell', () => {
     );
     expect(window.location.pathname).toBe('/flow/tFRXIL9X4YxHMVYqbeFH2T');
     expect(screen.getByTestId('canvas-workspace')).toBeInTheDocument();
+  });
+
+  it('redirects the deprecated workflows route back to canvas home', async () => {
+    api.getSession.mockResolvedValue(AUTHENTICATED_SESSION);
+    window.history.replaceState({}, '', '/w/default-workspace/workflows');
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/w/default-workspace/canvas');
+    });
   });
 });

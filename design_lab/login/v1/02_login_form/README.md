@@ -6,10 +6,11 @@ Purpose:
 
 - refine the right-side login form inside the approved auth shell
 - move from placeholder field lines to actual form hierarchy and micro-layout
-- study title, field values, helper actions, and CTA relationship in a realistic composition
+- study title, provider choice, field values, helper actions, and CTA relationship in a realistic composition
 
 What this sample is testing:
 
+- how a secondary Google login action can live inside the same card without overpowering the primary form path
 - oversized title proportion against the field row
 - underline-only input treatment using realistic content
 - label, value, and helper-text hierarchy
@@ -22,6 +23,8 @@ Reference direction:
 
 What this sample intentionally includes:
 
+- a secondary `Continue with Google` action using a white Google symbol
+- a divider between provider login and email login
 - realistic email and password values
 - helper actions for remember-me and forgot-password
 - top-right account-creation action

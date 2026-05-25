@@ -6,7 +6,8 @@ use std::{
 
 use anyhow::{anyhow, Context};
 use api_contract::{
-    AuthSessionResponse, DeleteWorkflowResponse, RunSnapshot, SessionUserSummary,
+    AuthSessionResponse, DeleteWorkflowResponse, EventTargetKind, LogLevel, RunErrorCategory,
+    RunEvent, RunEventType, RunLogEntry, RunSnapshot, SessionUserSummary, TriggerKind,
     WorkflowListResponse, WorkflowResponse, WorkflowStateResponse, WorkflowSummary,
     WorkspaceListResponse, WorkspaceMembershipRole, WorkspaceSummary,
 };
@@ -35,6 +36,14 @@ pub struct AuthenticatedSession {
     pub session_id: String,
     pub user_id: String,
     pub session: AuthSessionResponse,
+}
+
+#[derive(Clone, Debug)]
+pub struct GoogleIdentityProfile {
+    pub subject: String,
+    pub email: String,
+    pub email_verified: bool,
+    pub display_name: String,
 }
 
 impl PlatformStore {
@@ -152,6 +161,124 @@ impl PlatformStore {
             params![session_id],
         )?;
         Ok(())
+    }
+
+    pub fn authenticate_google_identity(
+        &self,
+        identity: &GoogleIdentityProfile,
+    ) -> anyhow::Result<AuthenticatedSession> {
+        let mut connection = self.connection();
+        let tx = connection.transaction()?;
+        let now = Utc::now().to_rfc3339();
+
+        let existing_user_id: Option<String> = tx
+            .query_row(
+                "select user_id
+                 from auth_identities
+                 where provider = 'google' and provider_subject = ?1",
+                params![identity.subject.as_str()],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        let user_id = if let Some(user_id) = existing_user_id {
+            tx.execute(
+                "update auth_identities
+                 set email_at_link = ?1, email_verified = ?2, last_login_at = ?3
+                 where provider = 'google' and provider_subject = ?4",
+                params![
+                    identity.email.as_str(),
+                    i64::from(identity.email_verified),
+                    now.as_str(),
+                    identity.subject.as_str()
+                ],
+            )?;
+            tx.execute(
+                "update users
+                 set email = ?1, display_name = ?2
+                 where user_id = ?3",
+                params![
+                    identity.email.as_str(),
+                    identity.display_name.as_str(),
+                    user_id.as_str()
+                ],
+            )?;
+            user_id
+        } else if let Some(existing_user) = find_user_by_email(&tx, &identity.email)? {
+            tx.execute(
+                "insert into auth_identities (
+                    provider,
+                    provider_subject,
+                    user_id,
+                    email_at_link,
+                    email_verified,
+                    created_at,
+                    last_login_at
+                 ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    "google",
+                    identity.subject.as_str(),
+                    existing_user.user_id.as_str(),
+                    identity.email.as_str(),
+                    i64::from(identity.email_verified),
+                    now.as_str(),
+                    now.as_str()
+                ],
+            )?;
+            tx.execute(
+                "update users
+                 set display_name = ?1
+                 where user_id = ?2",
+                params![identity.display_name.as_str(), existing_user.user_id.as_str()],
+            )?;
+            existing_user.user_id
+        } else {
+            let user_id = format!("usr_{}", Uuid::new_v4().simple());
+            let placeholder_password_hash =
+                hash_password(&format!("google_only:{}", Uuid::new_v4().simple()))?;
+            tx.execute(
+                "insert into users (user_id, email, display_name, password_hash, active_workspace_id, created_at)
+                 values (?1, ?2, ?3, ?4, null, ?5)",
+                params![
+                    user_id.as_str(),
+                    identity.email.as_str(),
+                    identity.display_name.as_str(),
+                    placeholder_password_hash,
+                    now.as_str()
+                ],
+            )?;
+            tx.execute(
+                "insert into auth_identities (
+                    provider,
+                    provider_subject,
+                    user_id,
+                    email_at_link,
+                    email_verified,
+                    created_at,
+                    last_login_at
+                 ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    "google",
+                    identity.subject.as_str(),
+                    user_id.as_str(),
+                    identity.email.as_str(),
+                    i64::from(identity.email_verified),
+                    now.as_str(),
+                    now.as_str()
+                ],
+            )?;
+            user_id
+        };
+
+        let session_id = create_session_record(&tx, &user_id)?;
+        let response = build_session_response(&tx, &user_id)?;
+        tx.commit()?;
+
+        Ok(AuthenticatedSession {
+            session_id,
+            user_id,
+            session: response,
+        })
     }
 
     pub fn list_workspaces(&self, user_id: &str) -> anyhow::Result<WorkspaceListResponse> {
@@ -600,41 +727,160 @@ impl PlatformStore {
         let connection = self.connection();
         ensure_workspace_access(&connection, user_id, workspace_id)?;
 
-        let now = Utc::now().to_rfc3339();
-        let snapshot_json = serde_json::to_string(snapshot)
-            .context("failed to serialize run snapshot")?;
+        drop(connection);
+        self.persist_run_snapshot(workspace_id, Some(user_id), snapshot)
+    }
 
-        connection.execute(
-            "insert into runs (
-                workspace_id,
-                run_id,
-                workflow_id,
-                workflow_version,
-                status,
-                snapshot_json,
-                created_at,
-                updated_at
-             )
-             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-             on conflict(workspace_id, run_id) do update set
-                workflow_id = excluded.workflow_id,
-                workflow_version = excluded.workflow_version,
-                status = excluded.status,
-                snapshot_json = excluded.snapshot_json,
-                updated_at = excluded.updated_at",
-            params![
-                workspace_id,
-                snapshot.run_id.as_str(),
-                snapshot.workflow_id.as_str(),
-                snapshot.workflow_version,
-                run_status_to_db(&snapshot.status),
-                snapshot_json,
-                now,
-                now
-            ],
-        )?;
+    pub fn persist_run_snapshot(
+        &self,
+        workspace_id: &str,
+        requested_by_user_id: Option<&str>,
+        snapshot: &RunSnapshot,
+    ) -> anyhow::Result<()> {
+        let connection = self.connection();
+        persist_run_snapshot_row(&connection, workspace_id, requested_by_user_id, snapshot)
+    }
 
+    pub fn persist_run_history(
+        &self,
+        workspace_id: &str,
+        requested_by_user_id: Option<&str>,
+        snapshot: &RunSnapshot,
+        events: &[RunEvent],
+    ) -> anyhow::Result<()> {
+        let mut connection = self.connection();
+        let tx = connection.transaction()?;
+        persist_run_snapshot_row(&tx, workspace_id, requested_by_user_id, snapshot)?;
+        for event in events {
+            persist_run_event_row(&tx, workspace_id, &snapshot.run_id, event)?;
+        }
+        tx.commit()?;
         Ok(())
+    }
+
+    pub fn get_workspace_run_record(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        run_id: &str,
+    ) -> anyhow::Result<Option<StoredRunRecord>> {
+        let connection = self.connection();
+        ensure_workspace_access(&connection, user_id, workspace_id)?;
+
+        connection
+            .query_row(
+                "select run_id, snapshot_json
+                 from runs
+                 where workspace_id = ?1 and run_id = ?2",
+                params![workspace_id, run_id],
+                |row| {
+                    Ok(StoredRunRecord {
+                        run_id: row.get(0)?,
+                        snapshot_json: row.get(1)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn list_workspace_run_events(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        run_id: &str,
+    ) -> anyhow::Result<Vec<RunEvent>> {
+        let connection = self.connection();
+        ensure_workspace_access(&connection, user_id, workspace_id)?;
+
+        let mut stmt = connection.prepare(
+            "select event_id, sequence, timestamp, event_type, target_kind, target_node_id, payload_json
+             from run_events
+             where workspace_id = ?1 and run_id = ?2
+             order by sequence asc, timestamp asc",
+        )?;
+        let rows = stmt
+            .query_map(params![workspace_id, run_id], |row| {
+                let timestamp = row.get::<_, String>(2)?;
+                let payload_json = row.get::<_, String>(6)?;
+                let payload = serde_json::from_str(&payload_json).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        6,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?;
+
+                Ok(RunEvent {
+                    event_id: row.get(0)?,
+                    run_id: run_id.to_string(),
+                    sequence: row.get(1)?,
+                    timestamp: parse_rfc3339_to_utc(&timestamp).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            2,
+                            rusqlite::types::Type::Text,
+                            Box::new(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                error.to_string(),
+                            )),
+                        )
+                    })?,
+                    event_type: run_event_type_from_db(&row.get::<_, String>(3)?).map_err(|error| {
+                        rusqlite::Error::InvalidParameterName(error.to_string())
+                    })?,
+                    target: api_contract::EventTarget {
+                        kind: event_target_kind_from_db(&row.get::<_, String>(4)?).map_err(
+                            |error| rusqlite::Error::InvalidParameterName(error.to_string()),
+                        )?,
+                        node_id: row.get(5)?,
+                    },
+                    payload,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(rows)
+    }
+
+    pub fn list_workspace_run_logs(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        run_id: &str,
+    ) -> anyhow::Result<Vec<RunLogEntry>> {
+        let connection = self.connection();
+        ensure_workspace_access(&connection, user_id, workspace_id)?;
+
+        let mut stmt = connection.prepare(
+            "select timestamp, level, node_id, message
+             from run_logs
+             where workspace_id = ?1 and run_id = ?2
+             order by timestamp asc, log_id asc",
+        )?;
+        let rows = stmt
+            .query_map(params![workspace_id, run_id], |row| {
+                let timestamp = row.get::<_, String>(0)?;
+                Ok(RunLogEntry {
+                    timestamp: parse_rfc3339_to_utc(&timestamp).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            0,
+                            rusqlite::types::Type::Text,
+                            Box::new(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                error.to_string(),
+                            )),
+                        )
+                    })?,
+                    level: log_level_from_db(&row.get::<_, String>(1)?).map_err(|error| {
+                        rusqlite::Error::InvalidParameterName(error.to_string())
+                    })?,
+                    node_id: row.get(2)?,
+                    message: row.get(3)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(rows)
     }
 
     pub fn list_workspace_run_records(
@@ -683,6 +929,18 @@ impl PlatformStore {
                 user_id text not null,
                 created_at text not null,
                 expires_at text not null,
+                foreign key (user_id) references users (user_id) on delete cascade
+            );
+
+            create table if not exists auth_identities (
+                provider text not null,
+                provider_subject text not null,
+                user_id text not null,
+                email_at_link text null,
+                email_verified integer not null default 0,
+                created_at text not null,
+                last_login_at text not null,
+                primary key (provider, provider_subject),
                 foreign key (user_id) references users (user_id) on delete cascade
             );
 
@@ -735,11 +993,48 @@ impl PlatformStore {
                 workflow_id text not null,
                 workflow_version integer not null,
                 status text not null,
+                trigger_kind text null,
+                requested_by_user_id text null,
+                started_at text null,
+                finished_at text null,
+                error_category text null,
+                error_message text null,
                 snapshot_json text not null,
                 created_at text not null,
                 updated_at text not null,
                 primary key (workspace_id, run_id),
                 foreign key (workspace_id) references workspaces (workspace_id) on delete cascade
+            );
+
+            create table if not exists run_events (
+                workspace_id text not null,
+                run_id text not null,
+                event_id text not null,
+                sequence integer not null,
+                timestamp text not null,
+                event_type text not null,
+                target_kind text not null,
+                target_node_id text null,
+                attempt integer null,
+                payload_json text not null,
+                primary key (workspace_id, run_id, event_id),
+                foreign key (workspace_id, run_id)
+                  references runs (workspace_id, run_id)
+                  on delete cascade
+            );
+
+            create table if not exists run_logs (
+                workspace_id text not null,
+                run_id text not null,
+                log_id text not null,
+                timestamp text not null,
+                level text not null,
+                node_id text null,
+                message text not null,
+                primary key (workspace_id, run_id, log_id),
+                foreign key (workspace_id, run_id)
+                  references runs (workspace_id, run_id)
+                  on delete cascade
             );
 
             create table if not exists user_workspace_state (
@@ -756,6 +1051,12 @@ impl PlatformStore {
         )?;
 
         ensure_nullable_text_column(&connection, "workflows", "archived_at")?;
+        ensure_nullable_text_column(&connection, "runs", "trigger_kind")?;
+        ensure_nullable_text_column(&connection, "runs", "requested_by_user_id")?;
+        ensure_nullable_text_column(&connection, "runs", "started_at")?;
+        ensure_nullable_text_column(&connection, "runs", "finished_at")?;
+        ensure_nullable_text_column(&connection, "runs", "error_category")?;
+        ensure_nullable_text_column(&connection, "runs", "error_message")?;
 
         if find_user_by_email(&connection, DEMO_EMAIL)?.is_none() {
             let password_hash = hash_password(DEMO_PASSWORD)?;
@@ -800,6 +1101,166 @@ struct SessionRecord {
 pub struct StoredRunRecord {
     pub run_id: String,
     pub snapshot_json: String,
+}
+
+fn persist_run_snapshot_row(
+    connection: &Connection,
+    workspace_id: &str,
+    requested_by_user_id: Option<&str>,
+    snapshot: &RunSnapshot,
+) -> anyhow::Result<()> {
+    let now = Utc::now().to_rfc3339();
+    let snapshot_json = serde_json::to_string(snapshot)
+        .context("failed to serialize run snapshot")?;
+
+    connection.execute(
+        "insert into runs (
+            workspace_id,
+            run_id,
+            workflow_id,
+            workflow_version,
+            status,
+            trigger_kind,
+            requested_by_user_id,
+            started_at,
+            finished_at,
+            error_category,
+            error_message,
+            snapshot_json,
+            created_at,
+            updated_at
+         )
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+         on conflict(workspace_id, run_id) do update set
+            workflow_id = excluded.workflow_id,
+            workflow_version = excluded.workflow_version,
+            status = excluded.status,
+            trigger_kind = excluded.trigger_kind,
+            requested_by_user_id = coalesce(excluded.requested_by_user_id, runs.requested_by_user_id),
+            started_at = excluded.started_at,
+            finished_at = excluded.finished_at,
+            error_category = excluded.error_category,
+            error_message = excluded.error_message,
+            snapshot_json = excluded.snapshot_json,
+            updated_at = excluded.updated_at",
+        params![
+            workspace_id,
+            snapshot.run_id.as_str(),
+            snapshot.workflow_id.as_str(),
+            snapshot.workflow_version,
+            run_status_to_db(&snapshot.status),
+            trigger_kind_to_db(&snapshot.trigger.kind),
+            requested_by_user_id,
+            snapshot.started_at.as_ref().map(|value| value.to_rfc3339()),
+            snapshot.finished_at.as_ref().map(|value| value.to_rfc3339()),
+            snapshot.error.as_ref().map(|error| run_error_category_to_db(&error.category)),
+            snapshot.error.as_ref().map(|error| error.message.clone()),
+            snapshot_json,
+            now,
+            now
+        ],
+    )?;
+
+    Ok(())
+}
+
+fn persist_run_event_row(
+    connection: &Connection,
+    workspace_id: &str,
+    run_id: &str,
+    event: &RunEvent,
+) -> anyhow::Result<()> {
+    let payload_json = serde_json::to_string(&event.payload)
+        .context("failed to serialize run event payload")?;
+    let attempt = event.payload.get("attempt").and_then(|value| value.as_u64());
+
+    connection.execute(
+        "insert or ignore into run_events (
+            workspace_id,
+            run_id,
+            event_id,
+            sequence,
+            timestamp,
+            event_type,
+            target_kind,
+            target_node_id,
+            attempt,
+            payload_json
+         )
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![
+            workspace_id,
+            run_id,
+            event.event_id.as_str(),
+            event.sequence,
+            event.timestamp.to_rfc3339(),
+            run_event_type_to_db(&event.event_type),
+            event_target_kind_to_db(&event.target.kind),
+            event.target.node_id.as_deref(),
+            attempt.map(|value| value as i64),
+            payload_json
+        ],
+    )?;
+
+    if event.event_type == RunEventType::NodeLog {
+        let level = event
+            .payload
+            .get("level")
+            .and_then(|value| serde_json::from_value::<LogLevel>(value.clone()).ok())
+            .unwrap_or(LogLevel::Info);
+        let message = event
+            .payload
+            .get("message")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string();
+        persist_run_log_row(
+            connection,
+            workspace_id,
+            run_id,
+            &event.event_id,
+            &RunLogEntry {
+                timestamp: event.timestamp,
+                level,
+                node_id: event.target.node_id.clone(),
+                message,
+            },
+        )?;
+    }
+
+    Ok(())
+}
+
+fn persist_run_log_row(
+    connection: &Connection,
+    workspace_id: &str,
+    run_id: &str,
+    log_id: &str,
+    entry: &RunLogEntry,
+) -> anyhow::Result<()> {
+    connection.execute(
+        "insert or ignore into run_logs (
+            workspace_id,
+            run_id,
+            log_id,
+            timestamp,
+            level,
+            node_id,
+            message
+         )
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            workspace_id,
+            run_id,
+            log_id,
+            entry.timestamp.to_rfc3339(),
+            log_level_to_db(&entry.level),
+            entry.node_id.as_deref(),
+            entry.message.as_str()
+        ],
+    )?;
+
+    Ok(())
 }
 
 fn build_session_response(
@@ -973,12 +1434,96 @@ fn find_user_by_email(connection: &Connection, email: &str) -> anyhow::Result<Op
         .map_err(Into::into)
 }
 
+fn create_session_record(connection: &Connection, user_id: &str) -> anyhow::Result<String> {
+    let session_id = format!("ses_{}", Uuid::new_v4().simple());
+    let created_at = Utc::now();
+    let expires_at = created_at + Duration::days(SESSION_TTL_DAYS);
+
+    connection.execute(
+        "insert into sessions (session_id, user_id, created_at, expires_at)
+         values (?1, ?2, ?3, ?4)",
+        params![
+            session_id,
+            user_id,
+            created_at.to_rfc3339(),
+            expires_at.to_rfc3339()
+        ],
+    )?;
+
+    Ok(session_id)
+}
+
 fn hash_password(password: &str) -> anyhow::Result<String> {
     let salt = SaltString::generate(&mut OsRng);
     Ok(Argon2::default()
         .hash_password(password.as_bytes(), &salt)
         .map_err(|error| anyhow!("password hashing failed: {error}"))?
         .to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{GoogleIdentityProfile, PlatformStore};
+
+    #[test]
+    fn google_identity_creates_a_local_user_and_session() {
+        let store = PlatformStore::for_tests().expect("platform store");
+
+        let session = store
+            .authenticate_google_identity(&GoogleIdentityProfile {
+                subject: "google-subject-123".to_string(),
+                email: "ops@gmail.com".to_string(),
+                email_verified: true,
+                display_name: "Ops Builder".to_string(),
+            })
+            .expect("google auth session");
+
+        assert_eq!(session.user_id, session.session.user.as_ref().expect("user").user_id);
+        assert_eq!(
+            session.session.user.as_ref().expect("user").email,
+            "ops@gmail.com"
+        );
+        assert!(session.session.authenticated);
+
+        let loaded = store
+            .load_session(&session.session_id)
+            .expect("session lookup")
+            .expect("active session");
+        assert_eq!(
+            loaded.session.user.as_ref().expect("user").display_name,
+            "Ops Builder"
+        );
+    }
+
+    #[test]
+    fn google_identity_links_to_an_existing_email_user() {
+        let store = PlatformStore::for_tests().expect("platform store");
+
+        let session = store
+            .authenticate_google_identity(&GoogleIdentityProfile {
+                subject: "google-subject-builder".to_string(),
+                email: "builder@stitchly.dev".to_string(),
+                email_verified: true,
+                display_name: "Builder Google".to_string(),
+            })
+            .expect("google auth session");
+
+        assert_eq!(session.user_id, "usr_builder");
+        assert_eq!(
+            session.session.user.as_ref().expect("user").display_name,
+            "Builder Google"
+        );
+
+        let second_session = store
+            .authenticate_google_identity(&GoogleIdentityProfile {
+                subject: "google-subject-builder".to_string(),
+                email: "builder@stitchly.dev".to_string(),
+                email_verified: true,
+                display_name: "Builder Google".to_string(),
+            })
+            .expect("second google auth session");
+        assert_eq!(second_session.user_id, "usr_builder");
+    }
 }
 
 fn unique_slug(connection: &Connection, name: &str) -> anyhow::Result<String> {
@@ -1043,6 +1588,12 @@ fn role_to_db(role: WorkspaceMembershipRole) -> &'static str {
     }
 }
 
+fn parse_rfc3339_to_utc(value: &str) -> anyhow::Result<chrono::DateTime<Utc>> {
+    Ok(chrono::DateTime::parse_from_rfc3339(value)
+        .with_context(|| format!("invalid RFC3339 timestamp `{value}`"))?
+        .with_timezone(&Utc))
+}
+
 fn run_status_to_db(status: &api_contract::RunStatus) -> &'static str {
     match status {
         api_contract::RunStatus::Created => "created",
@@ -1053,5 +1604,93 @@ fn run_status_to_db(status: &api_contract::RunStatus) -> &'static str {
         api_contract::RunStatus::Failed => "failed",
         api_contract::RunStatus::Cancelling => "cancelling",
         api_contract::RunStatus::Cancelled => "cancelled",
+    }
+}
+
+fn trigger_kind_to_db(kind: &TriggerKind) -> &'static str {
+    match kind {
+        TriggerKind::Manual => "manual",
+        TriggerKind::Schedule => "schedule",
+        TriggerKind::Event => "event",
+        TriggerKind::Backfill => "backfill",
+    }
+}
+
+fn run_error_category_to_db(category: &RunErrorCategory) -> &'static str {
+    match category {
+        RunErrorCategory::ValidationError => "validation_error",
+        RunErrorCategory::PlanningError => "planning_error",
+        RunErrorCategory::AdapterResolutionError => "adapter_resolution_error",
+        RunErrorCategory::ConnectionError => "connection_error",
+        RunErrorCategory::ExecutionError => "execution_error",
+        RunErrorCategory::Timeout => "timeout",
+        RunErrorCategory::Cancellation => "cancellation",
+    }
+}
+
+fn run_event_type_to_db(event_type: &RunEventType) -> &'static str {
+    match event_type {
+        RunEventType::RunCreated => "run_created",
+        RunEventType::PlanningStarted => "planning_started",
+        RunEventType::PlanningFinished => "planning_finished",
+        RunEventType::RunStatusChanged => "run_status_changed",
+        RunEventType::NodeStarted => "node_started",
+        RunEventType::NodeLog => "node_log",
+        RunEventType::NodeFinished => "node_finished",
+        RunEventType::RunSucceeded => "run_succeeded",
+        RunEventType::RunFailed => "run_failed",
+        RunEventType::CancellationRequested => "cancellation_requested",
+        RunEventType::RunCancelled => "run_cancelled",
+    }
+}
+
+fn run_event_type_from_db(value: &str) -> anyhow::Result<RunEventType> {
+    match value {
+        "run_created" => Ok(RunEventType::RunCreated),
+        "planning_started" => Ok(RunEventType::PlanningStarted),
+        "planning_finished" => Ok(RunEventType::PlanningFinished),
+        "run_status_changed" => Ok(RunEventType::RunStatusChanged),
+        "node_started" => Ok(RunEventType::NodeStarted),
+        "node_log" => Ok(RunEventType::NodeLog),
+        "node_finished" => Ok(RunEventType::NodeFinished),
+        "run_succeeded" => Ok(RunEventType::RunSucceeded),
+        "run_failed" => Ok(RunEventType::RunFailed),
+        "cancellation_requested" => Ok(RunEventType::CancellationRequested),
+        "run_cancelled" => Ok(RunEventType::RunCancelled),
+        _ => Err(anyhow!("unknown run event type `{value}`")),
+    }
+}
+
+fn event_target_kind_to_db(kind: &EventTargetKind) -> &'static str {
+    match kind {
+        EventTargetKind::Run => "run",
+        EventTargetKind::Node => "node",
+    }
+}
+
+fn event_target_kind_from_db(value: &str) -> anyhow::Result<EventTargetKind> {
+    match value {
+        "run" => Ok(EventTargetKind::Run),
+        "node" => Ok(EventTargetKind::Node),
+        _ => Err(anyhow!("unknown event target kind `{value}`")),
+    }
+}
+
+fn log_level_to_db(level: &LogLevel) -> &'static str {
+    match level {
+        LogLevel::Debug => "debug",
+        LogLevel::Info => "info",
+        LogLevel::Warn => "warn",
+        LogLevel::Error => "error",
+    }
+}
+
+fn log_level_from_db(value: &str) -> anyhow::Result<LogLevel> {
+    match value {
+        "debug" => Ok(LogLevel::Debug),
+        "info" => Ok(LogLevel::Info),
+        "warn" => Ok(LogLevel::Warn),
+        "error" => Ok(LogLevel::Error),
+        _ => Err(anyhow!("unknown log level `{value}`")),
     }
 }

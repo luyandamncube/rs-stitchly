@@ -13,6 +13,20 @@ Use this file to capture important product and technical decisions in a compact 
 
 ## Entries
 
+### 2026-05-25 - Storage should split platform identity data from rooted workflow-owned files
+
+- status: proposed
+- context: the app now has real backend-owned users, sessions, workspaces, workflows, and run history, but the longer-lived storage model for workflow files, per-workflow runs, table data, and future cloud-hosted deployment is still implicit.
+- decision: draft a dedicated storage-root direction built around a control-plane database, a rooted data-plane filesystem keyed by stable IDs, backend-owned Google identity mapping, and a local-first model that can later transplant onto cloud-mounted storage.
+- consequence: future storage format choices such as DuckDB, Parquet, or engine-backed table layouts should build on the ownership and root-layout boundaries captured in `23_storage_root_and_identity_architecture.md`.
+
+### 2026-05-25 - Node execution and data passing should be documented in one shared per-node contract matrix
+
+- status: proposed
+- context: the workflow graph already carries nodes, ports, and edges, and the runtime already resolves simple typed inputs and outputs, but the exact per-node input/output contract is still too implicit across runtime adapters, frontend node managers, and fixtures.
+- decision: draft a dedicated execution-contract doc that locks the v1 single-input model, explicit fan-out support, and a running per-node input/output table instead of splitting this into many node-specific docs.
+- consequence: future node implementation and runtime work should add or update rows in `04_execution/01_node_io_and_execution_contracts.md` before deepening execution behavior.
+
 ### 2026-05-25 - Run persistence should move from latest snapshot only toward durable history plus debugging layers
 
 - status: proposed

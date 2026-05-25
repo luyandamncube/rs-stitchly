@@ -18,6 +18,7 @@ The goal is to document:
 - Each workflow example doc should capture one concrete dataflow or automation flow.
 - Build prompt and implementation-guidance docs live under `02_build/` and use numbered filenames starting at `00_...`.
 - UI-specific product and interaction docs live under `03_ui/` and use numbered filenames starting at `00_...`.
+- Execution-specific runtime contract docs live under `04_execution/` and use numbered filenames starting at `01_...`.
 - When a major product or technical direction changes, update the relevant doc and add an entry to `00_foundation/11_decision_log.md`.
 - Prefer extending an existing numbered doc before creating a new one for overlapping content.
 
@@ -45,7 +46,7 @@ The goal is to document:
 - `00_foundation/20_app_auth_and_workspace_spec.md`: v1 draft for auth, protected routes, workspace persistence, and the real application shell
 - `00_foundation/21_workflow_management_spec.md`: v1 draft for workflow identity, storage, lifecycle, routing, archive behavior, and per-workspace workflow management
 - `00_foundation/22_run_history_and_debugging_spec.md`: v1 draft for durable run summaries, event history, log persistence, retrieval layers, and retention direction
-
+- `00_foundation/23_storage_root_and_identity_architecture.md`: rooted local-first storage layout, control-plane vs data-plane boundaries, Google identity mapping direction, and local-to-cloud transplant model
 ## UI
 
 - `03_ui/00_frontend_canvas.md`: React Flow editor responsibilities, shell model, visual direction, node design direction, and UX rules
@@ -55,6 +56,14 @@ The goal is to document:
 - `03_ui/04_ui_lab_workflow.md`: workflow for building isolated HTML/CSS design samples, reviewing variants, and graduating approved patterns into the real UI
 - `03_ui/05_node_design_inventory.md`: node-design approval backlog, shared visual archetypes, and the candidate node list keyed for approve/reject decisions
 - `03_ui/06_workflow_management_ui.md`: workflow-list, create/open/delete flow, canvas relationship, and workflow-management screen behavior
+
+## Execution
+
+- `04_execution/01_node_io_and_execution_contracts.md`: shared node input/output execution rules, v1 fan-out behavior, and the running per-node contract table
+- `04_execution/02_output_contract.md`: node output rules, inline-vs-ref direction, and the running per-node output contract table
+- `04_execution/03_execution_contract.md`: runtime execution shape, preconditions, outcomes, and the running per-node execution contract table
+- `04_execution/04_adapter_contract.md`: runtime-to-adapter boundary, return/error rules, and the running per-node adapter contract table
+- `04_execution/05_multi_edge_semantics.md`: outbound fan-out rules, deferred fan-in semantics, and the running per-node edge-participation contract table
 
 ## Workflows
 

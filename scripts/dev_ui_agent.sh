@@ -17,6 +17,14 @@ UI_HTTP_URL="${STITCHLY_UI_HTTP_URL:-http://127.0.0.1:5173}"
 BACKEND_BIND_ADDR="${STITCHLY_SERVER_ADDR:-127.0.0.1:3000}"
 UI_BIND_HOST="${STITCHLY_UI_HOST:-127.0.0.1}"
 UI_PORT="${STITCHLY_UI_PORT:-5173}"
+BACKEND_ENV_FILE="$ROOT_DIR/.env.server"
+
+if [[ -f "$BACKEND_ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$BACKEND_ENV_FILE"
+  set +a
+fi
 
 mkdir -p "$PID_DIR" "$LOG_DIR"
 

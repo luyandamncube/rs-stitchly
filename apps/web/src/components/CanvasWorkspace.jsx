@@ -10,6 +10,10 @@ import {
   getConnections,
   getNodeDefinitions,
   getRunSnapshot,
+  getWorkspaceRun,
+  getWorkspaceRunEvents,
+  getWorkspaceRunLogs,
+  getWorkspaceRuns,
   getWorkflow,
   getWorkflowState,
   getWorkflows,
@@ -68,6 +72,12 @@ export default function CanvasWorkspace({
   const [validation, setValidation] = useState(null);
   const [runSnapshot, setRunSnapshot] = useState(null);
   const [runHistory, setRunHistory] = useState([]);
+  const [runDetailState, setRunDetailState] = useState({
+    status: 'idle',
+    runId: null,
+    events: [],
+    logs: []
+  });
   const [events, setEvents] = useState([]);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
   const [configDraft, setConfigDraft] = useState('{}');
@@ -127,6 +137,16 @@ export default function CanvasWorkspace({
     floatingCard?.type === 'run-detail'
       ? runHistory.find((run) => run.run_id === floatingCard.runId) ?? runSnapshot
       : runSnapshot;
+  const activeRunEvents =
+    floatingCard?.type === 'run-detail' && runDetailState.runId === floatingCard.runId
+      ? runDetailState.events
+      : activeRun?.run_id === runSnapshot?.run_id
+        ? deferredEvents
+        : [];
+  const activeRunLogs =
+    floatingCard?.type === 'run-detail' && runDetailState.runId === floatingCard.runId
+      ? runDetailState.logs
+      : activeRun?.logs ?? [];
 
   useEffect(() => {
     let cancelled = false;
@@ -340,6 +360,12 @@ export default function CanvasWorkspace({
         setValidation(null);
         setRunSnapshot(null);
         setRunHistory([]);
+        setRunDetailState({
+          status: 'idle',
+          runId: null,
+          events: [],
+          logs: []
+        });
         setEvents([]);
         setSelectedNodeId(null);
         setConfigDraft('{}');
@@ -375,6 +401,48 @@ export default function CanvasWorkspace({
       cancelled = true;
     };
   }, [onWorkflowMissing, onWorkflowResolved, workflowId, workspaceId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadWorkspaceRunHistory() {
+      if (!workspaceId || !activeWorkflowId) {
+        if (!workspaceId) {
+          setRunHistory([]);
+          setRunDetailState({
+            status: 'idle',
+            runId: null,
+            events: [],
+            logs: []
+          });
+        }
+        return;
+      }
+
+      try {
+        const response = await getWorkspaceRuns(workspaceId);
+        if (cancelled) {
+          return;
+        }
+
+        setRunHistory(
+          response.runs
+            .filter((run) => run.workflow_id === activeWorkflowId)
+            .slice(0, 8)
+        );
+      } catch (error) {
+        if (!cancelled) {
+          setBackendStatus('offline');
+        }
+      }
+    }
+
+    void loadWorkspaceRunHistory();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkflowId, workspaceId]);
 
   useEffect(() => {
     if (!workspaceId || !activeWorkflowId || workflowSyncState === 'loading') {
@@ -430,10 +498,65 @@ export default function CanvasWorkspace({
 
   async function refreshRun(runId) {
     try {
-      const snapshot = await getRunSnapshot(runId);
+      const snapshot = workspaceId
+        ? (await getWorkspaceRun(workspaceId, runId)).run
+        : await getRunSnapshot(runId);
       setRunSnapshot(snapshot);
       upsertRunHistory(snapshot);
     } catch (error) {
+      setBackendStatus('stream-error');
+    }
+  }
+
+  async function refreshRunDetail(runId) {
+    if (!runId) {
+      return;
+    }
+
+    if (!workspaceId) {
+      const fallbackRun =
+        runHistory.find((run) => run.run_id === runId) ??
+        (runSnapshot?.run_id === runId ? runSnapshot : null);
+      setRunDetailState({
+        status: 'ready',
+        runId,
+        events: fallbackRun?.run_id === runSnapshot?.run_id ? deferredEvents : [],
+        logs: fallbackRun?.logs ?? []
+      });
+      return;
+    }
+
+    setRunDetailState((current) => ({
+      status: 'loading',
+      runId,
+      events: current.runId === runId ? current.events : [],
+      logs: current.runId === runId ? current.logs : []
+    }));
+
+    try {
+      const [runResponse, eventsResponse, logsResponse] = await Promise.all([
+        getWorkspaceRun(workspaceId, runId),
+        getWorkspaceRunEvents(workspaceId, runId),
+        getWorkspaceRunLogs(workspaceId, runId)
+      ]);
+
+      setRunSnapshot((current) =>
+        current?.run_id === runId ? runResponse.run : current
+      );
+      upsertRunHistory(runResponse.run);
+      setRunDetailState({
+        status: 'ready',
+        runId,
+        events: eventsResponse.events,
+        logs: logsResponse.logs
+      });
+    } catch (error) {
+      setRunDetailState((current) => ({
+        status: 'error',
+        runId,
+        events: current.runId === runId ? current.events : [],
+        logs: current.runId === runId ? current.logs : []
+      }));
       setBackendStatus('stream-error');
     }
   }
@@ -486,13 +609,17 @@ export default function CanvasWorkspace({
       setFloatingCard({ type: 'run-detail', runId: response.run_id });
       setBackendStatus('connected');
       await refreshRun(response.run_id);
+      await refreshRunDetail(response.run_id);
 
       closeStreamRef.current = subscribeToRun(response.run_id, {
         onEvent(event) {
           startTransition(() => {
             setEvents((current) => [...current, event]);
           });
-          refreshRun(response.run_id);
+          void refreshRun(response.run_id);
+          if (workspaceId) {
+            void refreshRunDetail(response.run_id);
+          }
         },
         onError() {
           setBackendStatus('stream-error');
@@ -527,6 +654,12 @@ export default function CanvasWorkspace({
     setValidation(null);
     setRunSnapshot(null);
     setRunHistory([]);
+    setRunDetailState({
+      status: 'idle',
+      runId: null,
+      events: [],
+      logs: []
+    });
     setEvents([]);
     setSelectedNodeId(null);
     setConfigDraft('{}');
@@ -649,6 +782,7 @@ export default function CanvasWorkspace({
     setActiveSection('runs');
     setDrawerOpen(true);
     setFloatingCard({ type: 'run-detail', runId });
+    void refreshRunDetail(runId);
   }
 
   function handleSearchResult(result) {
@@ -939,7 +1073,7 @@ export default function CanvasWorkspace({
                       { label: 'Run', value: activeRun?.run_id ?? 'Unknown' },
                       { label: 'Status', value: humanizeToken(activeRun?.status) },
                       { label: 'Nodes', value: String(activeRun?.node_runs?.length ?? 0) },
-                      { label: 'Logs', value: String(activeRun?.logs?.length ?? 0) }
+                      { label: 'Logs', value: String(activeRunLogs.length) }
                     ]}
                   />
 
@@ -963,9 +1097,9 @@ export default function CanvasWorkspace({
                   </SectionBlock>
 
                   <SectionBlock title="Recent Events">
-                    {deferredEvents.length ? (
+                    {activeRunEvents.length ? (
                       <div className="drawer-list">
-                        {deferredEvents.slice(-5).reverse().map((event) => (
+                        {activeRunEvents.slice(-5).reverse().map((event) => (
                           <DrawerItemButton
                             key={event.event_id}
                             icon=">"
@@ -981,9 +1115,9 @@ export default function CanvasWorkspace({
                   </SectionBlock>
 
                   <SectionBlock title="Recent Logs">
-                    {activeRun?.logs?.length ? (
+                    {activeRunLogs.length ? (
                       <div className="drawer-list">
-                        {activeRun.logs.slice(-4).reverse().map((entry, index) => (
+                        {activeRunLogs.slice(-4).reverse().map((entry, index) => (
                           <DrawerItemButton
                             key={`${entry.timestamp}-${index}`}
                             icon="L"

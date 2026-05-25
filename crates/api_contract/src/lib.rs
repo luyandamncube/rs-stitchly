@@ -266,6 +266,11 @@ pub struct LoginRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GoogleAuthCodeRequest {
+    pub code: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CreateWorkspaceRequest {
     pub name: String,
 }
@@ -338,6 +343,23 @@ pub struct DeleteWorkflowResponse {
 pub struct WorkspaceRunsResponse {
     #[serde(default)]
     pub runs: Vec<RunSnapshot>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct WorkspaceRunResponse {
+    pub run: RunSnapshot,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct RunEventsResponse {
+    #[serde(default)]
+    pub events: Vec<RunEvent>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct RunLogsResponse {
+    #[serde(default)]
+    pub logs: Vec<RunLogEntry>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

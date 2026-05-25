@@ -9,13 +9,14 @@ function buildUrl(pathname) {
 }
 
 async function request(pathname, options = {}) {
+  const { headers: optionHeaders, ...restOptions } = options;
   const response = await fetch(buildUrl(pathname), {
     credentials: 'include',
+    ...restOptions,
     headers: {
       'content-type': 'application/json',
-      ...(options.headers ?? {})
+      ...(optionHeaders ?? {})
     },
-    ...options
   });
 
   const payload = await response.json().catch(() => ({}));
@@ -38,6 +39,16 @@ export function getSession() {
 export function login(email, password) {
   return request('/api/auth/login', {
     body: JSON.stringify({ email, password }),
+    method: 'POST'
+  });
+}
+
+export function loginWithGoogleCode(code) {
+  return request('/api/auth/google/code', {
+    body: JSON.stringify({ code }),
+    headers: {
+      'x-requested-with': 'XmlHttpRequest'
+    },
     method: 'POST'
   });
 }
@@ -100,6 +111,18 @@ export function updateWorkflowState(workspaceId, lastOpenedWorkflowId) {
 
 export function getWorkspaceRuns(workspaceId) {
   return request(`/api/workspaces/${workspaceId}/runs`);
+}
+
+export function getWorkspaceRun(workspaceId, runId) {
+  return request(`/api/workspaces/${workspaceId}/runs/${runId}`);
+}
+
+export function getWorkspaceRunEvents(workspaceId, runId) {
+  return request(`/api/workspaces/${workspaceId}/runs/${runId}/events`);
+}
+
+export function getWorkspaceRunLogs(workspaceId, runId) {
+  return request(`/api/workspaces/${workspaceId}/runs/${runId}/logs`);
 }
 
 export function createWorkspaceRun(workspaceId, workflow) {

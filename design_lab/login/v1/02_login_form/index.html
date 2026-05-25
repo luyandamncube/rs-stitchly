@@ -44,6 +44,39 @@
             <div class="login-form-card__content login-form-card__content--form-study">
               <h1 class="login-form-card__title">Log in</h1>
 
+              <button class="login-auth-provider" type="button">
+                <span class="login-auth-provider__label">Google</span>
+                <span class="login-auth-provider__track">
+                  <span class="login-auth-provider__value">Continue with Google</span>
+                  <span class="login-auth-provider__icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" role="presentation">
+                      <path
+                        d="M21.64 12.2046C21.64 11.3875 21.5667 10.6012 21.4305 9.84668H12V13.7242H17.3891C17.157 14.9743 16.4523 16.0334 15.3933 16.7501V19.2652H18.6324C20.5289 17.5198 21.64 14.9429 21.64 12.2046Z"
+                        fill="currentColor"
+                      />
+                      <path
+                        d="M12 22.0001C14.7 22.0001 16.9625 21.1048 18.6324 19.2653L15.3933 16.7502C14.4979 17.3503 13.3541 17.7049 12 17.7049C9.3959 17.7049 7.19317 15.9459 6.407 13.5818H3.05884V16.1787C4.71912 19.477 8.12948 22.0001 12 22.0001Z"
+                        fill="currentColor"
+                      />
+                      <path
+                        d="M6.407 13.5818C6.207 12.9817 6.09308 12.3409 6.09308 11.6818C6.09308 11.0228 6.207 10.3819 6.407 9.78183V7.18494H3.05884C2.37587 8.54606 2 10.0788 2 11.6818C2 13.2848 2.37587 14.8176 3.05884 16.1787L6.407 13.5818Z"
+                        fill="currentColor"
+                      />
+                      <path
+                        d="M12 5.65932C13.4778 5.65932 14.8042 6.1685 15.8463 7.16675L18.7058 4.30726C16.9584 2.70418 14.696 1.36395 12 1.36395C8.12948 1.36395 4.71912 3.88703 3.05884 7.18491L6.407 9.7818C7.19317 7.4177 9.3959 5.65932 12 5.65932Z"
+                        fill="currentColor"
+                      />
+                    </svg>
+                  </span>
+                </span>
+              </button>
+
+              <div class="login-auth-divider" aria-hidden="true">
+                <span class="login-auth-divider__line"></span>
+                <span class="login-auth-divider__label">or use your email</span>
+                <span class="login-auth-divider__line"></span>
+              </div>
+
               <div class="login-form-shell login-form-shell--study">
                 <div class="login-form-shell__row login-form-shell__row--study">
                   <label class="login-auth-field" aria-label="Email field study">
@@ -86,7 +119,7 @@
     </main>
 
     <div class="login-lab-note">
-      `02_login_form` focuses on field hierarchy and CTA balance inside the auth card.
+      `02_login_form` now also studies a secondary Google sign-in path inside the same auth card.
     </div>
   </body>
 </html>

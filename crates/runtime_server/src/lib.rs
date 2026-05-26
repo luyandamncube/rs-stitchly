@@ -1,13 +1,14 @@
-use std::{convert::Infallible, env};
+use std::{convert::Infallible, env, fs, path::Path as FsPath};
 
 use api_contract::{
     AuthSessionResponse, ConnectionsResponse, CreateRunRequest, CreateWorkflowRequest,
-    CreateWorkspaceRequest, DeleteWorkflowResponse, ErrorResponse, GoogleAuthCodeRequest,
-    LoginRequest,
-    NodeDefinitionsResponse, RunEventsResponse, RunLogsResponse, RunSnapshot, UpdateWorkflowRequest,
-    UpdateWorkflowStateRequest, ValidateWorkflowRequest, ValidateWorkflowResponse,
-    WorkflowListResponse, WorkflowResponse, WorkflowStateResponse, WorkspaceListResponse,
-    WorkspaceResponse, WorkspaceRunResponse, WorkspaceRunsResponse,
+    CreateWorkspaceRequest, DeleteWorkflowResponse, ErrorResponse, EventTarget, EventTargetKind,
+    GoogleAuthCodeRequest, LogLevel, LoginRequest, NodeDefinitionsResponse, NodeRunStatus,
+    RunErrorCategory, RunErrorSummary, RunEvent, RunEventType, RunEventsResponse, RunLogsResponse,
+    RunSnapshot, RunStatus, UpdateWorkflowRequest, UpdateWorkflowStateRequest,
+    ValidateWorkflowRequest, ValidateWorkflowResponse, WorkflowListResponse, WorkflowResponse,
+    WorkflowStateResponse, WorkspaceListResponse, WorkspaceResponse, WorkspaceRunResponse,
+    WorkspaceRunsResponse,
 };
 use axum::{
     extract::{Path, State},
@@ -24,6 +25,7 @@ use platform::{AuthenticatedSession, PlatformStore};
 use runtime_core::{RunEventSubscription, RuntimeError, RuntimeService};
 use serde::Deserialize;
 use tokio_stream::wrappers::BroadcastStream;
+use uuid::Uuid;
 
 pub mod platform;
 
@@ -66,14 +68,17 @@ struct GoogleUserInfoResponse {
 }
 
 pub fn app(runtime: RuntimeService, platform: PlatformStore) -> Router {
-    let google_auth = GoogleAuthClient::from_env();
+    let google_auth = GoogleAuthClient::from_env_or_local_file();
 
     Router::new()
         .route("/api/auth/login", post(login))
         .route("/api/auth/google/code", post(login_with_google_code))
         .route("/api/auth/logout", post(logout))
         .route("/api/auth/session", get(get_session))
-        .route("/api/workspaces", get(list_workspaces).post(create_workspace))
+        .route(
+            "/api/workspaces",
+            get(list_workspaces).post(create_workspace),
+        )
         .route("/api/workspaces/:workspace_id", get(get_workspace))
         .route(
             "/api/workspaces/:workspace_id/workflows",
@@ -98,6 +103,10 @@ pub fn app(runtime: RuntimeService, platform: PlatformStore) -> Router {
             get(get_workspace_run),
         )
         .route(
+            "/api/workspaces/:workspace_id/runs/:run_id/cancel",
+            post(cancel_workspace_run),
+        )
+        .route(
             "/api/workspaces/:workspace_id/runs/:run_id/events",
             get(get_workspace_run_events),
         )
@@ -108,6 +117,7 @@ pub fn app(runtime: RuntimeService, platform: PlatformStore) -> Router {
         .route("/api/workflows/validate", post(validate_workflow))
         .route("/api/runs", post(create_run))
         .route("/api/runs/:run_id", get(get_run))
+        .route("/api/runs/:run_id/cancel", post(cancel_run))
         .route("/api/runs/:run_id/events", get(stream_run_events))
         .route("/api/node-definitions", get(list_node_definitions))
         .route("/api/connections", get(list_connections))
@@ -129,6 +139,44 @@ impl GoogleAuthClient {
         Some(Self {
             client_id,
             client_secret,
+            http: reqwest::Client::new(),
+        })
+    }
+
+    fn from_env_or_local_file() -> Option<Self> {
+        Self::from_env().or_else(|| Self::from_env_file(".env.server"))
+    }
+
+    fn from_env_file(path: &str) -> Option<Self> {
+        let contents = fs::read_to_string(FsPath::new(path)).ok()?;
+        let mut client_id = None;
+        let mut client_secret = None;
+
+        for line in contents.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+
+            let Some((raw_key, raw_value)) = trimmed.split_once('=') else {
+                continue;
+            };
+            let key = raw_key.trim();
+            let value = raw_value.trim().trim_matches('"').trim_matches('\'');
+            match key {
+                "STITCHLY_GOOGLE_CLIENT_ID" if !value.is_empty() => {
+                    client_id = Some(value.to_string())
+                }
+                "STITCHLY_GOOGLE_CLIENT_SECRET" if !value.is_empty() => {
+                    client_secret = Some(value.to_string())
+                }
+                _ => {}
+            }
+        }
+
+        Some(Self {
+            client_id: client_id?,
+            client_secret: client_secret?,
             http: reqwest::Client::new(),
         })
     }
@@ -205,7 +253,10 @@ async fn login(
         .ok_or_else(|| ApiError::unauthorized("Invalid email or password.".to_string()))?;
 
     let mut headers = HeaderMap::new();
-    headers.insert(header::SET_COOKIE, session_cookie_header(&session.session_id));
+    headers.insert(
+        header::SET_COOKIE,
+        session_cookie_header(&session.session_id),
+    );
     Ok((headers, Json(session.session)))
 }
 
@@ -216,7 +267,8 @@ async fn login_with_google_code(
 ) -> Result<(HeaderMap, Json<AuthSessionResponse>), ApiError> {
     let google_auth = state
         .google_auth
-        .as_ref()
+        .clone()
+        .or_else(GoogleAuthClient::from_env_or_local_file)
         .ok_or_else(|| ApiError::unavailable("Google login is not configured.".to_string()))?;
 
     let requested_with = headers
@@ -245,7 +297,10 @@ async fn login_with_google_code(
         .map_err(ApiError::internal)?;
 
     let mut response_headers = HeaderMap::new();
-    response_headers.insert(header::SET_COOKIE, session_cookie_header(&session.session_id));
+    response_headers.insert(
+        header::SET_COOKIE,
+        session_cookie_header(&session.session_id),
+    );
     Ok((response_headers, Json(session.session)))
 }
 
@@ -370,7 +425,12 @@ async fn update_workflow(
     let session = require_session(&state, &headers)?;
     let workflow = state
         .platform
-        .update_workflow(&session.user_id, &workspace_id, &workflow_id, &request.workflow)
+        .update_workflow(
+            &session.user_id,
+            &workspace_id,
+            &workflow_id,
+            &request.workflow,
+        )
         .map_err(map_workflow_persistence_error)?
         .ok_or_else(|| {
             ApiError::not_found(format!(
@@ -454,8 +514,8 @@ async fn list_workspace_runs(
         {
             runs.push(snapshot);
         } else {
-            let snapshot: RunSnapshot = serde_json::from_str(&stored.snapshot_json)
-                .map_err(ApiError::internal)?;
+            let snapshot: RunSnapshot =
+                serde_json::from_str(&stored.snapshot_json).map_err(ApiError::internal)?;
             runs.push(snapshot);
         }
     }
@@ -472,7 +532,11 @@ async fn create_workspace_run(
     let session = require_session(&state, &headers)?;
     state
         .platform
-        .get_workflow(&session.user_id, &workspace_id, &request.workflow.workflow_id)
+        .get_workflow(
+            &session.user_id,
+            &workspace_id,
+            &request.workflow.workflow_id,
+        )
         .map_err(ApiError::internal)?
         .ok_or_else(|| {
             ApiError::not_found(format!(
@@ -516,12 +580,7 @@ async fn create_workspace_run(
                         let history = runtime.event_history(&run_id).await.unwrap_or_default();
 
                         if platform
-                            .persist_run_history(
-                                &workspace_id,
-                                Some(&user_id),
-                                &snapshot,
-                                &history,
-                            )
+                            .persist_run_history(&workspace_id, Some(&user_id), &snapshot, &history)
                             .is_err()
                         {
                             break;
@@ -569,7 +628,75 @@ async fn get_workspace_run(
         .get_workspace_run_record(&session.user_id, &workspace_id, &run_id)
         .map_err(ApiError::internal)?
         .ok_or_else(|| workspace_run_not_found(&workspace_id, &run_id))?;
-    let snapshot = deserialize_workspace_run_snapshot(&stored.snapshot_json).map_err(ApiError::internal)?;
+    let snapshot =
+        deserialize_workspace_run_snapshot(&stored.snapshot_json).map_err(ApiError::internal)?;
+
+    Ok(Json(WorkspaceRunResponse { run: snapshot }))
+}
+
+async fn cancel_workspace_run(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((workspace_id, run_id)): Path<(String, String)>,
+) -> Result<Json<WorkspaceRunResponse>, ApiError> {
+    let session = require_session(&state, &headers)?;
+
+    let stored = state
+        .platform
+        .get_workspace_run_record(&session.user_id, &workspace_id, &run_id)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| workspace_run_not_found(&workspace_id, &run_id))?;
+    let stored_snapshot =
+        deserialize_workspace_run_snapshot(&stored.snapshot_json).map_err(ApiError::internal)?;
+
+    match state.runtime.cancel_run(&run_id).await {
+        Ok(_) => {}
+        Err(RuntimeError::RunNotFound(_)) => {
+            if !is_cancellable_run_status(&stored_snapshot.status) {
+                return Err(ApiError::conflict(
+                    "Only active runs can be cancelled.".to_string(),
+                ));
+            }
+
+            let events = state
+                .platform
+                .list_workspace_run_events(&session.user_id, &workspace_id, &run_id)
+                .map_err(ApiError::internal)?;
+            let cancelled_snapshot = reconcile_persisted_run_as_cancelled(stored_snapshot);
+            let reconciled_history =
+                build_persisted_cancellation_history(events, &cancelled_snapshot);
+
+            state
+                .platform
+                .persist_run_history(
+                    &workspace_id,
+                    Some(&session.user_id),
+                    &cancelled_snapshot,
+                    &reconciled_history,
+                )
+                .map_err(ApiError::internal)?;
+
+            return Ok(Json(WorkspaceRunResponse {
+                run: cancelled_snapshot,
+            }));
+        }
+        Err(error) => return Err(ApiError::from(error)),
+    }
+
+    let snapshot = state
+        .runtime
+        .get_run(&run_id)
+        .await
+        .ok_or_else(|| ApiError::not_found(format!("Run `{run_id}` was not found.")))?;
+    let history = state
+        .runtime
+        .event_history(&run_id)
+        .await
+        .unwrap_or_default();
+    state
+        .platform
+        .persist_run_history(&workspace_id, Some(&session.user_id), &snapshot, &history)
+        .map_err(ApiError::internal)?;
 
     Ok(Json(WorkspaceRunResponse { run: snapshot }))
 }
@@ -592,7 +719,11 @@ async fn get_workspace_run_events(
     .map_err(ApiError::internal)?
     .is_some()
     {
-        let events = state.runtime.event_history(&run_id).await.unwrap_or_default();
+        let events = state
+            .runtime
+            .event_history(&run_id)
+            .await
+            .unwrap_or_default();
         return Ok(Json(RunEventsResponse { events }));
     }
 
@@ -646,8 +777,11 @@ async fn get_workspace_run_logs(
         return Ok(Json(RunLogsResponse { logs }));
     }
 
-    let snapshot = deserialize_workspace_run_snapshot(&stored.snapshot_json).map_err(ApiError::internal)?;
-    Ok(Json(RunLogsResponse { logs: snapshot.logs }))
+    let snapshot =
+        deserialize_workspace_run_snapshot(&stored.snapshot_json).map_err(ApiError::internal)?;
+    Ok(Json(RunLogsResponse {
+        logs: snapshot.logs,
+    }))
 }
 
 async fn validate_workflow(
@@ -679,6 +813,19 @@ async fn get_run(
         .await
         .ok_or_else(|| ApiError::not_found(format!("Run `{run_id}` was not found.")))?;
     Ok(Json(snapshot))
+}
+
+async fn cancel_run(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<Json<RunSnapshot>, ApiError> {
+    match state.runtime.cancel_run(&run_id).await {
+        Ok(snapshot) => Ok(Json(snapshot)),
+        Err(RuntimeError::RunNotFound(_)) => Err(ApiError::conflict(
+            "Only active runs can be cancelled.".to_string(),
+        )),
+        Err(error) => Err(ApiError::from(error)),
+    }
 }
 
 async fn stream_run_events(
@@ -759,13 +906,129 @@ fn is_terminal_run_status(status: &api_contract::RunStatus) -> bool {
     )
 }
 
+fn is_cancellable_run_status(status: &RunStatus) -> bool {
+    matches!(
+        status,
+        RunStatus::Created
+            | RunStatus::Queued
+            | RunStatus::Planning
+            | RunStatus::Running
+            | RunStatus::Cancelling
+    )
+}
+
+fn reconcile_persisted_run_as_cancelled(mut snapshot: RunSnapshot) -> RunSnapshot {
+    let now = chrono::Utc::now();
+    let cancellation_error = cancelled_run_error_summary();
+
+    snapshot.status = RunStatus::Cancelled;
+    snapshot.finished_at = Some(now);
+    snapshot.error = Some(cancellation_error.clone());
+
+    for node_run in &mut snapshot.node_runs {
+        match node_run.status {
+            NodeRunStatus::Succeeded | NodeRunStatus::Failed | NodeRunStatus::Skipped => {}
+            NodeRunStatus::Cancelled => {
+                node_run.finished_at = node_run.finished_at.or(Some(now));
+                node_run.error = node_run.error.clone().or(Some(cancellation_error.clone()));
+            }
+            _ => {
+                node_run.status = NodeRunStatus::Cancelled;
+                node_run.finished_at = Some(now);
+                node_run.error = Some(cancellation_error.clone());
+            }
+        }
+    }
+
+    snapshot
+}
+
+fn build_persisted_cancellation_history(
+    mut events: Vec<RunEvent>,
+    snapshot: &RunSnapshot,
+) -> Vec<RunEvent> {
+    let now = snapshot.finished_at.unwrap_or_else(chrono::Utc::now);
+    let next_sequence = events.last().map(|event| event.sequence + 1).unwrap_or(1);
+    let already_requested = events
+        .iter()
+        .any(|event| event.event_type == RunEventType::CancellationRequested);
+    let already_cancelled = events
+        .iter()
+        .any(|event| event.event_type == RunEventType::RunCancelled);
+
+    let mut sequence = next_sequence;
+
+    if !already_requested {
+        events.push(RunEvent {
+            event_id: format!("evt_{}", Uuid::new_v4().simple()),
+            run_id: snapshot.run_id.clone(),
+            sequence,
+            timestamp: now,
+            event_type: RunEventType::CancellationRequested,
+            target: EventTarget {
+                kind: EventTargetKind::Run,
+                node_id: None,
+            },
+            payload: serde_json::json!({ "status": RunStatus::Cancelling }),
+        });
+        sequence += 1;
+    }
+
+    if !already_cancelled {
+        events.push(RunEvent {
+            event_id: format!("evt_{}", Uuid::new_v4().simple()),
+            run_id: snapshot.run_id.clone(),
+            sequence,
+            timestamp: now,
+            event_type: RunEventType::NodeLog,
+            target: EventTarget {
+                kind: EventTargetKind::Run,
+                node_id: None,
+            },
+            payload: serde_json::json!({
+                "level": LogLevel::Warn,
+                "message": "Run was reconciled as cancelled because no live runtime task was found."
+            }),
+        });
+        sequence += 1;
+
+        events.push(RunEvent {
+            event_id: format!("evt_{}", Uuid::new_v4().simple()),
+            run_id: snapshot.run_id.clone(),
+            sequence,
+            timestamp: now,
+            event_type: RunEventType::RunCancelled,
+            target: EventTarget {
+                kind: EventTargetKind::Run,
+                node_id: None,
+            },
+            payload: serde_json::json!({
+                "status": RunStatus::Cancelled,
+                "error": cancelled_run_error_summary(),
+            }),
+        });
+    }
+
+    events
+}
+
+fn cancelled_run_error_summary() -> RunErrorSummary {
+    RunErrorSummary {
+        category: RunErrorCategory::Cancellation,
+        message: "Run cancelled by user.".to_string(),
+    }
+}
+
 fn workspace_run_not_found(workspace_id: &str, run_id: &str) -> ApiError {
     ApiError::not_found(format!(
         "Run `{run_id}` was not found in workspace `{workspace_id}`."
     ))
 }
 
-fn load_session(state: &AppState, headers: &HeaderMap) -> anyhow::Result<Option<AuthenticatedSession>> {
+fn load_session(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> anyhow::Result<Option<AuthenticatedSession>> {
     let Some(session_id) = read_session_cookie(headers) else {
         return Ok(None);
     };
@@ -773,7 +1036,10 @@ fn load_session(state: &AppState, headers: &HeaderMap) -> anyhow::Result<Option<
     state.platform.load_session(&session_id)
 }
 
-fn require_session(state: &AppState, headers: &HeaderMap) -> Result<AuthenticatedSession, ApiError> {
+fn require_session(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<AuthenticatedSession, ApiError> {
     load_session(state, headers)
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::unauthorized("Authentication required.".to_string()))
@@ -801,9 +1067,7 @@ fn session_cookie_header(session_id: &str) -> HeaderValue {
 }
 
 fn clear_session_cookie_header() -> HeaderValue {
-    HeaderValue::from_static(
-        "stitchly_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
-    )
+    HeaderValue::from_static("stitchly_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0")
 }
 
 fn unauthenticated_session() -> AuthSessionResponse {
@@ -922,9 +1186,9 @@ fn map_google_auth_error(error: GoogleAuthError) -> ApiError {
         GoogleAuthError::InvalidCode => {
             ApiError::unauthorized("Google sign-in could not be completed.".to_string())
         }
-        GoogleAuthError::InvalidIdentity => ApiError::bad_request(
-            "Google did not return a usable identity profile.".to_string(),
-        ),
+        GoogleAuthError::InvalidIdentity => {
+            ApiError::bad_request("Google did not return a usable identity profile.".to_string())
+        }
         GoogleAuthError::Transport(error) => ApiError::internal(error),
     }
 }
@@ -933,6 +1197,9 @@ fn map_google_auth_error(error: GoogleAuthError) -> ApiError {
 mod tests {
     use std::str;
 
+    use api_contract::{
+        RunErrorCategory, RunEventType, RunSnapshot, RunStatus, RunTrigger, TriggerKind,
+    };
     use axum::{
         body::Body,
         http::{Request, StatusCode},
@@ -1085,8 +1352,7 @@ mod tests {
             .header("content-type", "application/json")
             .header("cookie", &cookie)
             .body(Body::from(
-                serde_json::to_vec(&json!({ "name": "Product Ops" }))
-                    .expect("workspace body"),
+                serde_json::to_vec(&json!({ "name": "Product Ops" })).expect("workspace body"),
             ))
             .expect("request builds");
         let create_workspace_response = router
@@ -1126,7 +1392,10 @@ mod tests {
             serde_json::from_slice(&body).expect("session payload");
         assert!(session.authenticated);
         assert_eq!(session.workspaces.len(), 1);
-        assert_eq!(session.active_workspace_id, Some(workspace.workspace.workspace_id));
+        assert_eq!(
+            session.active_workspace_id,
+            Some(workspace.workspace.workspace_id)
+        );
     }
 
     #[tokio::test]
@@ -1170,8 +1439,7 @@ mod tests {
             .header("content-type", "application/json")
             .header("cookie", &cookie)
             .body(Body::from(
-                serde_json::to_vec(&json!({ "name": "Canvas Ops" }))
-                    .expect("workspace body"),
+                serde_json::to_vec(&json!({ "name": "Canvas Ops" })).expect("workspace body"),
             ))
             .expect("request builds");
         let create_workspace_response = router
@@ -1345,8 +1613,7 @@ mod tests {
             .header("content-type", "application/json")
             .header("cookie", &cookie)
             .body(Body::from(
-                serde_json::to_vec(&json!({ "name": "Run Ops" }))
-                    .expect("workspace body"),
+                serde_json::to_vec(&json!({ "name": "Run Ops" })).expect("workspace body"),
             ))
             .expect("request builds");
         let create_workspace_response = router
@@ -1548,5 +1815,379 @@ mod tests {
         let run_logs: api_contract::RunLogsResponse =
             serde_json::from_slice(&run_logs_body).expect("run logs payload");
         assert!(!run_logs.logs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn workspace_run_cancel_route_marks_run_cancelled() {
+        let router = app(
+            runtime_core::RuntimeService::default(),
+            PlatformStore::for_tests().expect("platform store"),
+        );
+
+        let login_request = Request::builder()
+            .method("POST")
+            .uri("/api/auth/login")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&json!({
+                    "email": "builder@stitchly.dev",
+                    "password": "stitchly"
+                }))
+                .expect("login request body"),
+            ))
+            .expect("request builds");
+        let login_response = router
+            .clone()
+            .oneshot(login_request)
+            .await
+            .expect("login response");
+        let cookie = login_response
+            .headers()
+            .get("set-cookie")
+            .expect("set-cookie header")
+            .to_str()
+            .expect("header utf8")
+            .split(';')
+            .next()
+            .expect("cookie pair")
+            .to_string();
+
+        let create_workspace_request = Request::builder()
+            .method("POST")
+            .uri("/api/workspaces")
+            .header("content-type", "application/json")
+            .header("cookie", &cookie)
+            .body(Body::from(
+                serde_json::to_vec(&json!({ "name": "Run Ops Cancel" })).expect("workspace body"),
+            ))
+            .expect("request builds");
+        let create_workspace_response = router
+            .clone()
+            .oneshot(create_workspace_request)
+            .await
+            .expect("workspace response");
+        let workspace_payload = create_workspace_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let workspace: api_contract::WorkspaceResponse =
+            serde_json::from_slice(&workspace_payload).expect("workspace payload");
+
+        let mut workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+        if let Some(text_input) = workflow
+            .nodes
+            .iter_mut()
+            .find(|node| node.node_id == "input_text")
+        {
+            text_input.config["execution"] = json!({
+                "wait_before_seconds": 0.25
+            });
+        }
+
+        let create_workflow_request = Request::builder()
+            .method("POST")
+            .uri(format!(
+                "/api/workspaces/{}/workflows",
+                workspace.workspace.workspace_id
+            ))
+            .header("content-type", "application/json")
+            .header("cookie", &cookie)
+            .body(Body::from(
+                serde_json::to_vec(&json!({ "workflow": workflow })).expect("workflow body"),
+            ))
+            .expect("request builds");
+        let create_workflow_response = router
+            .clone()
+            .oneshot(create_workflow_request)
+            .await
+            .expect("workflow response");
+        let workflow_payload = create_workflow_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let persisted_workflow: api_contract::WorkflowResponse =
+            serde_json::from_slice(&workflow_payload).expect("workflow payload");
+
+        let create_run_request = Request::builder()
+            .method("POST")
+            .uri(format!(
+                "/api/workspaces/{}/runs",
+                workspace.workspace.workspace_id
+            ))
+            .header("content-type", "application/json")
+            .header("cookie", &cookie)
+            .body(Body::from(
+                serde_json::to_vec(&json!({
+                    "workflow": persisted_workflow.definition,
+                    "trigger": { "kind": "manual" },
+                    "params": {}
+                }))
+                .expect("run body"),
+            ))
+            .expect("request builds");
+        let create_run_response = router
+            .clone()
+            .oneshot(create_run_request)
+            .await
+            .expect("run response");
+        let create_run_body = create_run_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let created_run: api_contract::CreateRunResponse =
+            serde_json::from_slice(&create_run_body).expect("run payload");
+
+        sleep(Duration::from_millis(40)).await;
+
+        let cancel_run_request = Request::builder()
+            .method("POST")
+            .uri(format!(
+                "/api/workspaces/{}/runs/{}/cancel",
+                workspace.workspace.workspace_id, created_run.run_id
+            ))
+            .header("cookie", &cookie)
+            .body(Body::empty())
+            .expect("request builds");
+        let cancel_run_response = router
+            .clone()
+            .oneshot(cancel_run_request)
+            .await
+            .expect("cancel response");
+        assert_eq!(cancel_run_response.status(), StatusCode::OK);
+
+        let mut run_detail = None;
+        for _ in 0..30 {
+            let get_run_request = Request::builder()
+                .method("GET")
+                .uri(format!(
+                    "/api/workspaces/{}/runs/{}",
+                    workspace.workspace.workspace_id, created_run.run_id
+                ))
+                .header("cookie", &cookie)
+                .body(Body::empty())
+                .expect("request builds");
+            let get_run_response = router
+                .clone()
+                .oneshot(get_run_request)
+                .await
+                .expect("run detail response");
+            let get_run_body = get_run_response
+                .into_body()
+                .collect()
+                .await
+                .expect("body")
+                .to_bytes();
+            let run_response: api_contract::WorkspaceRunResponse =
+                serde_json::from_slice(&get_run_body).expect("workspace run payload");
+
+            if run_response.run.status == api_contract::RunStatus::Cancelled {
+                run_detail = Some(run_response);
+                break;
+            }
+
+            sleep(Duration::from_millis(20)).await;
+        }
+
+        let run_detail = run_detail.expect("run reaches cancelled state");
+        assert_eq!(run_detail.run.status, api_contract::RunStatus::Cancelled);
+        assert!(run_detail
+            .run
+            .error
+            .as_ref()
+            .is_some_and(|error| error.category == api_contract::RunErrorCategory::Cancellation));
+
+        let run_events_request = Request::builder()
+            .method("GET")
+            .uri(format!(
+                "/api/workspaces/{}/runs/{}/events",
+                workspace.workspace.workspace_id, created_run.run_id
+            ))
+            .header("cookie", &cookie)
+            .body(Body::empty())
+            .expect("request builds");
+        let run_events_response = router
+            .oneshot(run_events_request)
+            .await
+            .expect("run events response");
+        let run_events_body = run_events_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let run_events: api_contract::RunEventsResponse =
+            serde_json::from_slice(&run_events_body).expect("run events payload");
+        assert!(run_events.events.iter().any(|event| {
+            event.event_type == api_contract::RunEventType::CancellationRequested
+        }));
+        assert!(run_events
+            .events
+            .iter()
+            .any(|event| event.event_type == api_contract::RunEventType::RunCancelled));
+    }
+
+    #[tokio::test]
+    async fn workspace_run_cancel_route_reconciles_stale_persisted_runs() {
+        let platform = PlatformStore::for_tests().expect("platform store");
+        let router = app(runtime_core::RuntimeService::default(), platform.clone());
+
+        let login_request = Request::builder()
+            .method("POST")
+            .uri("/api/auth/login")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&json!({
+                    "email": "builder@stitchly.dev",
+                    "password": "stitchly"
+                }))
+                .expect("login request body"),
+            ))
+            .expect("request builds");
+        let login_response = router
+            .clone()
+            .oneshot(login_request)
+            .await
+            .expect("login response");
+        let cookie = login_response
+            .headers()
+            .get("set-cookie")
+            .expect("set-cookie header")
+            .to_str()
+            .expect("header utf8")
+            .split(';')
+            .next()
+            .expect("cookie pair")
+            .to_string();
+
+        let create_workspace_request = Request::builder()
+            .method("POST")
+            .uri("/api/workspaces")
+            .header("content-type", "application/json")
+            .header("cookie", &cookie)
+            .body(Body::from(
+                serde_json::to_vec(&json!({ "name": "Stale Run Ops" })).expect("workspace body"),
+            ))
+            .expect("request builds");
+        let create_workspace_response = router
+            .clone()
+            .oneshot(create_workspace_request)
+            .await
+            .expect("workspace response");
+        let workspace_payload = create_workspace_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let workspace: api_contract::WorkspaceResponse =
+            serde_json::from_slice(&workspace_payload).expect("workspace payload");
+
+        let workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+        let create_workflow_request = Request::builder()
+            .method("POST")
+            .uri(format!(
+                "/api/workspaces/{}/workflows",
+                workspace.workspace.workspace_id
+            ))
+            .header("content-type", "application/json")
+            .header("cookie", &cookie)
+            .body(Body::from(
+                serde_json::to_vec(&json!({ "workflow": workflow })).expect("workflow body"),
+            ))
+            .expect("request builds");
+        let create_workflow_response = router
+            .clone()
+            .oneshot(create_workflow_request)
+            .await
+            .expect("workflow response");
+        let workflow_payload = create_workflow_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let persisted_workflow: api_contract::WorkflowResponse =
+            serde_json::from_slice(&workflow_payload).expect("workflow payload");
+
+        let started_at = chrono::Utc::now() - chrono::Duration::hours(2);
+        let stale_run = RunSnapshot {
+            run_id: "run_stale_cancel".to_string(),
+            workflow_id: persisted_workflow.workflow.workflow_id.clone(),
+            workflow_version: persisted_workflow.workflow.version,
+            status: RunStatus::Running,
+            trigger: RunTrigger {
+                kind: TriggerKind::Manual,
+            },
+            started_at: Some(started_at),
+            finished_at: None,
+            node_runs: vec![],
+            logs: vec![],
+            error: None,
+        };
+
+        platform
+            .persist_run_snapshot(
+                &workspace.workspace.workspace_id,
+                Some("usr_builder"),
+                &stale_run,
+            )
+            .expect("stale run persists");
+
+        let cancel_run_request = Request::builder()
+            .method("POST")
+            .uri(format!(
+                "/api/workspaces/{}/runs/{}/cancel",
+                workspace.workspace.workspace_id, stale_run.run_id
+            ))
+            .header("cookie", &cookie)
+            .body(Body::empty())
+            .expect("request builds");
+        let cancel_run_response = router
+            .clone()
+            .oneshot(cancel_run_request)
+            .await
+            .expect("cancel response");
+        assert_eq!(cancel_run_response.status(), StatusCode::OK);
+
+        let cancel_body = cancel_run_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let cancelled_run: api_contract::WorkspaceRunResponse =
+            serde_json::from_slice(&cancel_body).expect("cancel payload");
+        assert_eq!(cancelled_run.run.status, RunStatus::Cancelled);
+        assert!(cancelled_run
+            .run
+            .error
+            .as_ref()
+            .is_some_and(|error| error.category == RunErrorCategory::Cancellation));
+
+        let run_events = platform
+            .list_workspace_run_events(
+                "usr_builder",
+                &workspace.workspace.workspace_id,
+                &stale_run.run_id,
+            )
+            .expect("run events");
+        assert!(run_events
+            .iter()
+            .any(|event| event.event_type == RunEventType::CancellationRequested));
+        assert!(run_events
+            .iter()
+            .any(|event| event.event_type == RunEventType::RunCancelled));
     }
 }

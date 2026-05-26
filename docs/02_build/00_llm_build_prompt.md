@@ -118,6 +118,9 @@ Use these docs for these responsibilities:
 - `docs/00_foundation/23_storage_root_and_identity_architecture.md`
   Draft v1 direction for rooted local-first storage, user/workspace/workflow file ownership, Google-backed identity mapping into local users, and future cloud-hosted transplant strategy.
 
+- `docs/00_foundation/24_workflow_duckdb_storage_spec.md`
+  Draft v1 direction for one DuckDB file per workflow, workflow-root bootstrap shape, and the first workflow-local table schemas.
+
 - `docs/04_execution/01_node_io_and_execution_contracts.md`
   Shared node input/output rules, v1 fan-out behavior, and the running per-node execution contract table.
 
@@ -132,6 +135,9 @@ Use these docs for these responsibilities:
 
 - `docs/04_execution/05_multi_edge_semantics.md`
   Outbound fan-out rules, deferred fan-in semantics, and the running per-node edge-participation contract table.
+
+- `docs/04_execution/06_run_execution_implementation_spec.md`
+  Phased implementation plan for real workflow runs, live runtime-state UI, durable debugging, and workflow-local DuckDB integration.
 
 - `docs/03_ui/06_workflow_management_ui.md`
   Workflow list, create/open/delete UX, empty states, and how workflow management relates to the canvas route.
@@ -160,13 +166,15 @@ When docs overlap, prefer them in this order:
 15. `21_workflow_management_spec.md`
 16. `22_run_history_and_debugging_spec.md`
 17. `23_storage_root_and_identity_architecture.md`
-18. `04_execution/01_node_io_and_execution_contracts.md`
-19. `04_execution/02_output_contract.md`
-20. `04_execution/03_execution_contract.md`
-21. `04_execution/04_adapter_contract.md`
-22. `04_execution/05_multi_edge_semantics.md`
-23. `03_ui/06_workflow_management_ui.md`
-24. the remaining foundation and UI docs
+18. `24_workflow_duckdb_storage_spec.md`
+19. `04_execution/01_node_io_and_execution_contracts.md`
+20. `04_execution/02_output_contract.md`
+21. `04_execution/03_execution_contract.md`
+22. `04_execution/04_adapter_contract.md`
+23. `04_execution/05_multi_edge_semantics.md`
+24. `04_execution/06_run_execution_implementation_spec.md`
+25. `03_ui/06_workflow_management_ui.md`
+26. the remaining foundation and UI docs
 
 If details are missing:
 

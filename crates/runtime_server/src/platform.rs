@@ -1,6 +1,6 @@
 use std::{
-    fs,
-    path::Path,
+    env, fs,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
@@ -16,10 +16,11 @@ use argon2::{
     Argon2,
 };
 use chrono::{Duration, Utc};
+use duckdb::Connection as DuckDbConnection;
 use rand_core::OsRng;
 use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
-use workflow_schema::WorkflowDefinition;
+use workflow_schema::{TypedValue, WorkflowDefinition};
 
 const DEMO_EMAIL: &str = "builder@stitchly.dev";
 const DEMO_PASSWORD: &str = "stitchly";
@@ -29,6 +30,7 @@ const SESSION_TTL_DAYS: i64 = 30;
 #[derive(Clone)]
 pub struct PlatformStore {
     connection: Arc<Mutex<Connection>>,
+    storage_root: Arc<PathBuf>,
 }
 
 #[derive(Clone, Debug)]
@@ -52,18 +54,42 @@ impl PlatformStore {
             ensure_parent_dir(database_path)?;
         }
 
+        let storage_root = resolve_storage_root(database_path)?;
+        fs::create_dir_all(&storage_root).with_context(|| {
+            format!(
+                "failed to create storage root at `{}`",
+                storage_root.display()
+            )
+        })?;
+
+        Self::open_with_storage_root(database_path, storage_root)
+    }
+
+    fn open_with_storage_root(database_path: &str, storage_root: PathBuf) -> anyhow::Result<Self> {
+        if database_path != ":memory:" {
+            ensure_parent_dir(database_path)?;
+        }
+
         let connection = Connection::open(database_path)
             .with_context(|| format!("failed to open platform database at `{database_path}`"))?;
 
         let store = Self {
             connection: Arc::new(Mutex::new(connection)),
+            storage_root: Arc::new(storage_root),
         };
         store.initialize()?;
         Ok(store)
     }
 
     pub fn for_tests() -> anyhow::Result<Self> {
-        Self::open(":memory:")
+        let storage_root = unique_test_storage_root();
+        fs::create_dir_all(&storage_root).with_context(|| {
+            format!(
+                "failed to create test storage root at `{}`",
+                storage_root.display()
+            )
+        })?;
+        Self::open_with_storage_root(":memory:", storage_root)
     }
 
     pub fn authenticate(
@@ -109,10 +135,7 @@ impl PlatformStore {
         }))
     }
 
-    pub fn load_session(
-        &self,
-        session_id: &str,
-    ) -> anyhow::Result<Option<AuthenticatedSession>> {
+    pub fn load_session(&self, session_id: &str) -> anyhow::Result<Option<AuthenticatedSession>> {
         let connection = self.connection();
 
         let record = connection
@@ -229,7 +252,10 @@ impl PlatformStore {
                 "update users
                  set display_name = ?1
                  where user_id = ?2",
-                params![identity.display_name.as_str(), existing_user.user_id.as_str()],
+                params![
+                    identity.display_name.as_str(),
+                    existing_user.user_id.as_str()
+                ],
             )?;
             existing_user.user_id
         } else {
@@ -290,11 +316,7 @@ impl PlatformStore {
         })
     }
 
-    pub fn create_workspace(
-        &self,
-        user_id: &str,
-        name: &str,
-    ) -> anyhow::Result<WorkspaceSummary> {
+    pub fn create_workspace(&self, user_id: &str, name: &str) -> anyhow::Result<WorkspaceSummary> {
         let trimmed_name = name.trim();
         if trimmed_name.is_empty() {
             return Err(anyhow!("workspace name cannot be empty"));
@@ -314,7 +336,12 @@ impl PlatformStore {
         tx.execute(
             "insert into workspace_memberships (workspace_id, user_id, role, created_at)
              values (?1, ?2, ?3, ?4)",
-            params![workspace_id, user_id, role_to_db(WorkspaceMembershipRole::Owner), now],
+            params![
+                workspace_id,
+                user_id,
+                role_to_db(WorkspaceMembershipRole::Owner),
+                now
+            ],
         )?;
 
         let active_workspace_id: Option<String> = tx
@@ -453,7 +480,10 @@ impl PlatformStore {
         let definition: WorkflowDefinition = serde_json::from_str(&definition_json)
             .context("stored workflow definition is not valid JSON")?;
 
-        Ok(Some(WorkflowResponse { workflow, definition }))
+        Ok(Some(WorkflowResponse {
+            workflow,
+            definition,
+        }))
     }
 
     pub fn create_workflow(
@@ -465,8 +495,11 @@ impl PlatformStore {
         let connection = self.connection();
         ensure_workspace_access(&connection, user_id, workspace_id)?;
 
-        let stored_workflow =
-            normalize_workflow_definition(workflow, &workflow.workflow_id, workflow.version.max(1))?;
+        let stored_workflow = normalize_workflow_definition(
+            workflow,
+            &workflow.workflow_id,
+            workflow.version.max(1),
+        )?;
         let existing: Option<String> = connection
             .query_row(
                 "select workflow_id
@@ -486,18 +519,30 @@ impl PlatformStore {
         let now = Utc::now().to_rfc3339();
         let definition_json = serde_json::to_string(&stored_workflow)
             .context("failed to serialize workflow definition")?;
+        let workflow_root =
+            self.workflow_root_path(user_id, workspace_id, stored_workflow.workflow_id.as_str());
 
         let mut connection = connection;
         let tx = connection.transaction()?;
         tx.execute(
-            "insert into workflows (workspace_id, workflow_id, name, description, current_version, created_at, updated_at)
-             values (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "insert into workflows (
+                workspace_id,
+                workflow_id,
+                name,
+                description,
+                current_version,
+                storage_owner_user_id,
+                created_at,
+                updated_at
+             )
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 workspace_id,
                 stored_workflow.workflow_id.as_str(),
                 stored_workflow.name.as_str(),
                 stored_workflow.description.as_deref(),
                 stored_workflow.version,
+                user_id,
                 now,
                 now
             ],
@@ -513,7 +558,11 @@ impl PlatformStore {
                 now
             ],
         )?;
-        tx.commit()?;
+        self.bootstrap_workflow_storage(user_id, workspace_id, &stored_workflow)?;
+        if let Err(error) = tx.commit() {
+            let _ = fs::remove_dir_all(&workflow_root);
+            return Err(error.into());
+        }
 
         let workflow = workflow_summary(workspace_id, &stored_workflow);
         Ok(WorkflowResponse {
@@ -576,6 +625,7 @@ impl PlatformStore {
             params![workspace_id, workflow_id, stored_workflow.version, definition_json, now],
         )?;
         tx.commit()?;
+        self.bootstrap_workflow_storage(user_id, workspace_id, &stored_workflow)?;
 
         let workflow = workflow_summary(workspace_id, &stored_workflow);
         Ok(Some(WorkflowResponse {
@@ -738,7 +788,12 @@ impl PlatformStore {
         snapshot: &RunSnapshot,
     ) -> anyhow::Result<()> {
         let connection = self.connection();
-        persist_run_snapshot_row(&connection, workspace_id, requested_by_user_id, snapshot)
+        persist_run_snapshot_row(&connection, workspace_id, requested_by_user_id, snapshot)?;
+        drop(connection);
+        if should_sync_workflow_duckdb_run(snapshot) {
+            self.sync_workflow_duckdb_run(workspace_id, snapshot)?;
+        }
+        Ok(())
     }
 
     pub fn persist_run_history(
@@ -755,6 +810,10 @@ impl PlatformStore {
             persist_run_event_row(&tx, workspace_id, &snapshot.run_id, event)?;
         }
         tx.commit()?;
+        drop(connection);
+        if should_sync_workflow_duckdb_run(snapshot) {
+            self.sync_workflow_duckdb_run(workspace_id, snapshot)?;
+        }
         Ok(())
     }
 
@@ -825,9 +884,9 @@ impl PlatformStore {
                             )),
                         )
                     })?,
-                    event_type: run_event_type_from_db(&row.get::<_, String>(3)?).map_err(|error| {
-                        rusqlite::Error::InvalidParameterName(error.to_string())
-                    })?,
+                    event_type: run_event_type_from_db(&row.get::<_, String>(3)?).map_err(
+                        |error| rusqlite::Error::InvalidParameterName(error.to_string()),
+                    )?,
                     target: api_contract::EventTarget {
                         kind: event_target_kind_from_db(&row.get::<_, String>(4)?).map_err(
                             |error| rusqlite::Error::InvalidParameterName(error.to_string()),
@@ -909,6 +968,68 @@ impl PlatformStore {
         Ok(records)
     }
 
+    fn workflow_root_path(&self, user_id: &str, workspace_id: &str, workflow_id: &str) -> PathBuf {
+        self.storage_root
+            .join("users")
+            .join(user_id)
+            .join("workspaces")
+            .join(workspace_id)
+            .join("workflows")
+            .join(workflow_id)
+    }
+
+    fn bootstrap_workflow_storage(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        workflow: &WorkflowDefinition,
+    ) -> anyhow::Result<()> {
+        let workflow_root =
+            self.workflow_root_path(user_id, workspace_id, workflow.workflow_id.as_str());
+        let db_dir = workflow_root.join("db");
+        let files_dir = workflow_root.join("files");
+        let uploads_dir = files_dir.join("uploads");
+        let outputs_dir = files_dir.join("outputs");
+        let artifacts_dir = files_dir.join("artifacts");
+
+        fs::create_dir_all(&db_dir).with_context(|| {
+            format!("failed to create workflow db dir at `{}`", db_dir.display())
+        })?;
+        fs::create_dir_all(&uploads_dir).with_context(|| {
+            format!(
+                "failed to create workflow uploads dir at `{}`",
+                uploads_dir.display()
+            )
+        })?;
+        fs::create_dir_all(&outputs_dir).with_context(|| {
+            format!(
+                "failed to create workflow outputs dir at `{}`",
+                outputs_dir.display()
+            )
+        })?;
+        fs::create_dir_all(&artifacts_dir).with_context(|| {
+            format!(
+                "failed to create workflow artifacts dir at `{}`",
+                artifacts_dir.display()
+            )
+        })?;
+
+        let workflow_json_path = workflow_root.join("workflow.json");
+        let workflow_json = serde_json::to_vec_pretty(workflow)
+            .context("failed to serialize workflow.json artifact")?;
+        fs::write(&workflow_json_path, workflow_json).with_context(|| {
+            format!(
+                "failed to write workflow artifact at `{}`",
+                workflow_json_path.display()
+            )
+        })?;
+
+        let duckdb_path = db_dir.join("workflow.duckdb");
+        initialize_workflow_duckdb(&duckdb_path)?;
+
+        Ok(())
+    }
+
     fn initialize(&self) -> anyhow::Result<()> {
         let connection = self.connection();
         connection.execute_batch(
@@ -968,6 +1089,7 @@ impl PlatformStore {
                 name text not null,
                 description text null,
                 current_version integer not null,
+                storage_owner_user_id text null,
                 archived_at text null,
                 created_at text not null,
                 updated_at text not null,
@@ -991,14 +1113,18 @@ impl PlatformStore {
                 workspace_id text not null,
                 run_id text not null,
                 workflow_id text not null,
+                workflow_name_at_run text null,
                 workflow_version integer not null,
                 status text not null,
                 trigger_kind text null,
                 requested_by_user_id text null,
                 started_at text null,
                 finished_at text null,
+                duration_ms integer null,
                 error_category text null,
                 error_message text null,
+                error_count integer not null default 0,
+                retry_count integer not null default 0,
                 snapshot_json text not null,
                 created_at text not null,
                 updated_at text not null,
@@ -1050,13 +1176,18 @@ impl PlatformStore {
             ",
         )?;
 
+        ensure_nullable_text_column(&connection, "workflows", "storage_owner_user_id")?;
         ensure_nullable_text_column(&connection, "workflows", "archived_at")?;
+        ensure_nullable_text_column(&connection, "runs", "workflow_name_at_run")?;
         ensure_nullable_text_column(&connection, "runs", "trigger_kind")?;
         ensure_nullable_text_column(&connection, "runs", "requested_by_user_id")?;
         ensure_nullable_text_column(&connection, "runs", "started_at")?;
         ensure_nullable_text_column(&connection, "runs", "finished_at")?;
+        ensure_nullable_integer_column(&connection, "runs", "duration_ms")?;
         ensure_nullable_text_column(&connection, "runs", "error_category")?;
         ensure_nullable_text_column(&connection, "runs", "error_message")?;
+        ensure_integer_column_with_default(&connection, "runs", "error_count", 0)?;
+        ensure_integer_column_with_default(&connection, "runs", "retry_count", 0)?;
 
         if find_user_by_email(&connection, DEMO_EMAIL)?.is_none() {
             let password_hash = hash_password(DEMO_PASSWORD)?;
@@ -1077,7 +1208,9 @@ impl PlatformStore {
     }
 
     fn connection(&self) -> std::sync::MutexGuard<'_, Connection> {
-        self.connection.lock().expect("platform store mutex poisoned")
+        self.connection
+            .lock()
+            .expect("platform store mutex poisoned")
     }
 }
 
@@ -1109,52 +1242,70 @@ fn persist_run_snapshot_row(
     requested_by_user_id: Option<&str>,
     snapshot: &RunSnapshot,
 ) -> anyhow::Result<()> {
-    let now = Utc::now().to_rfc3339();
-    let snapshot_json = serde_json::to_string(snapshot)
-        .context("failed to serialize run snapshot")?;
+    let now = Utc::now();
+    let workflow_name_at_run =
+        lookup_workflow_name_at_run(connection, workspace_id, snapshot.workflow_id.as_str())?;
+    let duration_ms = derive_run_duration_ms(snapshot, now);
+    let error_count = derive_run_error_count(snapshot);
+    let retry_count = derive_run_retry_count(snapshot);
+    let now = now.to_rfc3339();
+    let snapshot_json =
+        serde_json::to_string(snapshot).context("failed to serialize run snapshot")?;
 
     connection.execute(
         "insert into runs (
             workspace_id,
             run_id,
             workflow_id,
+            workflow_name_at_run,
             workflow_version,
             status,
             trigger_kind,
             requested_by_user_id,
             started_at,
             finished_at,
+            duration_ms,
             error_category,
             error_message,
+            error_count,
+            retry_count,
             snapshot_json,
             created_at,
             updated_at
          )
-         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
          on conflict(workspace_id, run_id) do update set
             workflow_id = excluded.workflow_id,
+            workflow_name_at_run = coalesce(runs.workflow_name_at_run, excluded.workflow_name_at_run),
             workflow_version = excluded.workflow_version,
             status = excluded.status,
             trigger_kind = excluded.trigger_kind,
             requested_by_user_id = coalesce(excluded.requested_by_user_id, runs.requested_by_user_id),
             started_at = excluded.started_at,
             finished_at = excluded.finished_at,
+            duration_ms = excluded.duration_ms,
             error_category = excluded.error_category,
             error_message = excluded.error_message,
+            error_count = excluded.error_count,
+            retry_count = excluded.retry_count,
             snapshot_json = excluded.snapshot_json,
             updated_at = excluded.updated_at",
         params![
             workspace_id,
             snapshot.run_id.as_str(),
             snapshot.workflow_id.as_str(),
+            workflow_name_at_run.as_str(),
             snapshot.workflow_version,
             run_status_to_db(&snapshot.status),
             trigger_kind_to_db(&snapshot.trigger.kind),
             requested_by_user_id,
             snapshot.started_at.as_ref().map(|value| value.to_rfc3339()),
             snapshot.finished_at.as_ref().map(|value| value.to_rfc3339()),
+            duration_ms,
             snapshot.error.as_ref().map(|error| run_error_category_to_db(&error.category)),
             snapshot.error.as_ref().map(|error| error.message.clone()),
+            error_count,
+            retry_count,
             snapshot_json,
             now,
             now
@@ -1170,9 +1321,12 @@ fn persist_run_event_row(
     run_id: &str,
     event: &RunEvent,
 ) -> anyhow::Result<()> {
-    let payload_json = serde_json::to_string(&event.payload)
-        .context("failed to serialize run event payload")?;
-    let attempt = event.payload.get("attempt").and_then(|value| value.as_u64());
+    let payload_json =
+        serde_json::to_string(&event.payload).context("failed to serialize run event payload")?;
+    let attempt = event
+        .payload
+        .get("attempt")
+        .and_then(|value| value.as_u64());
 
     connection.execute(
         "insert or ignore into run_events (
@@ -1263,6 +1417,323 @@ fn persist_run_log_row(
     Ok(())
 }
 
+fn lookup_workflow_name_at_run(
+    connection: &Connection,
+    workspace_id: &str,
+    workflow_id: &str,
+) -> anyhow::Result<String> {
+    let workflow_name: Option<String> = connection
+        .query_row(
+            "select name
+             from workflows
+             where workspace_id = ?1 and workflow_id = ?2",
+            params![workspace_id, workflow_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    Ok(workflow_name.unwrap_or_else(|| workflow_id.to_string()))
+}
+
+fn derive_run_duration_ms(snapshot: &RunSnapshot, now: chrono::DateTime<Utc>) -> Option<i64> {
+    let started_at = snapshot.started_at?;
+    let end = snapshot.finished_at.unwrap_or(now);
+    Some((end - started_at).num_milliseconds())
+}
+
+fn derive_run_error_count(snapshot: &RunSnapshot) -> i64 {
+    let node_error_count = snapshot
+        .node_runs
+        .iter()
+        .filter(|node_run| {
+            node_run.error.is_some()
+                || matches!(node_run.status, api_contract::NodeRunStatus::Failed)
+        })
+        .count() as i64;
+
+    if node_error_count == 0 && snapshot.error.is_some() {
+        1
+    } else {
+        node_error_count
+    }
+}
+
+fn derive_run_retry_count(snapshot: &RunSnapshot) -> i64 {
+    snapshot
+        .node_runs
+        .iter()
+        .map(|node_run| node_run.attempt.saturating_sub(1) as i64)
+        .sum()
+}
+
+fn lookup_workflow_storage_owner_user_id(
+    connection: &Connection,
+    workspace_id: &str,
+    workflow_id: &str,
+) -> anyhow::Result<String> {
+    let stored_owner: Option<String> = connection
+        .query_row(
+            "select storage_owner_user_id
+             from workflows
+             where workspace_id = ?1 and workflow_id = ?2",
+            params![workspace_id, workflow_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten();
+
+    if let Some(user_id) = stored_owner.filter(|value| !value.trim().is_empty()) {
+        return Ok(user_id);
+    }
+
+    let fallback_owner: Option<String> = connection
+        .query_row(
+            "select user_id
+             from workspace_memberships
+             where workspace_id = ?1 and role = ?2
+             order by created_at asc
+             limit 1",
+            params![workspace_id, role_to_db(WorkspaceMembershipRole::Owner)],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    let fallback_owner = fallback_owner.ok_or_else(|| {
+        anyhow!(
+            "workflow `{workflow_id}` in workspace `{workspace_id}` does not have a storage owner"
+        )
+    })?;
+
+    connection.execute(
+        "update workflows
+         set storage_owner_user_id = ?3
+         where workspace_id = ?1 and workflow_id = ?2
+           and storage_owner_user_id is null",
+        params![workspace_id, workflow_id, fallback_owner.as_str()],
+    )?;
+
+    Ok(fallback_owner)
+}
+
+fn persist_workflow_duckdb_run_snapshot(
+    database_path: &Path,
+    workspace_id: &str,
+    snapshot: &RunSnapshot,
+) -> anyhow::Result<()> {
+    let connection = DuckDbConnection::open(database_path).with_context(|| {
+        format!(
+            "failed to open workflow duckdb for run persistence at `{}`",
+            database_path.display()
+        )
+    })?;
+    let now = Utc::now().to_rfc3339();
+    let duration_ms = derive_run_duration_ms(snapshot, Utc::now());
+    let error_count = derive_run_error_count(snapshot);
+    let retry_count = derive_run_retry_count(snapshot);
+    let completed_node_count = snapshot
+        .node_runs
+        .iter()
+        .filter(|node_run| {
+            matches!(
+                &node_run.status,
+                api_contract::NodeRunStatus::Succeeded
+                    | api_contract::NodeRunStatus::Failed
+                    | api_contract::NodeRunStatus::Skipped
+                    | api_contract::NodeRunStatus::Cancelled
+            )
+        })
+        .count() as i64;
+    let snapshot_json =
+        serde_json::to_string(snapshot).context("failed to serialize duckdb run snapshot")?;
+
+    connection.execute("begin transaction", [])?;
+    connection.execute(
+        "delete from runs.node_runs where run_id = ?1",
+        [snapshot.run_id.as_str()],
+    )?;
+    connection.execute(
+        "delete from outputs.node_outputs where run_id = ?1",
+        [snapshot.run_id.as_str()],
+    )?;
+
+    connection.execute(
+        "insert or replace into runs.workflow_runs (
+            run_id,
+            workspace_id,
+            workflow_id,
+            workflow_version,
+            status,
+            trigger_kind,
+            started_at,
+            finished_at,
+            duration_ms,
+            error_category,
+            error_message,
+            error_count,
+            retry_count,
+            node_count,
+            completed_node_count,
+            snapshot_json,
+            created_at,
+            updated_at
+         )
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+        duckdb::params![
+            snapshot.run_id.as_str(),
+            workspace_id,
+            snapshot.workflow_id.as_str(),
+            snapshot.workflow_version as i64,
+            run_status_to_db(&snapshot.status),
+            trigger_kind_to_db(&snapshot.trigger.kind),
+            snapshot.started_at.as_ref().map(|value| value.to_rfc3339()),
+            snapshot
+                .finished_at
+                .as_ref()
+                .map(|value| value.to_rfc3339()),
+            duration_ms,
+            snapshot
+                .error
+                .as_ref()
+                .map(|error| run_error_category_to_db(&error.category)),
+            snapshot.error.as_ref().map(|error| error.message.as_str()),
+            error_count,
+            retry_count,
+            snapshot.node_runs.len() as i64,
+            completed_node_count,
+            snapshot_json.as_str(),
+            now.as_str(),
+            now.as_str(),
+        ],
+    )?;
+
+    for node_run in &snapshot.node_runs {
+        let last_output_json = node_run
+            .last_output
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .context("failed to serialize duckdb node output")?;
+        let node_duration_ms = node_run
+            .started_at
+            .as_ref()
+            .zip(node_run.finished_at.as_ref())
+            .map(|(started_at, finished_at)| (*finished_at - *started_at).num_milliseconds());
+
+        connection.execute(
+            "insert or replace into runs.node_runs (
+                run_id,
+                node_id,
+                type_id,
+                status,
+                attempt,
+                started_at,
+                finished_at,
+                duration_ms,
+                log_count,
+                error_category,
+                error_message,
+                last_output_json,
+                created_at,
+                updated_at
+             )
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            duckdb::params![
+                snapshot.run_id.as_str(),
+                node_run.node_id.as_str(),
+                node_run.type_id.as_str(),
+                node_run_status_to_db(&node_run.status),
+                node_run.attempt as i64,
+                node_run.started_at.as_ref().map(|value| value.to_rfc3339()),
+                node_run
+                    .finished_at
+                    .as_ref()
+                    .map(|value| value.to_rfc3339()),
+                node_duration_ms,
+                node_run.log_count as i64,
+                node_run
+                    .error
+                    .as_ref()
+                    .map(|error| run_error_category_to_db(&error.category)),
+                node_run.error.as_ref().map(|error| error.message.as_str()),
+                last_output_json.as_deref(),
+                now.as_str(),
+                now.as_str(),
+            ],
+        )?;
+
+        if let Some(last_output) = node_run.last_output.as_ref() {
+            let output_json = serde_json::to_string(last_output)
+                .context("failed to serialize duckdb workflow output")?;
+            let output_text_preview = summarize_typed_value_preview(last_output);
+            connection.execute(
+                "insert or replace into outputs.node_outputs (
+                    run_id,
+                    node_id,
+                    output_data_type,
+                    output_json,
+                    output_text_preview,
+                    produced_at
+                 )
+                 values (?1, ?2, ?3, ?4, ?5, ?6)",
+                duckdb::params![
+                    snapshot.run_id.as_str(),
+                    node_run.node_id.as_str(),
+                    data_type_to_db(&last_output.data_type),
+                    output_json.as_str(),
+                    output_text_preview,
+                    node_run
+                        .finished_at
+                        .as_ref()
+                        .map(|value| value.to_rfc3339())
+                        .unwrap_or_else(|| now.clone()),
+                ],
+            )?;
+        }
+    }
+
+    connection.execute("commit", [])?;
+    Ok(())
+}
+
+fn summarize_typed_value_preview(value: &TypedValue) -> Option<String> {
+    if let Some(text) = value.as_text() {
+        return Some(truncate_for_preview(text, 160));
+    }
+
+    serde_json::to_string(&value.value)
+        .ok()
+        .map(|text| truncate_for_preview(text.as_str(), 160))
+}
+
+fn should_sync_workflow_duckdb_run(snapshot: &RunSnapshot) -> bool {
+    if !workflow_duckdb_run_sync_enabled() {
+        return false;
+    }
+
+    !matches!(
+        snapshot.status,
+        api_contract::RunStatus::Cancelling | api_contract::RunStatus::Cancelled
+    )
+}
+
+fn workflow_duckdb_run_sync_enabled() -> bool {
+    matches!(
+        env::var("STITCHLY_ENABLE_WORKFLOW_RUN_DUCKDB_SYNC")
+            .ok()
+            .as_deref()
+            .map(|value| value.trim().to_ascii_lowercase()),
+        Some(value) if matches!(value.as_str(), "1" | "true" | "yes" | "on")
+    )
+}
+
+fn truncate_for_preview(value: &str, max_chars: usize) -> String {
+    let mut preview = value.trim().chars().take(max_chars).collect::<String>();
+    if value.chars().count() > max_chars {
+        preview.push_str("...");
+    }
+    preview
+}
+
 fn build_session_response(
     connection: &Connection,
     user_id: &str,
@@ -1302,8 +1773,16 @@ fn build_session_response(
 
     let active_workspace_id = user
         .active_workspace_id
-        .filter(|active_id| workspaces.iter().any(|workspace| &workspace.workspace_id == active_id))
-        .or_else(|| workspaces.first().map(|workspace| workspace.workspace_id.clone()));
+        .filter(|active_id| {
+            workspaces
+                .iter()
+                .any(|workspace| &workspace.workspace_id == active_id)
+        })
+        .or_else(|| {
+            workspaces
+                .first()
+                .map(|workspace| workspace.workspace_id.clone())
+        });
 
     Ok(AuthSessionResponse {
         authenticated: true,
@@ -1383,18 +1862,52 @@ fn ensure_nullable_text_column(
     table_name: &str,
     column_name: &str,
 ) -> anyhow::Result<()> {
+    ensure_column(connection, table_name, column_name, "text null")
+}
+
+fn ensure_nullable_integer_column(
+    connection: &Connection,
+    table_name: &str,
+    column_name: &str,
+) -> anyhow::Result<()> {
+    ensure_column(connection, table_name, column_name, "integer null")
+}
+
+fn ensure_integer_column_with_default(
+    connection: &Connection,
+    table_name: &str,
+    column_name: &str,
+    default_value: i64,
+) -> anyhow::Result<()> {
+    ensure_column(
+        connection,
+        table_name,
+        column_name,
+        &format!("integer not null default {default_value}"),
+    )
+}
+
+fn ensure_column(
+    connection: &Connection,
+    table_name: &str,
+    column_name: &str,
+    column_definition: &str,
+) -> anyhow::Result<()> {
     let pragma = format!("pragma table_info({table_name})");
     let mut stmt = connection.prepare(&pragma)?;
     let existing_columns = stmt
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<Result<Vec<_>, _>>()?;
 
-    if existing_columns.iter().any(|existing| existing == column_name) {
+    if existing_columns
+        .iter()
+        .any(|existing| existing == column_name)
+    {
         return Ok(());
     }
 
     connection.execute(
-        &format!("alter table {table_name} add column {column_name} text null"),
+        &format!("alter table {table_name} add column {column_name} {column_definition}"),
         [],
     )?;
     Ok(())
@@ -1405,12 +1918,159 @@ fn ensure_parent_dir(database_path: &str) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent).with_context(|| {
-                format!("failed to create platform database directory `{}`", parent.display())
+                format!(
+                    "failed to create platform database directory `{}`",
+                    parent.display()
+                )
             })?;
         }
     }
 
     Ok(())
+}
+
+fn resolve_storage_root(database_path: &str) -> anyhow::Result<PathBuf> {
+    if let Ok(explicit_root) = env::var("STITCHLY_STORAGE_ROOT") {
+        let root = PathBuf::from(explicit_root);
+        if root.as_os_str().is_empty() {
+            return Err(anyhow!("STITCHLY_STORAGE_ROOT cannot be empty"));
+        }
+        return Ok(root);
+    }
+
+    if database_path == ":memory:" {
+        return Ok(unique_test_storage_root());
+    }
+
+    let database_path = Path::new(database_path);
+    let parent = database_path.parent().ok_or_else(|| {
+        anyhow!(
+            "failed to derive storage root from database path `{}`",
+            database_path.display()
+        )
+    })?;
+
+    if parent.as_os_str().is_empty() {
+        return env::current_dir().context("failed to resolve current working directory");
+    }
+
+    if parent.file_name().and_then(|value| value.to_str()) == Some("platform") {
+        if let Some(root) = parent.parent() {
+            if root.as_os_str().is_empty() {
+                return env::current_dir().context("failed to resolve current working directory");
+            }
+            return Ok(root.to_path_buf());
+        }
+    }
+
+    Ok(parent.to_path_buf())
+}
+
+fn unique_test_storage_root() -> PathBuf {
+    std::env::temp_dir().join(format!("stitchly-test-storage-{}", Uuid::new_v4().simple()))
+}
+
+fn initialize_workflow_duckdb(database_path: &Path) -> anyhow::Result<()> {
+    let connection = DuckDbConnection::open(database_path).with_context(|| {
+        format!(
+            "failed to open workflow duckdb at `{}`",
+            database_path.display()
+        )
+    })?;
+    connection.execute_batch(
+        "
+        create schema if not exists runs;
+        create schema if not exists staging;
+        create schema if not exists tables;
+        create schema if not exists outputs;
+
+        create table if not exists runs.workflow_runs (
+            run_id varchar primary key,
+            workspace_id varchar not null,
+            workflow_id varchar not null,
+            workflow_version integer not null,
+            status varchar not null,
+            trigger_kind varchar,
+            started_at varchar,
+            finished_at varchar,
+            duration_ms bigint,
+            error_category varchar,
+            error_message varchar,
+            error_count bigint not null default 0,
+            retry_count bigint not null default 0,
+            node_count integer not null default 0,
+            completed_node_count integer not null default 0,
+            snapshot_json text not null,
+            created_at varchar not null,
+            updated_at varchar not null
+        );
+
+        create table if not exists runs.node_runs (
+            run_id varchar not null,
+            node_id varchar not null,
+            type_id varchar not null,
+            status varchar not null,
+            attempt integer not null default 0,
+            started_at varchar,
+            finished_at varchar,
+            duration_ms bigint,
+            log_count bigint not null default 0,
+            error_category varchar,
+            error_message varchar,
+            last_output_json text,
+            created_at varchar not null,
+            updated_at varchar not null,
+            primary key (run_id, node_id)
+        );
+
+        create table if not exists outputs.node_outputs (
+            run_id varchar not null,
+            node_id varchar not null,
+            output_data_type varchar not null,
+            output_json text not null,
+            output_text_preview varchar,
+            produced_at varchar not null,
+            primary key (run_id, node_id)
+        );
+        ",
+    )?;
+
+    Ok(())
+}
+
+impl PlatformStore {
+    fn sync_workflow_duckdb_run(
+        &self,
+        workspace_id: &str,
+        snapshot: &RunSnapshot,
+    ) -> anyhow::Result<()> {
+        let connection = self.connection();
+        let storage_owner_user_id = lookup_workflow_storage_owner_user_id(
+            &connection,
+            workspace_id,
+            snapshot.workflow_id.as_str(),
+        )?;
+        let duckdb_path = self
+            .workflow_root_path(
+                storage_owner_user_id.as_str(),
+                workspace_id,
+                snapshot.workflow_id.as_str(),
+            )
+            .join("db")
+            .join("workflow.duckdb");
+        drop(connection);
+
+        if let Some(parent) = duckdb_path.parent() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to create workflow duckdb parent dir at `{}`",
+                    parent.display()
+                )
+            })?;
+        }
+        initialize_workflow_duckdb(&duckdb_path)?;
+        persist_workflow_duckdb_run_snapshot(&duckdb_path, workspace_id, snapshot)
+    }
 }
 
 fn find_user_by_email(connection: &Connection, email: &str) -> anyhow::Result<Option<StoredUser>> {
@@ -1463,7 +2123,18 @@ fn hash_password(password: &str) -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
+    use api_contract::{
+        NodeRunSnapshot, NodeRunStatus, RunErrorCategory, RunErrorSummary, RunSnapshot, RunStatus,
+        RunTrigger, TriggerKind,
+    };
+    use chrono::{Duration, TimeZone, Utc};
+    use duckdb::Connection as DuckDbConnection;
+    use rusqlite::params;
+
     use super::{GoogleIdentityProfile, PlatformStore};
+    use workflow_schema::{TypedValue, WorkflowDefinition};
 
     #[test]
     fn google_identity_creates_a_local_user_and_session() {
@@ -1478,7 +2149,10 @@ mod tests {
             })
             .expect("google auth session");
 
-        assert_eq!(session.user_id, session.session.user.as_ref().expect("user").user_id);
+        assert_eq!(
+            session.user_id,
+            session.session.user.as_ref().expect("user").user_id
+        );
         assert_eq!(
             session.session.user.as_ref().expect("user").email,
             "ops@gmail.com"
@@ -1523,6 +2197,401 @@ mod tests {
             })
             .expect("second google auth session");
         assert_eq!(second_session.user_id, "usr_builder");
+    }
+
+    #[test]
+    fn create_workflow_bootstraps_rooted_storage_and_duckdb() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "DuckDB Workspace")
+            .expect("workspace");
+        let workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+
+        let created = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
+            .expect("workflow creates");
+
+        let workflow_root = store.workflow_root_path(
+            "usr_builder",
+            &workspace.workspace_id,
+            created.workflow.workflow_id.as_str(),
+        );
+        let workflow_json_path = workflow_root.join("workflow.json");
+        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let files_dir = workflow_root.join("files");
+
+        assert!(workflow_root.is_dir(), "workflow root should exist");
+        assert!(workflow_json_path.is_file(), "workflow.json should exist");
+        assert!(duckdb_path.is_file(), "workflow duckdb should exist");
+        assert!(files_dir.is_dir(), "files dir should exist");
+        assert!(
+            files_dir.join("uploads").is_dir(),
+            "uploads dir should exist"
+        );
+        assert!(
+            files_dir.join("outputs").is_dir(),
+            "outputs dir should exist"
+        );
+        assert!(
+            files_dir.join("artifacts").is_dir(),
+            "artifacts dir should exist"
+        );
+
+        let workflow_json =
+            fs::read_to_string(&workflow_json_path).expect("workflow.json readable");
+        let stored_definition: WorkflowDefinition =
+            serde_json::from_str(&workflow_json).expect("workflow.json parses");
+        assert_eq!(
+            stored_definition.workflow_id, created.workflow.workflow_id,
+            "workflow.json should match stored workflow id"
+        );
+
+        let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb opens");
+        let schema_names = ["runs", "staging", "tables", "outputs"];
+        for schema_name in schema_names {
+            let exists: Option<String> = duckdb
+                .query_row(
+                    "select schema_name
+                     from information_schema.schemata
+                     where schema_name = ?1",
+                    [schema_name],
+                    |row| row.get(0),
+                )
+                .expect("schema query");
+            assert_eq!(
+                exists.as_deref(),
+                Some(schema_name),
+                "schema `{schema_name}` should exist"
+            );
+        }
+
+        let workflow_runs_table_exists: Option<String> = duckdb
+            .query_row(
+                "select table_name
+                 from information_schema.tables
+                 where table_schema = 'runs' and table_name = 'workflow_runs'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("workflow_runs table query");
+        assert_eq!(workflow_runs_table_exists.as_deref(), Some("workflow_runs"));
+
+        let node_runs_table_exists: Option<String> = duckdb
+            .query_row(
+                "select table_name
+                 from information_schema.tables
+                 where table_schema = 'runs' and table_name = 'node_runs'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("node_runs table query");
+        assert_eq!(node_runs_table_exists.as_deref(), Some("node_runs"));
+
+        let node_outputs_table_exists: Option<String> = duckdb
+            .query_row(
+                "select table_name
+                 from information_schema.tables
+                 where table_schema = 'outputs' and table_name = 'node_outputs'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("node_outputs table query");
+        assert_eq!(node_outputs_table_exists.as_deref(), Some("node_outputs"));
+    }
+
+    #[test]
+    fn run_snapshot_populates_denormalized_run_list_columns() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Run Metrics Workspace")
+            .expect("workspace");
+        let mut workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+        workflow.name = "Email Draft Flow".to_string();
+
+        let created = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
+            .expect("workflow creates");
+
+        let started_at = Utc
+            .with_ymd_and_hms(2026, 5, 26, 9, 0, 0)
+            .single()
+            .expect("valid datetime");
+        let finished_at = started_at + Duration::seconds(5);
+        let snapshot = RunSnapshot {
+            run_id: "run_test_projection".to_string(),
+            workflow_id: created.workflow.workflow_id.clone(),
+            workflow_version: created.workflow.version,
+            status: RunStatus::Failed,
+            trigger: RunTrigger {
+                kind: TriggerKind::Manual,
+            },
+            started_at: Some(started_at),
+            finished_at: Some(finished_at),
+            node_runs: vec![
+                NodeRunSnapshot {
+                    node_id: "input_text".to_string(),
+                    type_id: "text_input".to_string(),
+                    status: NodeRunStatus::Succeeded,
+                    attempt: 1,
+                    started_at: Some(started_at),
+                    finished_at: Some(started_at + Duration::seconds(1)),
+                    last_output: None,
+                    log_count: 1,
+                    error: None,
+                },
+                NodeRunSnapshot {
+                    node_id: "send_email_notification".to_string(),
+                    type_id: "send_email".to_string(),
+                    status: NodeRunStatus::Failed,
+                    attempt: 3,
+                    started_at: Some(started_at + Duration::seconds(1)),
+                    finished_at: Some(finished_at),
+                    last_output: None,
+                    log_count: 2,
+                    error: Some(RunErrorSummary {
+                        category: RunErrorCategory::ExecutionError,
+                        message: "SMTP timeout".to_string(),
+                    }),
+                },
+            ],
+            logs: vec![],
+            error: Some(RunErrorSummary {
+                category: RunErrorCategory::ExecutionError,
+                message: "SMTP timeout".to_string(),
+            }),
+        };
+
+        store
+            .persist_run_snapshot(&workspace.workspace_id, Some("usr_builder"), &snapshot)
+            .expect("run snapshot persists");
+
+        let connection = store.connection();
+        let row = connection
+            .query_row(
+                "select workflow_name_at_run, duration_ms, error_count, retry_count, error_message
+                 from runs
+                 where workspace_id = ?1 and run_id = ?2",
+                params![workspace.workspace_id, snapshot.run_id],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<i64>>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                    ))
+                },
+            )
+            .expect("run row");
+
+        assert_eq!(row.0.as_deref(), Some("Email Draft Flow"));
+        assert_eq!(row.1, Some(5_000));
+        assert_eq!(row.2, 1);
+        assert_eq!(row.3, 2);
+        assert_eq!(row.4.as_deref(), Some("SMTP timeout"));
+    }
+
+    #[test]
+    fn run_snapshot_skips_workflow_duckdb_sync_when_feature_disabled() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Workflow Mirror Workspace")
+            .expect("workspace");
+        let mut workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+        workflow.name = "Mirrored Flow".to_string();
+
+        let created = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
+            .expect("workflow creates");
+
+        let started_at = Utc
+            .with_ymd_and_hms(2026, 5, 26, 10, 30, 0)
+            .single()
+            .expect("valid datetime");
+        let finished_at = started_at + Duration::seconds(4);
+        let snapshot = RunSnapshot {
+            run_id: "run_duckdb_sync".to_string(),
+            workflow_id: created.workflow.workflow_id.clone(),
+            workflow_version: created.workflow.version,
+            status: RunStatus::Succeeded,
+            trigger: RunTrigger {
+                kind: TriggerKind::Manual,
+            },
+            started_at: Some(started_at),
+            finished_at: Some(finished_at),
+            node_runs: vec![
+                NodeRunSnapshot {
+                    node_id: "input_text".to_string(),
+                    type_id: "text_input".to_string(),
+                    status: NodeRunStatus::Succeeded,
+                    attempt: 1,
+                    started_at: Some(started_at),
+                    finished_at: Some(started_at + Duration::seconds(1)),
+                    last_output: Some(TypedValue::text("Hello from workflow db")),
+                    log_count: 1,
+                    error: None,
+                },
+                NodeRunSnapshot {
+                    node_id: "send_email_notification".to_string(),
+                    type_id: "send_email".to_string(),
+                    status: NodeRunStatus::Succeeded,
+                    attempt: 1,
+                    started_at: Some(started_at + Duration::seconds(1)),
+                    finished_at: Some(finished_at),
+                    last_output: Some(TypedValue::text("Mock email delivered")),
+                    log_count: 2,
+                    error: None,
+                },
+            ],
+            logs: vec![],
+            error: None,
+        };
+
+        store
+            .persist_run_snapshot(&workspace.workspace_id, Some("usr_builder"), &snapshot)
+            .expect("run snapshot persists");
+
+        let workflow_root = store.workflow_root_path(
+            "usr_builder",
+            &workspace.workspace_id,
+            created.workflow.workflow_id.as_str(),
+        );
+        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb opens");
+
+        let workflow_run_rows: i64 = duckdb
+            .query_row(
+                "select count(*)
+                 from runs.workflow_runs
+                 where run_id = ?1",
+                [snapshot.run_id.as_str()],
+                |row| row.get(0),
+            )
+            .expect("workflow run row count");
+        assert_eq!(workflow_run_rows, 0);
+
+        let node_run_count: i64 = duckdb
+            .query_row(
+                "select count(*)
+                 from runs.node_runs
+                 where run_id = ?1",
+                [snapshot.run_id.as_str()],
+                |row| row.get(0),
+            )
+            .expect("node run count");
+        assert_eq!(node_run_count, 0);
+
+        let mirrored_output_rows: i64 = duckdb
+            .query_row(
+                "select count(*)
+                 from outputs.node_outputs
+                 where run_id = ?1",
+                [snapshot.run_id.as_str()],
+                |row| row.get(0),
+            )
+            .expect("mirrored output row count");
+        assert_eq!(mirrored_output_rows, 0);
+    }
+
+    #[test]
+    fn workflow_duckdb_run_sync_disabled_avoids_run_rows_for_repeat_persists() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "DuckDB Idempotent Workspace")
+            .expect("workspace");
+        let mut workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+        workflow.name = "Repeat Sync Flow".to_string();
+
+        let created = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
+            .expect("workflow creates");
+
+        let started_at = Utc
+            .with_ymd_and_hms(2026, 5, 26, 11, 45, 0)
+            .single()
+            .expect("valid datetime");
+        let snapshot_running = RunSnapshot {
+            run_id: "run_repeat_sync".to_string(),
+            workflow_id: created.workflow.workflow_id.clone(),
+            workflow_version: created.workflow.version,
+            status: RunStatus::Running,
+            trigger: RunTrigger {
+                kind: TriggerKind::Manual,
+            },
+            started_at: Some(started_at),
+            finished_at: None,
+            node_runs: vec![NodeRunSnapshot {
+                node_id: "input_text".to_string(),
+                type_id: "text_input".to_string(),
+                status: NodeRunStatus::Running,
+                attempt: 1,
+                started_at: Some(started_at),
+                finished_at: None,
+                last_output: None,
+                log_count: 1,
+                error: None,
+            }],
+            logs: vec![],
+            error: None,
+        };
+
+        store
+            .persist_run_snapshot(
+                &workspace.workspace_id,
+                Some("usr_builder"),
+                &snapshot_running,
+            )
+            .expect("running snapshot persists");
+
+        let mut snapshot_cancelled = snapshot_running.clone();
+        snapshot_cancelled.status = RunStatus::Cancelled;
+        snapshot_cancelled.finished_at = Some(started_at + Duration::seconds(3));
+        snapshot_cancelled.error = Some(RunErrorSummary {
+            category: RunErrorCategory::Cancellation,
+            message: "Run cancelled by user.".to_string(),
+        });
+        snapshot_cancelled.node_runs[0].status = NodeRunStatus::Cancelled;
+        snapshot_cancelled.node_runs[0].finished_at = snapshot_cancelled.finished_at;
+        snapshot_cancelled.node_runs[0].error = snapshot_cancelled.error.clone();
+
+        store
+            .persist_run_snapshot(
+                &workspace.workspace_id,
+                Some("usr_builder"),
+                &snapshot_cancelled,
+            )
+            .expect("cancelled snapshot persists");
+
+        let workflow_root = store.workflow_root_path(
+            "usr_builder",
+            &workspace.workspace_id,
+            created.workflow.workflow_id.as_str(),
+        );
+        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb opens");
+
+        let workflow_run_rows: i64 = duckdb
+            .query_row(
+                "select count(*)
+                 from runs.workflow_runs
+                 where run_id = ?1",
+                [snapshot_cancelled.run_id.as_str()],
+                |row| row.get(0),
+            )
+            .expect("workflow run row count");
+        assert_eq!(workflow_run_rows, 0);
     }
 }
 
@@ -1607,12 +2676,40 @@ fn run_status_to_db(status: &api_contract::RunStatus) -> &'static str {
     }
 }
 
+fn node_run_status_to_db(status: &api_contract::NodeRunStatus) -> &'static str {
+    match status {
+        api_contract::NodeRunStatus::Pending => "pending",
+        api_contract::NodeRunStatus::Ready => "ready",
+        api_contract::NodeRunStatus::Running => "running",
+        api_contract::NodeRunStatus::Succeeded => "succeeded",
+        api_contract::NodeRunStatus::Failed => "failed",
+        api_contract::NodeRunStatus::Skipped => "skipped",
+        api_contract::NodeRunStatus::Cancelling => "cancelling",
+        api_contract::NodeRunStatus::Cancelled => "cancelled",
+        api_contract::NodeRunStatus::Retrying => "retrying",
+    }
+}
+
 fn trigger_kind_to_db(kind: &TriggerKind) -> &'static str {
     match kind {
         TriggerKind::Manual => "manual",
         TriggerKind::Schedule => "schedule",
         TriggerKind::Event => "event",
         TriggerKind::Backfill => "backfill",
+    }
+}
+
+fn data_type_to_db(data_type: &workflow_schema::DataType) -> &'static str {
+    match data_type {
+        workflow_schema::DataType::Bytes => "bytes",
+        workflow_schema::DataType::Text => "text",
+        workflow_schema::DataType::Json => "json",
+        workflow_schema::DataType::Number => "number",
+        workflow_schema::DataType::Boolean => "boolean",
+        workflow_schema::DataType::FileRef => "file_ref",
+        workflow_schema::DataType::DirectoryRef => "directory_ref",
+        workflow_schema::DataType::TableRef => "table_ref",
+        workflow_schema::DataType::DatasetRef => "dataset_ref",
     }
 }
 

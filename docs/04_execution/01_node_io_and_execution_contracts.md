@@ -165,10 +165,10 @@ This table should grow as real nodes are implemented.
 
 | Node type | Inputs | Config fallback / notes | Outputs | Current runtime contract |
 | --- | --- | --- | --- | --- |
-| `text_input` | none | requires `config.text: string` | `text -> TypedValue::Text` | source node; emits one text payload from config; no upstream dependency |
+| `text_input` | none | requires `config.text: string`; optional `config.execution.wait_before_seconds` / `wait_after_seconds` | `text -> TypedValue::Text` | source node; emits one text payload from config; no upstream dependency |
 | `text_transform` | `source -> Text` required | `config.operation` controls transform mode; currently `identity`, `uppercase`, `trim` | `text -> TypedValue::Text` | consumes one upstream text value and emits one transformed text value |
 | `preview_output` | `text -> Text` required | optional `config.title`; no output ports | none | terminal preview/log-style node; consumes one text value and emits logs only |
-| `send_email` | `body -> Text` optional | requires `config.to` and `config.subject`; may fall back to `config.body` when no upstream body exists | none | terminal side-effect node; consumes optional upstream text body or fallback body string and emits logs only |
+| `send_email` | `body -> Text` optional | requires `config.to` and `config.subject`; may fall back to `config.body` when no upstream body exists; optional `config.execution.wait_before_seconds` / `wait_after_seconds` | none | terminal side-effect node; consumes optional upstream text body or fallback body string and emits logs only |
 
 ## Current Node Contract Notes
 

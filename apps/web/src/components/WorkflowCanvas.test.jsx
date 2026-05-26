@@ -7,12 +7,20 @@ import { setDraggedNodeType } from '../lib/canvasDnD'
 import { cloneWorkflow } from '../lib/workflow'
 import WorkflowCanvas from './WorkflowCanvas'
 
-function CanvasHarness({ onNodeOpen = () => {}, onNodeTypeDrop = () => {} }) {
-  const [workflow, setWorkflow] = useState(() => cloneWorkflow(workflowFixture))
+function CanvasHarness({
+  activeRunSnapshot = null,
+  onNodeOpen = () => {},
+  onNodeTypeDrop = () => {},
+  workflowOverride = null
+}) {
+  const [workflow, setWorkflow] = useState(() =>
+    cloneWorkflow(workflowOverride ?? workflowFixture)
+  )
   const [selectedNodeId, setSelectedNodeId] = useState(null)
 
   return (
     <WorkflowCanvas
+      activeRunSnapshot={activeRunSnapshot}
       nodeDefinitions={nodeDefinitionFixture.node_definitions}
       onNodeOpen={onNodeOpen}
       onNodeTypeDrop={onNodeTypeDrop}
@@ -148,5 +156,84 @@ describe('WorkflowCanvas', () => {
         y: expect.any(Number)
       })
     )
+  })
+
+  it('maps an active run snapshot into real node runtime states', () => {
+    const activeRunSnapshot = {
+      run_id: 'run_phase1',
+      workflow_id: 'wf_text_preview',
+      workflow_version: 1,
+      status: 'failed',
+      trigger: { kind: 'manual' },
+      started_at: '2026-05-26T08:00:00Z',
+      finished_at: '2026-05-26T08:00:05Z',
+      node_runs: [
+        {
+          node_id: 'input_text',
+          type_id: 'text_input',
+          status: 'succeeded',
+          attempt: 1,
+          started_at: '2026-05-26T08:00:00Z',
+          finished_at: '2026-05-26T08:00:01Z',
+          last_output: {
+            data_type: 'text',
+            value: 'Normalized output'
+          },
+          log_count: 1,
+          error: null
+        },
+        {
+          node_id: 'send_email_notification',
+          type_id: 'send_email',
+          status: 'failed',
+          attempt: 1,
+          started_at: '2026-05-26T08:00:01Z',
+          finished_at: '2026-05-26T08:00:05Z',
+          last_output: null,
+          log_count: 1,
+          error: {
+            category: 'execution_error',
+            message: 'SMTP timeout'
+          }
+        }
+      ],
+      logs: [],
+      error: {
+        category: 'execution_error',
+        message: 'SMTP timeout'
+      }
+    }
+
+    render(<CanvasHarness activeRunSnapshot={activeRunSnapshot} />)
+
+    const textInputNode = getTextInputNode()
+    const sendEmailNode = getSendEmailNode()
+
+    expect(textInputNode).toHaveAttribute('data-runtime-state', 'succeeded')
+    expect(sendEmailNode).toHaveAttribute('data-runtime-state', 'failed')
+    expect(within(textInputNode).getByText('Succeeded')).toBeInTheDocument()
+    expect(within(sendEmailNode).getByText('Failed')).toBeInTheDocument()
+    expect(within(textInputNode).getByText('Normalized output')).toBeInTheDocument()
+  })
+
+  it('shows the execution wait marker when a node has configured waits', () => {
+    const workflowWithWait = cloneWorkflow(workflowFixture)
+    const sendEmailNode = workflowWithWait.nodes.find(
+      (node) => node.node_id === 'send_email_notification'
+    )
+
+    sendEmailNode.config.execution = {
+      wait_before_seconds: 5,
+      wait_after_seconds: 3
+    }
+
+    render(<CanvasHarness workflowOverride={workflowWithWait} />)
+
+    const emailNode = getSendEmailNode()
+    const delayIcon = emailNode.querySelector('.workflow-node-card__delay-icon')
+
+    expect(delayIcon).not.toBeNull()
+    expect(delayIcon).toHaveTextContent('←')
+    expect(delayIcon).toHaveTextContent('→')
   })
 })

@@ -4,6 +4,7 @@ import connectionFixture from '../../../../tests/fixtures/api/connections.json';
 import nodeDefinitionFixture from '../../../../tests/fixtures/api/node_definitions.json';
 import WorkflowCanvas from './WorkflowCanvas';
 import {
+  cancelWorkspaceRun,
   createWorkflow,
   createRun,
   createWorkspaceRun,
@@ -29,6 +30,11 @@ import {
   humanizeToken,
   SHELL_SECTIONS
 } from '../lib/shell';
+import {
+  emitWorkspaceRunUpdated,
+  extractWorkspaceRunUpdate,
+  WORKSPACE_RUN_UPDATED_EVENT
+} from '../lib/runSync';
 import { cloneWorkflow, updateNodeConfig, updateNodeLabel } from '../lib/workflow';
 
 const CANVAS_DEBUG_COLLAPSE_STORAGE_KEY = 'stitchly.canvas.debug-panel-collapsed.v1';
@@ -59,6 +65,7 @@ const EMPTY_CANVAS_DEBUG_STATE = {
 
 export default function CanvasWorkspace({
   draggedNodeType = null,
+  onOpenRunInPanel = null,
   onRegisterCanvasActions = null,
   onWorkflowMissing = null,
   onWorkflowResolved = null,
@@ -83,7 +90,7 @@ export default function CanvasWorkspace({
   const [configDraft, setConfigDraft] = useState('{}');
   const [configError, setConfigError] = useState('');
   const [backendStatus, setBackendStatus] = useState('connecting');
-  const [busyState, setBusyState] = useState({ validate: false, run: false });
+  const [busyState, setBusyState] = useState({ cancel: false, validate: false, run: false });
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [activeSection, setActiveSection] = useState('canvas');
   const [drawerQuery, setDrawerQuery] = useState('');
@@ -147,6 +154,8 @@ export default function CanvasWorkspace({
     floatingCard?.type === 'run-detail' && runDetailState.runId === floatingCard.runId
       ? runDetailState.logs
       : activeRun?.logs ?? [];
+  const latestWorkflowRun = runSnapshot ?? runHistory[0] ?? null;
+  const activeLiveRun = isCancellableRun(latestWorkflowRun) ? latestWorkflowRun : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -286,11 +295,25 @@ export default function CanvasWorkspace({
 
         applyWorkflowChange(nextState.workflow);
         setSelectedNodeId(nextState.selectedNodeId);
+      },
+      openRunDetail(runId) {
+        inspectRun(runId);
+      },
+      openRunControl() {
+        openRunControl();
       }
     });
 
     return () => onRegisterCanvasActions(null);
-  }, [onRegisterCanvasActions, selectedNodeId, workflow]);
+  }, [
+    onOpenRunInPanel,
+    onRegisterCanvasActions,
+    runHistory,
+    runSnapshot,
+    selectedNodeId,
+    workflow,
+    workspaceId
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -426,9 +449,17 @@ export default function CanvasWorkspace({
         }
 
         setRunHistory(
-          response.runs
-            .filter((run) => run.workflow_id === activeWorkflowId)
-            .slice(0, 8)
+          sortRunsByMostRecent(
+            response.runs.filter((run) => run.workflow_id === activeWorkflowId)
+          ).slice(0, 8)
+        );
+
+        setRunSnapshot((current) =>
+          resolveLatestWorkflowRunSnapshot({
+            activeWorkflowId,
+            currentRun: current,
+            runs: response.runs
+          })
         );
       } catch (error) {
         if (!cancelled) {
@@ -442,6 +473,45 @@ export default function CanvasWorkspace({
     return () => {
       cancelled = true;
     };
+  }, [activeWorkflowId, workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId || typeof window === 'undefined') {
+      return undefined;
+    }
+
+    function handleWorkspaceRunUpdated(event) {
+      const nextRun = extractWorkspaceRunUpdate(event, workspaceId);
+      if (!nextRun) {
+        return;
+      }
+
+      if (nextRun.workflow_id === activeWorkflowId) {
+        upsertRunHistory(nextRun);
+        setRunSnapshot((current) =>
+          resolveLatestWorkflowRunSnapshot({
+            activeWorkflowId,
+            currentRun: current,
+            runs: [nextRun]
+          })
+        );
+      }
+
+      setRunDetailState((current) =>
+        current.runId === nextRun.run_id
+          ? {
+              ...current,
+              runId: nextRun.run_id,
+              run: nextRun,
+              status: current.status === 'idle' ? 'ready' : current.status
+            }
+          : current
+      );
+    }
+
+    window.addEventListener(WORKSPACE_RUN_UPDATED_EVENT, handleWorkspaceRunUpdated);
+    return () =>
+      window.removeEventListener(WORKSPACE_RUN_UPDATED_EVENT, handleWorkspaceRunUpdated);
   }, [activeWorkflowId, workspaceId]);
 
   useEffect(() => {
@@ -604,9 +674,13 @@ export default function CanvasWorkspace({
       };
 
       upsertRunHistory(seededRun);
-      setActiveSection('runs');
-      setDrawerOpen(true);
-      setFloatingCard({ type: 'run-detail', runId: response.run_id });
+      if (onOpenRunInPanel) {
+        onOpenRunInPanel(response.run_id);
+      } else {
+        setActiveSection('runs');
+        setDrawerOpen(true);
+        setFloatingCard({ type: 'run-detail', runId: response.run_id });
+      }
       setBackendStatus('connected');
       await refreshRun(response.run_id);
       await refreshRunDetail(response.run_id);
@@ -620,9 +694,17 @@ export default function CanvasWorkspace({
           if (workspaceId) {
             void refreshRunDetail(response.run_id);
           }
+
+          if (isTerminalRunEventType(event?.event_type)) {
+            closeStreamRef.current?.();
+            closeStreamRef.current = null;
+            setBackendStatus('connected');
+          }
         },
         onError() {
-          setBackendStatus('stream-error');
+          if (isRunInProgress(runSnapshot?.status ?? latestWorkflowRun?.status)) {
+            setBackendStatus('stream-error');
+          }
         }
       });
     } catch (error) {
@@ -630,6 +712,28 @@ export default function CanvasWorkspace({
       setBackendStatus('offline');
     } finally {
       setBusyState((current) => ({ ...current, run: false }));
+    }
+  }
+
+  async function handleCancelRun() {
+    if (!workspaceId || !activeLiveRun?.run_id) {
+      return;
+    }
+
+    setBusyState((current) => ({ ...current, cancel: true }));
+
+    try {
+      const response = await cancelWorkspaceRun(workspaceId, activeLiveRun.run_id);
+      setRunSnapshot(response.run);
+      upsertRunHistory(response.run);
+      emitWorkspaceRunUpdated(workspaceId, response.run);
+      setBackendStatus('connected');
+      await refreshRun(activeLiveRun.run_id);
+      await refreshRunDetail(activeLiveRun.run_id);
+    } catch (error) {
+      setBackendStatus('stream-error');
+    } finally {
+      setBusyState((current) => ({ ...current, cancel: false }));
     }
   }
 
@@ -785,6 +889,19 @@ export default function CanvasWorkspace({
     void refreshRunDetail(runId);
   }
 
+  function inspectRun(runId) {
+    if (!runId) {
+      return;
+    }
+
+    if (onOpenRunInPanel) {
+      onOpenRunInPanel(runId);
+      return;
+    }
+
+    openRunDetail(runId);
+  }
+
   function handleSearchResult(result) {
     if (result.kind === 'workflow') {
       setActiveSection('canvas');
@@ -812,7 +929,7 @@ export default function CanvasWorkspace({
     }
 
     if (result.kind === 'run') {
-      openRunDetail(result.runId);
+      inspectRun(result.runId);
       return;
     }
 
@@ -847,6 +964,7 @@ export default function CanvasWorkspace({
   return (
     <div className="app-shell">
       <WorkflowCanvas
+        activeRunSnapshot={activeRun}
         draggedNodeType={draggedNodeType}
         nodeDefinitions={nodeDefinitions}
         onDebugStateChange={showCanvasDebug ? setCanvasDebugState : undefined}
@@ -924,28 +1042,74 @@ export default function CanvasWorkspace({
       />
 
       <div className="canvas-top-left-tools">
-        <CanvasWorkflowTitleBox
-          isEditing={isWorkflowTitleEditing}
-          onCancel={handleWorkflowTitleCancel}
-          onChange={setWorkflowTitleDraft}
-          onCommit={handleWorkflowTitleCommit}
-          onStartEditing={handleWorkflowTitleStart}
-          title={displayWorkflowTitle}
-          titleDraft={workflowTitleDraft}
-          titleInputRef={workflowTitleInputRef}
-        />
-
-        {showCanvasDebug ? (
-          <CanvasDebugPanel
-            collapsed={isCanvasDebugCollapsed}
-            debugState={canvasDebugState}
-            onToggleCollapsed={() => setIsCanvasDebugCollapsed((current) => !current)}
+        <div className="canvas-top-left-tools__main">
+          <CanvasWorkflowTitleBox
+            isEditing={isWorkflowTitleEditing}
+            onCancel={handleWorkflowTitleCancel}
+            onChange={setWorkflowTitleDraft}
+            onCommit={handleWorkflowTitleCommit}
+            onStartEditing={handleWorkflowTitleStart}
+            title={displayWorkflowTitle}
+            titleDraft={workflowTitleDraft}
+            titleInputRef={workflowTitleInputRef}
           />
-        ) : null}
+
+          <CanvasWorkflowRunStrip
+            onOpenRun={inspectRun}
+            run={latestWorkflowRun}
+          />
+        </div>
+
+        <div
+          className={`canvas-top-left-tools__utilities${selectedNode ? ' has-node-panel' : ''}`}
+        >
+          <div className="canvas-run-control-cluster">
+            <CanvasRunControlToggle
+              isActive={floatingCard?.type === 'run-control'}
+              onClick={() => {
+                if (floatingCard?.type === 'run-control') {
+                  closeFloatingCard();
+                } else {
+                  openRunControl();
+                }
+              }}
+            />
+
+            {floatingCard?.type === 'run-control' ? (
+              <CanvasRunControlPanel
+                activeRun={activeLiveRun}
+                backendStatus={backendStatus}
+                busyState={busyState}
+                deferredEvents={deferredEvents}
+                onCancelRun={handleCancelRun}
+                onClose={closeFloatingCard}
+                onOpenLatestRun={() => {
+                  if (runSnapshot?.run_id) {
+                    inspectRun(runSnapshot.run_id);
+                  }
+                }}
+                onRun={handleRun}
+                onValidate={handleValidate}
+                runHistoryCount={runHistory.length}
+                runSnapshot={runSnapshot}
+                validation={validation}
+                workflowSyncState={workflowSyncState}
+              />
+            ) : null}
+          </div>
+
+          {showCanvasDebug ? (
+            <CanvasDebugPanel
+              collapsed={isCanvasDebugCollapsed}
+              debugState={canvasDebugState}
+              onToggleCollapsed={() => setIsCanvasDebugCollapsed((current) => !current)}
+            />
+          ) : null}
+        </div>
       </div>
 
       <div className="shell-overlay">
-        {floatingCard ? (
+        {floatingCard && floatingCard.type !== 'run-control' ? (
           <section className={`floating-card floating-card--${floatingCard.type}`}>
             <CardHeader
               eyebrow={cardEyebrowFor(floatingCard.type)}
@@ -1012,70 +1176,51 @@ export default function CanvasWorkspace({
                 </div>
               ) : null}
 
-              {floatingCard.type === 'run-control' ? (
-                <div className="card-stack">
-                  <CardMetricGrid
-                    metrics={[
-                      { label: 'Backend', value: humanizeToken(backendStatus) },
-                      { label: 'Workflow', value: humanizeToken(workflowSyncState) },
-                      { label: 'Validation', value: validation ? (validation.valid ? 'Valid' : 'Issues') : 'Idle' },
-                      { label: 'Runs', value: String(runHistory.length) }
-                    ]}
-                  />
-
-                  <div className="drawer-action-grid">
-                    <button
-                      className="accent-button"
-                      onClick={handleValidate}
-                      type="button"
-                      disabled={busyState.validate || workflowSyncState === 'loading'}
-                    >
-                      {busyState.validate ? 'Validating…' : 'Validate Workflow'}
-                    </button>
-                    <button
-                      className="secondary-button"
-                      onClick={handleRun}
-                      type="button"
-                      disabled={busyState.run || workflowSyncState === 'loading'}
-                    >
-                      {busyState.run ? 'Starting…' : 'Run Workflow'}
-                    </button>
-                  </div>
-
-                  <SectionBlock title="Latest Activity">
-                    {deferredEvents.length ? (
-                      <div className="drawer-list">
-                        {deferredEvents.slice(-4).reverse().map((event) => (
-                          <DrawerItemButton
-                            key={event.event_id}
-                            icon=">"
-                            subtitle={event.target.node_id ?? 'run'}
-                            title={humanizeToken(event.event_type)}
-                            onClick={() => {
-                              if (runSnapshot?.run_id) {
-                                openRunDetail(runSnapshot.run_id);
-                              }
-                            }}
-                          />
-                        ))}
-                      </div>
-                    ) : (
-                      <EmptyState message="No live events yet. Start a run to stream lifecycle activity here." />
-                    )}
-                  </SectionBlock>
-                </div>
-              ) : null}
-
               {floatingCard.type === 'run-detail' ? (
                 <div className="card-stack">
                   <CardMetricGrid
                     metrics={[
                       { label: 'Run', value: activeRun?.run_id ?? 'Unknown' },
                       { label: 'Status', value: humanizeToken(activeRun?.status) },
+                      { label: 'Workflow', value: workflow?.name ?? activeRun?.workflow_id ?? 'Unknown' },
+                      { label: 'Duration', value: formatCanvasRunDuration(activeRun) },
                       { label: 'Nodes', value: String(activeRun?.node_runs?.length ?? 0) },
-                      { label: 'Logs', value: String(activeRunLogs.length) }
+                      { label: 'Logs', value: String(activeRunLogs.length) },
+                      { label: 'Errors', value: String(countCanvasRunErrors(activeRun)) },
+                      { label: 'Retries', value: String(countCanvasRunRetries(activeRun)) }
                     ]}
                   />
+
+                  {activeRun?.error ? (
+                    <section className="card-callout card-callout--error">
+                      <p>
+                        <strong>{humanizeToken(activeRun.error.category)}</strong>
+                        {' · '}
+                        {activeRun.error.message}
+                      </p>
+                    </section>
+                  ) : null}
+
+                  <SectionBlock title="Run Facts">
+                    <div className="drawer-kv-list">
+                      <KeyValueRow
+                        label="Started"
+                        value={formatCanvasRunTimestamp(activeRun?.started_at)}
+                      />
+                      <KeyValueRow
+                        label="Finished"
+                        value={formatCanvasRunTimestamp(activeRun?.finished_at)}
+                      />
+                      <KeyValueRow
+                        label="Trigger"
+                        value={humanizeToken(activeRun?.trigger?.kind)}
+                      />
+                      <KeyValueRow
+                        label="Failure mode"
+                        value={activeRun?.error ? humanizeToken(activeRun.error.category) : 'None'}
+                      />
+                    </div>
+                  </SectionBlock>
 
                   <SectionBlock title="Node States">
                     {activeRun?.node_runs?.length ? (
@@ -1084,7 +1229,7 @@ export default function CanvasWorkspace({
                           <DrawerItemButton
                             key={nodeRun.node_id}
                             icon="N"
-                            subtitle={nodeRun.type_id}
+                            subtitle={summarizeNodeRunDetail(nodeRun)}
                             title={nodeRun.node_id}
                             badge={humanizeToken(nodeRun.status)}
                             onClick={() => openNodeInspector(nodeRun.node_id)}
@@ -1103,8 +1248,8 @@ export default function CanvasWorkspace({
                           <DrawerItemButton
                             key={event.event_id}
                             icon=">"
-                            subtitle={event.target.node_id ?? 'run'}
-                            title={humanizeToken(event.event_type)}
+                            subtitle={summarizeCanvasEventDetail(event)}
+                            title={summarizeCanvasEventTitle(event)}
                             badge={event.sequence}
                           />
                         ))}
@@ -1120,8 +1265,8 @@ export default function CanvasWorkspace({
                         {activeRunLogs.slice(-4).reverse().map((entry, index) => (
                           <DrawerItemButton
                             key={`${entry.timestamp}-${index}`}
-                            icon="L"
-                            subtitle={entry.node_id ?? 'run'}
+                            icon={formatCanvasLogLevelBadge(entry.level)}
+                            subtitle={summarizeCanvasLogDetail(entry)}
                             title={entry.message}
                           />
                         ))}
@@ -1360,6 +1505,7 @@ function CanvasNodeManagementPanel({
   }
 
   const model = buildCanvasNodeManagementModel(node, definition);
+  const executionTiming = normalizeNodeExecutionTimingConfig(node?.config ?? {});
 
   return (
     <aside className="canvas-node-panel" aria-label="Node management panel">
@@ -1425,6 +1571,19 @@ function CanvasNodeManagementPanel({
           </div>
         ))}
       </section>
+
+      <CanvasNodeExecutionTimingSection
+        nodeId={node?.node_id ?? 'node'}
+        onTimingChange={(patch) =>
+          onNodeConfigChange?.((currentConfig) =>
+            applyGenericNodeConfigUpdate(
+              currentConfig,
+              buildExecutionTimingConfigPatch(currentConfig, patch)
+            )
+          )
+        }
+        timing={executionTiming}
+      />
 
       <footer className="canvas-node-panel__footer">
         <p className="canvas-node-panel__footer-eyebrow">{model.footerEyebrow}</p>
@@ -1654,6 +1813,19 @@ function CanvasSendEmailManagementPanel({
         </div>
       </section>
 
+      <CanvasNodeExecutionTimingSection
+        nodeId={node?.node_id ?? 'send_email'}
+        onTimingChange={(patch) =>
+          onNodeConfigChange?.((currentConfig) =>
+            applySendEmailConfigUpdate(
+              currentConfig,
+              buildExecutionTimingConfigPatch(currentConfig, patch)
+            )
+          )
+        }
+        timing={config.execution}
+      />
+
       <footer className="canvas-node-panel__footer">
         <p className="canvas-node-panel__footer-eyebrow">Current workflow</p>
 
@@ -1806,6 +1978,19 @@ function CanvasTextInputManagementPanel({
         </div>
       </section>
 
+      <CanvasNodeExecutionTimingSection
+        nodeId={node?.node_id ?? 'text_input'}
+        onTimingChange={(patch) =>
+          onNodeConfigChange?.((currentConfig) =>
+            applyTextInputConfigUpdate(
+              currentConfig,
+              buildExecutionTimingConfigPatch(currentConfig, patch)
+            )
+          )
+        }
+        timing={config.execution}
+      />
+
       <footer className="canvas-node-panel__footer">
         <p className="canvas-node-panel__footer-eyebrow">Current workflow</p>
 
@@ -1825,6 +2010,99 @@ function CanvasTextInputManagementPanel({
         </button>
       </footer>
     </aside>
+  );
+}
+
+function CanvasNodeExecutionTimingSection({
+  nodeId = 'node',
+  onTimingChange,
+  timing
+}) {
+  const waitBeforeEnabled = timing.wait_before_seconds > 0;
+  const waitAfterEnabled = timing.wait_after_seconds > 0;
+
+  return (
+    <section className="canvas-node-panel__section canvas-node-panel__section--timing">
+      <p className="canvas-node-panel__section-eyebrow">Execution timing</p>
+
+      <div className="canvas-node-panel__timing-block">
+        <div className="canvas-node-panel__toggle-row">
+          <label className="canvas-node-panel__checkbox">
+            <input
+              checked={waitBeforeEnabled}
+              onChange={(event) =>
+                onTimingChange?.({
+                  wait_before_seconds: event.target.checked
+                    ? Math.max(1, Math.round(timing.wait_before_seconds || 1))
+                    : 0
+                })
+              }
+              type="checkbox"
+            />
+            <span className="canvas-node-panel__checkmark" aria-hidden="true" />
+            <span>Wait before execution</span>
+          </label>
+        </div>
+
+        {waitBeforeEnabled ? (
+          <div className="canvas-node-panel__timing-input-row">
+            <label htmlFor={`${nodeId}-wait-before-seconds`}>Seconds</label>
+            <input
+              id={`${nodeId}-wait-before-seconds`}
+              className="canvas-node-panel__input canvas-node-panel__input--timing"
+              min="0"
+              onChange={(event) =>
+                onTimingChange?.({
+                  wait_before_seconds: parseExecutionWaitSeconds(event.target.value)
+                })
+              }
+              step="1"
+              type="number"
+              value={timing.wait_before_seconds}
+            />
+          </div>
+        ) : null}
+      </div>
+
+      <div className="canvas-node-panel__timing-block">
+        <div className="canvas-node-panel__toggle-row">
+          <label className="canvas-node-panel__checkbox">
+            <input
+              checked={waitAfterEnabled}
+              onChange={(event) =>
+                onTimingChange?.({
+                  wait_after_seconds: event.target.checked
+                    ? Math.max(1, Math.round(timing.wait_after_seconds || 1))
+                    : 0
+                })
+              }
+              type="checkbox"
+            />
+            <span className="canvas-node-panel__checkmark" aria-hidden="true" />
+            <span>Wait after execution</span>
+          </label>
+        </div>
+
+        {waitAfterEnabled ? (
+          <div className="canvas-node-panel__timing-input-row">
+            <label htmlFor={`${nodeId}-wait-after-seconds`}>Seconds</label>
+            <input
+              id={`${nodeId}-wait-after-seconds`}
+              className="canvas-node-panel__input canvas-node-panel__input--timing"
+              min="0"
+              onChange={(event) =>
+                onTimingChange?.({
+                  wait_after_seconds: parseExecutionWaitSeconds(event.target.value)
+                })
+              }
+              step="1"
+              type="number"
+              value={timing.wait_after_seconds}
+            />
+          </div>
+        ) : null}
+      </div>
+    </section>
   );
 }
 
@@ -1876,6 +2154,187 @@ function CanvasWorkflowTitleBox({
         </button>
       )}
     </div>
+  );
+}
+
+function CanvasWorkflowRunStrip({ onOpenRun, run = null }) {
+  const status = run?.status ?? 'idle';
+  const nodeRuns = run?.node_runs ?? [];
+  const completedNodeCount = nodeRuns.filter((nodeRun) =>
+    ['succeeded', 'failed', 'cancelled', 'skipped'].includes(
+      normalizeRunStatusToken(nodeRun.status)
+    )
+  ).length;
+  const summary =
+    nodeRuns.length > 0
+      ? `${completedNodeCount}/${nodeRuns.length} nodes`
+      : run?.started_at
+        ? formatCanvasRunTimestamp(run.started_at)
+        : 'No activity yet';
+  const title =
+    run?.error?.message ??
+    (run?.run_id ? `Latest run ${run.run_id}` : 'No runs have been recorded yet.');
+
+  return (
+    <button
+      aria-label="Workflow run status"
+      className={`canvas-workflow-run-strip${
+        run ? ` is-${normalizeRunStatusToken(status)}` : ' is-idle'
+      }`}
+      disabled={!run?.run_id}
+      onClick={() => {
+        if (run?.run_id) {
+          onOpenRun?.(run.run_id);
+        }
+      }}
+      title={title}
+      type="button"
+    >
+      <span className="canvas-workflow-run-strip__eyebrow">
+        {run?.run_id ? 'Latest run' : 'Run status'}
+      </span>
+      <span className="canvas-workflow-run-strip__row">
+        <span className="canvas-workflow-run-strip__status">
+          <span className="canvas-workflow-run-strip__dot" aria-hidden="true" />
+          <strong>{run?.run_id ? humanizeToken(status) : 'No runs yet'}</strong>
+          <span className="canvas-workflow-run-strip__inline-meta">{summary}</span>
+        </span>
+        {run?.run_id ? (
+          <span className="canvas-workflow-run-strip__run-id">
+            {shortCanvasRunId(run.run_id)}
+          </span>
+        ) : null}
+      </span>
+    </button>
+  );
+}
+
+function CanvasRunControlToggle({ isActive = false, onClick }) {
+  return (
+    <button
+      aria-label="Open run control"
+      className={`canvas-run-control-toggle${isActive ? ' is-active' : ''}`}
+      onClick={() => onClick?.()}
+      type="button"
+    >
+      <span className="canvas-run-control-toggle__eyebrow">Execution</span>
+      <span className="canvas-run-control-toggle__label">Run Control</span>
+    </button>
+  );
+}
+
+function CanvasRunControlPanel({
+  activeRun,
+  backendStatus,
+  busyState,
+  deferredEvents,
+  onCancelRun,
+  onClose,
+  onOpenLatestRun,
+  onRun,
+  onValidate,
+  runHistoryCount,
+  runSnapshot,
+  validation,
+  workflowSyncState
+}) {
+  const canCancelRun = isCancellableRun(activeRun);
+  const isCancelling = normalizeRunStatusToken(activeRun?.status) === 'cancelling';
+
+  return (
+    <aside className="canvas-run-control-panel" aria-label="Run control panel">
+      <div className="canvas-run-control-panel__header">
+        <div className="canvas-run-control-panel__header-copy">
+          <strong>Run Control</strong>
+          <span>Validate and execute this workflow</span>
+        </div>
+        <button
+          aria-label="Collapse run control"
+          className="canvas-run-control-panel__collapse"
+          onClick={onClose}
+          type="button"
+        >
+          Collapse
+        </button>
+      </div>
+
+      <div className="card-stack">
+        <CardMetricGrid
+          metrics={[
+            { label: 'Backend', value: humanizeToken(backendStatus) },
+            { label: 'Workflow', value: humanizeToken(workflowSyncState) },
+            { label: 'Validation', value: validation ? (validation.valid ? 'Valid' : 'Issues') : 'Idle' },
+            { label: 'Runs', value: String(runHistoryCount) }
+          ]}
+        />
+
+        <div className="drawer-action-grid">
+          <button
+            className="accent-button"
+            onClick={onValidate}
+            type="button"
+            disabled={
+              busyState.validate ||
+              busyState.cancel ||
+              workflowSyncState === 'loading' ||
+              isCancelling
+            }
+          >
+            {busyState.validate ? 'Validating…' : 'Validate Workflow'}
+          </button>
+          <button
+            className="secondary-button"
+            onClick={onRun}
+            type="button"
+            disabled={
+              busyState.run ||
+              busyState.cancel ||
+              workflowSyncState === 'loading' ||
+              canCancelRun
+            }
+          >
+            {busyState.run ? 'Starting…' : 'Run Workflow'}
+          </button>
+        </div>
+
+        {activeRun?.run_id ? (
+          <div className="drawer-action-grid drawer-action-grid--tertiary">
+            <button
+              className="secondary-button secondary-button--danger"
+              disabled={!canCancelRun || busyState.cancel}
+              onClick={onCancelRun}
+              type="button"
+            >
+              {busyState.cancel || isCancelling ? 'Cancelling…' : 'Force Stop'}
+            </button>
+          </div>
+        ) : null}
+
+        <SectionBlock title="Latest Activity">
+          {deferredEvents.length ? (
+            <div className="drawer-list">
+              {deferredEvents.slice(-4).reverse().map((event) => (
+                <DrawerItemButton
+                  key={event.event_id}
+                  icon=">"
+                  subtitle={event.target.node_id ?? 'run'}
+                  title={humanizeToken(event.event_type)}
+                  onClick={onOpenLatestRun}
+                />
+              ))}
+            </div>
+          ) : (
+            <EmptyState
+              message={
+                runSnapshot?.run_id
+                  ? 'No live events yet for the selected run.'
+                  : 'No live events yet. Start a run to stream lifecycle activity here.'
+              }
+            />
+          )}
+        </SectionBlock>
+      </div>
+    </aside>
   );
 }
 
@@ -1988,26 +2447,35 @@ function CanvasDebugPanel({
   onToggleCollapsed
 }) {
   return (
-    <aside
-      aria-live="polite"
-      className={`canvas-debug-panel${collapsed ? ' is-collapsed' : ''}`}
-    >
-      <div className="canvas-debug-panel__header">
-      <div className="canvas-debug-panel__header-copy">
-        <strong>Canvas Debug</strong>
-      </div>
-        <button
-          aria-expanded={!collapsed}
-          className="canvas-debug-panel__collapse"
-          onClick={onToggleCollapsed}
-          type="button"
-        >
-          {collapsed ? 'Expand' : 'Collapse'}
-        </button>
-      </div>
+    <div className="canvas-debug-cluster" aria-live="polite">
+      <button
+        aria-expanded={!collapsed}
+        aria-label="Open canvas debug"
+        className={`canvas-debug-toggle${collapsed ? '' : ' is-active'}`}
+        onClick={onToggleCollapsed}
+        type="button"
+      >
+        <span className="canvas-debug-toggle__eyebrow">Canvas</span>
+        <span className="canvas-debug-toggle__label">Debug</span>
+      </button>
 
       {collapsed ? null : (
-        <>
+        <aside className="canvas-debug-panel">
+          <div className="canvas-debug-panel__header">
+            <div className="canvas-debug-panel__header-copy">
+              <strong>Canvas Debug</strong>
+              <span>Inspect live pointer and selection state</span>
+            </div>
+            <button
+              aria-label="Collapse canvas debug"
+              className="canvas-debug-panel__collapse"
+              onClick={onToggleCollapsed}
+              type="button"
+            >
+              Collapse
+            </button>
+          </div>
+
           <div className="canvas-debug-panel__grid">
             <DebugValue label="Pointer" value={debugState.pointer ? `${debugState.pointer.x}, ${debugState.pointer.y}` : 'Idle'} />
             <DebugValue label="Active Node" value={humanizeToken(debugState.activeNodeId ?? 'none')} />
@@ -2095,9 +2563,9 @@ function CanvasDebugPanel({
               <p className="canvas-debug-panel__empty">No top-level blocker detected outside the active node.</p>
             )}
           </section> */}
-        </>
+        </aside>
       )}
-    </aside>
+    </div>
   );
 }
 
@@ -2245,6 +2713,290 @@ function workflowSignature(workflow) {
   return JSON.stringify(workflow);
 }
 
+function sortRunsByMostRecent(runs = []) {
+  return [...runs].sort((left, right) => {
+    const leftTime =
+      Date.parse(left.started_at ?? '') ||
+      Date.parse(left.finished_at ?? '') ||
+      0;
+    const rightTime =
+      Date.parse(right.started_at ?? '') ||
+      Date.parse(right.finished_at ?? '') ||
+      0;
+    return rightTime - leftTime;
+  });
+}
+
+function resolveLatestWorkflowRunSnapshot({
+  activeWorkflowId,
+  currentRun = null,
+  runs = []
+}) {
+  const matchingRuns = sortRunsByMostRecent(
+    runs.filter((run) => run.workflow_id === activeWorkflowId)
+  );
+  const latestRun = matchingRuns[0] ?? null;
+
+  if (!latestRun) {
+    return null;
+  }
+
+  if (!currentRun || currentRun.workflow_id !== activeWorkflowId) {
+    return latestRun;
+  }
+
+  if (currentRun.run_id === latestRun.run_id) {
+    return preferRunSnapshot(currentRun, latestRun);
+  }
+
+  if (isRunInProgress(currentRun.status)) {
+    return currentRun;
+  }
+
+  return latestRun;
+}
+
+function preferRunSnapshot(currentRun, candidateRun) {
+  if (!currentRun) {
+    return candidateRun ?? null;
+  }
+
+  if (!candidateRun) {
+    return currentRun;
+  }
+
+  const currentInProgress = isRunInProgress(currentRun.status);
+  const candidateInProgress = isRunInProgress(candidateRun.status);
+
+  if (currentInProgress && !candidateInProgress) {
+    return candidateRun;
+  }
+
+  if (!currentInProgress && candidateInProgress) {
+    return currentRun;
+  }
+
+  if (countCompletedCanvasNodes(candidateRun) > countCompletedCanvasNodes(currentRun)) {
+    return candidateRun;
+  }
+
+  const currentFinishedAt = Date.parse(currentRun.finished_at ?? '') || 0;
+  const candidateFinishedAt = Date.parse(candidateRun.finished_at ?? '') || 0;
+  if (candidateFinishedAt > currentFinishedAt) {
+    return candidateRun;
+  }
+
+  const currentStartedAt = Date.parse(currentRun.started_at ?? '') || 0;
+  const candidateStartedAt = Date.parse(candidateRun.started_at ?? '') || 0;
+  if (candidateStartedAt > currentStartedAt) {
+    return candidateRun;
+  }
+
+  if ((candidateRun.logs?.length ?? 0) > (currentRun.logs?.length ?? 0)) {
+    return candidateRun;
+  }
+
+  return currentRun;
+}
+
+function isRunInProgress(status) {
+  return ['created', 'queued', 'planning', 'running', 'cancelling'].includes(
+    normalizeRunStatusToken(status)
+  );
+}
+
+function isCancellableRun(run) {
+  return Boolean(run?.run_id) && isRunInProgress(run.status);
+}
+
+function isTerminalRunEventType(eventType) {
+  return ['run_succeeded', 'run_failed', 'run_cancelled'].includes(
+    String(eventType ?? '').toLowerCase()
+  );
+}
+
+function normalizeRunStatusToken(status) {
+  return typeof status === 'string' ? status.toLowerCase() : String(status ?? '').toLowerCase();
+}
+
+function shortCanvasRunId(runId = '') {
+  if (!runId) {
+    return '—';
+  }
+
+  return runId.length > 12 ? runId.slice(0, 12) : runId;
+}
+
+function formatCanvasRunTimestamp(timestamp) {
+  if (!timestamp) {
+    return 'No activity yet';
+  }
+
+  const value = new Date(timestamp);
+  if (Number.isNaN(value.getTime())) {
+    return 'No activity yet';
+  }
+
+  return value.toLocaleString(undefined, {
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    month: 'short'
+  });
+}
+
+function formatCanvasRunDuration(run) {
+  const durationMs = canvasRunDurationMs(run);
+  return durationMs ? formatCanvasDurationMs(durationMs) : '—';
+}
+
+function canvasRunDurationMs(run) {
+  if (Number.isFinite(run?.duration_ms) && run.duration_ms >= 0) {
+    return run.duration_ms;
+  }
+
+  if (!run?.started_at) {
+    return 0;
+  }
+
+  const started = new Date(run.started_at).getTime();
+  const finished = run.finished_at ? new Date(run.finished_at).getTime() : Date.now();
+
+  if (!Number.isFinite(started) || !Number.isFinite(finished)) {
+    return 0;
+  }
+
+  return Math.max(0, finished - started);
+}
+
+function formatCanvasDurationMs(durationMs) {
+  if (durationMs < 1000) {
+    return `${Math.round(durationMs)}ms`;
+  }
+
+  const seconds = durationMs / 1000;
+  if (seconds < 60) {
+    return `${seconds.toFixed(1)}s`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.round(seconds % 60);
+  return `${minutes}m ${remainingSeconds}s`;
+}
+
+function countCanvasRunRetries(run) {
+  if (Number.isFinite(run?.retry_count)) {
+    return Math.max(0, run.retry_count);
+  }
+
+  return (run?.node_runs ?? []).reduce(
+    (sum, nodeRun) => sum + Math.max(0, (nodeRun.attempt ?? 1) - 1),
+    0
+  );
+}
+
+function countCanvasRunErrors(run) {
+  if (Number.isFinite(run?.error_count)) {
+    return Math.max(0, run.error_count);
+  }
+
+  const nodeFailures = (run?.node_runs ?? []).filter((nodeRun) => nodeRun.error).length;
+  return run?.error ? Math.max(nodeFailures, 1) : nodeFailures;
+}
+
+function countCompletedCanvasNodes(run) {
+  return (run?.node_runs ?? []).filter((nodeRun) =>
+    ['succeeded', 'failed', 'skipped', 'cancelled'].includes(
+      normalizeRunStatusToken(nodeRun.status)
+    )
+  ).length;
+}
+
+function summarizeNodeRunDetail(nodeRun) {
+  const statusDetail = `${humanizeToken(nodeRun.type_id)} · ${
+    nodeRun.attempt === 1 ? '1 attempt' : `${nodeRun.attempt} attempts`
+  } · ${nodeRun.log_count ?? 0} logs`;
+
+  if (nodeRun.error?.message) {
+    return `${statusDetail} · ${nodeRun.error.message}`;
+  }
+
+  return statusDetail;
+}
+
+function summarizeCanvasEventTitle(event) {
+  if (event.event_type === 'run_failed' && event.payload?.message) {
+    return event.payload.message;
+  }
+
+  if (event.event_type === 'node_log' && event.payload?.message) {
+    return event.payload.message;
+  }
+
+  return humanizeToken(event.event_type);
+}
+
+function summarizeCanvasEventDetail(event) {
+  const targetLabel = event.target?.node_id ?? 'workflow';
+  const timeLabel = formatCanvasRunTimestamp(event.timestamp);
+  const payloadLabel = summarizeCanvasEventPayload(event);
+  return [targetLabel, timeLabel, payloadLabel].filter(Boolean).join(' · ');
+}
+
+function summarizeCanvasEventPayload(event) {
+  const payload = event.payload ?? {};
+
+  if (payload.status) {
+    return humanizeToken(payload.status);
+  }
+
+  if (payload.type_id) {
+    return humanizeToken(payload.type_id);
+  }
+
+  if (Number.isFinite(payload.planned_nodes)) {
+    return `${payload.planned_nodes} planned`;
+  }
+
+  if (Number.isFinite(payload.completed_nodes)) {
+    return `${payload.completed_nodes} completed`;
+  }
+
+  if (Number.isFinite(payload.attempt)) {
+    return payload.attempt === 1 ? '1 attempt' : `${payload.attempt} attempts`;
+  }
+
+  if (payload.category) {
+    return humanizeToken(payload.category);
+  }
+
+  return '';
+}
+
+function summarizeCanvasLogDetail(entry) {
+  return [
+    humanizeToken(entry.level),
+    entry.node_id ?? 'workflow',
+    formatCanvasRunTimestamp(entry.timestamp)
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+function formatCanvasLogLevelBadge(level) {
+  const normalizedLevel = String(level ?? '').toLowerCase();
+  if (normalizedLevel === 'error') {
+    return '!';
+  }
+  if (normalizedLevel === 'warn') {
+    return 'W';
+  }
+  if (normalizedLevel === 'debug') {
+    return 'D';
+  }
+  return 'L';
+}
+
 function buildCanvasNodeManagementModel(node, definition) {
   const nodeTypeId = node?.type_id ?? definition?.type_id ?? null;
   const inputCount = definition?.inputs?.length ?? 0;
@@ -2334,6 +3086,7 @@ function normalizeSendEmailPanelConfig(node, workflow) {
         : typeof config.body === 'string'
           ? config.body
           : '',
+    execution: normalizeNodeExecutionTimingConfig(config),
     connection_id:
       typeof config.connection_id === 'string' && config.connection_id.trim()
         ? config.connection_id
@@ -2349,6 +3102,7 @@ function normalizeTextInputPanelConfig(node) {
   const config = node?.config ?? {};
 
   return {
+    execution: normalizeNodeExecutionTimingConfig(config),
     include_line_breaks:
       typeof config.include_line_breaks === 'boolean'
         ? config.include_line_breaks
@@ -2384,6 +3138,7 @@ function applySendEmailConfigUpdate(currentConfig = {}, patch = {}) {
     body: normalizedBodyText,
     body_mode: next.body_mode === 'custom' ? 'custom' : 'input',
     body_text: normalizedBodyText,
+    execution: normalizeNodeExecutionTimingConfig(next),
     connection_id:
       typeof next.connection_id === 'string' && next.connection_id.trim()
         ? next.connection_id
@@ -2403,6 +3158,7 @@ function applyTextInputConfigUpdate(currentConfig = {}, patch = {}) {
 
   return {
     ...next,
+    execution: normalizeNodeExecutionTimingConfig(next),
     include_line_breaks:
       typeof next.include_line_breaks === 'boolean'
         ? next.include_line_breaks
@@ -2417,6 +3173,51 @@ function applyTextInputConfigUpdate(currentConfig = {}, patch = {}) {
         ? next.trim_mode
         : 'automatic'
   };
+}
+
+function applyGenericNodeConfigUpdate(currentConfig = {}, patch = {}) {
+  const next = {
+    ...currentConfig,
+    ...patch
+  };
+
+  return {
+    ...next,
+    execution: normalizeNodeExecutionTimingConfig(next)
+  };
+}
+
+function normalizeNodeExecutionTimingConfig(config = {}) {
+  return normalizeNodeExecutionTimingValue(config.execution);
+}
+
+function normalizeNodeExecutionTimingValue(execution = {}) {
+  return {
+    wait_after_seconds: normalizeExecutionWaitSeconds(execution.wait_after_seconds),
+    wait_before_seconds: normalizeExecutionWaitSeconds(execution.wait_before_seconds)
+  };
+}
+
+function buildExecutionTimingConfigPatch(currentConfig = {}, patch = {}) {
+  return {
+    execution: normalizeNodeExecutionTimingValue({
+      ...normalizeNodeExecutionTimingConfig(currentConfig),
+      ...patch
+    })
+  };
+}
+
+function normalizeExecutionWaitSeconds(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+
+  return Math.max(0, Math.round(value));
+}
+
+function parseExecutionWaitSeconds(value) {
+  const parsed = Number(value);
+  return normalizeExecutionWaitSeconds(parsed);
 }
 
 function buildSendEmailConnectionOptions(activeConnectionId) {
@@ -2489,6 +3290,10 @@ function appendCanvasNode(workflow, typeId, options = {}) {
     config:
       typeId === 'text_input'
         ? {
+            execution: {
+              wait_after_seconds: 0,
+              wait_before_seconds: 0
+            },
             include_line_breaks: true,
             preserve_whitespace: true,
             text: 'Draft the next message body here.',
@@ -2500,6 +3305,10 @@ function appendCanvasNode(workflow, typeId, options = {}) {
             body_text: '',
             connection_id: 'default_mailer',
             content_type: 'text/plain',
+            execution: {
+              wait_after_seconds: 0,
+              wait_before_seconds: 0
+            },
             to: 'ops@stitchly.dev',
             subject: 'New workflow alert'
           },

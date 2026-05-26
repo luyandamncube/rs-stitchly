@@ -24,6 +24,8 @@ Structure:
   Workflow run-state and run-surface studies.
 - `runs_node/`
   Node-level runtime state and execution-appearance studies.
+- `runs_history/`
+  Canvas popup run-history and logs-window studies.
 
 Current convention:
 

@@ -47,6 +47,7 @@ The goal is to document:
 - `00_foundation/21_workflow_management_spec.md`: v1 draft for workflow identity, storage, lifecycle, routing, archive behavior, and per-workspace workflow management
 - `00_foundation/22_run_history_and_debugging_spec.md`: v1 draft for durable run summaries, event history, log persistence, retrieval layers, and retention direction
 - `00_foundation/23_storage_root_and_identity_architecture.md`: rooted local-first storage layout, control-plane vs data-plane boundaries, Google identity mapping direction, and local-to-cloud transplant model
+- `00_foundation/24_workflow_duckdb_storage_spec.md`: one-DuckDB-per-workflow direction, rooted workflow-local DB layout, bootstrap rules, and schema ownership boundaries
 ## UI
 
 - `03_ui/00_frontend_canvas.md`: React Flow editor responsibilities, shell model, visual direction, node design direction, and UX rules
@@ -64,6 +65,7 @@ The goal is to document:
 - `04_execution/03_execution_contract.md`: runtime execution shape, preconditions, outcomes, and the running per-node execution contract table
 - `04_execution/04_adapter_contract.md`: runtime-to-adapter boundary, return/error rules, and the running per-node adapter contract table
 - `04_execution/05_multi_edge_semantics.md`: outbound fan-out rules, deferred fan-in semantics, and the running per-node edge-participation contract table
+- `04_execution/06_run_execution_implementation_spec.md`: phased implementation plan for real runs, runtime-state UI, durable debugging, and workflow-local DuckDB writes
 
 ## Workflows
 

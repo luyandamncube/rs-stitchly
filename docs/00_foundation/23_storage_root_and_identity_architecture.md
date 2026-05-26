@@ -9,13 +9,11 @@ Define how Stitchly should separate:
 - the local-first storage root we can run today
 - the future cloud-hosted shape we can transplant to later
 
-This doc does not yet choose the table-file format for workflow data.
+This doc does not define the workflow-local database bootstrap in detail.
 
-That later decision should compare options such as:
+That detail is now captured in:
 
-- DuckDB
-- Parquet
-- ClickHouse-backed storage patterns
+- `24_workflow_duckdb_storage_spec.md`
 
 ## Why This Exists
 

@@ -3,17 +3,31 @@ import { vi } from 'vitest';
 import App from './App';
 
 vi.mock('./components/CanvasWorkspace', () => ({
-  default: function CanvasWorkspaceMock() {
-    return <div data-testid="canvas-workspace">Canvas workspace</div>;
+  default: function CanvasWorkspaceMock({ onOpenRunInPanel }) {
+    return (
+      <div data-testid="canvas-workspace">
+        <span>Canvas workspace</span>
+        <button
+          onClick={() => onOpenRunInPanel?.('run_6734')}
+          type="button"
+        >
+          Open latest run in panel
+        </button>
+      </div>
+    );
   }
 }));
 
 const api = vi.hoisted(() => ({
+  cancelWorkspaceRun: vi.fn(),
   createWorkflow: vi.fn(),
   createWorkspace: vi.fn(),
   deleteWorkflow: vi.fn(),
   getSession: vi.fn(),
   getWorkflow: vi.fn(),
+  getWorkspaceRun: vi.fn(),
+  getWorkspaceRunEvents: vi.fn(),
+  getWorkspaceRunLogs: vi.fn(),
   getWorkflows: vi.fn(),
   getWorkflowState: vi.fn(),
   getWorkspaceRuns: vi.fn(),
@@ -56,11 +70,15 @@ describe('App platform shell', () => {
     window.localStorage.clear();
     window.history.replaceState({}, '', '/');
     delete window.google;
+    api.cancelWorkspaceRun.mockReset();
     api.createWorkspace.mockReset();
     api.createWorkflow.mockReset();
     api.deleteWorkflow.mockReset();
     api.getSession.mockReset();
     api.getWorkflow.mockReset();
+    api.getWorkspaceRun.mockReset();
+    api.getWorkspaceRunEvents.mockReset();
+    api.getWorkspaceRunLogs.mockReset();
     api.getWorkflows.mockReset();
     api.getWorkflowState.mockReset();
     api.getWorkspaceRuns.mockReset();
@@ -73,6 +91,9 @@ describe('App platform shell', () => {
     api.getWorkflowState.mockResolvedValue({ last_opened_workflow_id: null });
     api.getWorkflows.mockResolvedValue({ workflows: [] });
     api.getWorkspaceRuns.mockResolvedValue({ runs: [] });
+    api.getWorkspaceRun.mockResolvedValue({ run: null });
+    api.getWorkspaceRunEvents.mockResolvedValue({ events: [] });
+    api.getWorkspaceRunLogs.mockResolvedValue({ logs: [] });
     api.updateWorkflowState.mockResolvedValue({ last_opened_workflow_id: null });
   });
 
@@ -115,6 +136,10 @@ describe('App platform shell', () => {
     expect(
       await screen.findByRole('heading', { name: /log in/i })
     ).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(initCodeClient).toHaveBeenCalled();
+    });
 
     fireEvent.click(screen.getByRole('button', { name: /continue with google/i }));
 
@@ -239,6 +264,220 @@ describe('App platform shell', () => {
     expect(screen.getByRole('button', { name: 'Blank' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Starter' })).toBeInTheDocument();
     expect(await screen.findByText('Text Preview')).toBeInTheDocument();
+  });
+
+  it('opens the runs popup and shows workspace-scoped run history data', async () => {
+    const startedAt = new Date(Date.now() - 45 * 60 * 1000).toISOString();
+    const finishedAt = new Date(Date.now() - 42 * 60 * 1000).toISOString();
+
+    api.login.mockResolvedValue(AUTHENTICATED_SESSION);
+    api.getWorkflows.mockResolvedValue({
+      workflows: [
+        {
+          workflow_id: 'wf_text_preview',
+          workspace_id: 'ws_default',
+          name: 'Email Draft Flow',
+          description: 'Starter text preview flow.',
+          version: 1,
+          updated_at: '2026-05-24T10:00:00Z'
+        }
+      ]
+    });
+    api.getWorkspaceRun.mockResolvedValue({
+      run: {
+        run_id: 'run_6734',
+        workflow_id: 'wf_text_preview',
+        workflow_name_at_run: 'Email Draft Flow',
+        workflow_version: 1,
+        status: 'failed',
+        trigger: { kind: 'manual' },
+        started_at: startedAt,
+        finished_at: finishedAt,
+        duration_ms: 180000,
+        retry_count: 2,
+        error_count: 1,
+        node_runs: [
+          {
+            node_id: 'send_email_notification',
+            type_id: 'send_email',
+            status: 'failed',
+            attempt: 3,
+            started_at: startedAt,
+            finished_at: finishedAt,
+            last_output: null,
+            log_count: 2,
+            error: {
+              category: 'execution_error',
+              message: 'SMTP timeout'
+            }
+          }
+        ],
+        error: {
+          category: 'execution_error',
+          message: 'SMTP timeout'
+        }
+      }
+    });
+    api.getWorkspaceRunEvents.mockResolvedValue({
+      events: [
+        {
+          event_id: 'evt_6734_1',
+          sequence: 1,
+          timestamp: finishedAt,
+          event_type: 'node_failed',
+          target: {
+            kind: 'node',
+            node_id: 'send_email_notification'
+          },
+          payload: {
+            attempt: 3
+          }
+        }
+      ]
+    });
+    api.getWorkspaceRunLogs.mockResolvedValue({
+      logs: [
+        {
+          timestamp: finishedAt,
+          level: 'error',
+          node_id: 'send_email_notification',
+          message: 'SMTP timeout'
+        }
+      ]
+    });
+    api.getWorkspaceRuns.mockResolvedValue({
+      runs: [
+        {
+          run_id: 'run_6734',
+          workflow_id: 'wf_text_preview',
+          workflow_version: 1,
+          status: 'failed',
+          trigger: { kind: 'manual' },
+          started_at: startedAt,
+          finished_at: finishedAt,
+          node_runs: [
+            {
+              node_id: 'send_email_notification',
+              type_id: 'send_email',
+              status: 'failed',
+              attempt: 3,
+              started_at: startedAt,
+              finished_at: finishedAt,
+              last_output: null,
+              log_count: 2,
+              error: {
+                category: 'execution_error',
+                message: 'SMTP timeout'
+              }
+            }
+          ],
+          logs: [],
+          error: {
+            category: 'execution_error',
+            message: 'SMTP timeout'
+          }
+        }
+      ]
+    });
+
+    const { container } = render(<App />);
+
+    await screen.findByRole('heading', { name: /log in/i });
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+
+    const runsButton = await screen.findByRole('button', { name: 'Runs' });
+    expect(runsButton).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(runsButton);
+
+    expect(runsButton).toHaveAttribute('aria-expanded', 'true');
+    expect(container.querySelector('.canvas-menu.is-open')).not.toBeNull();
+    expect(await screen.findByLabelText('Runs history window')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Run workflow' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Email Draft Flow' })).toBeInTheDocument();
+    expect(screen.getByText('SMTP timeout')).toBeInTheDocument();
+    expect(
+      screen.getByText((_, element) => element?.textContent?.trim() === '1 / 2')
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '6734' }));
+
+    expect(await screen.findByText('Run Detail')).toBeInTheDocument();
+    expect(screen.getByText('Run Facts')).toBeInTheDocument();
+    expect(screen.getByText('Node States')).toBeInTheDocument();
+    expect(screen.getByText('Recent Events')).toBeInTheDocument();
+    expect(screen.getByText('Recent Logs')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+
+    expect(await screen.findByLabelText('Runs history window')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '6734' })).toBeInTheDocument();
+  });
+
+  it('opens embedded run detail from the canvas latest-run entry point', async () => {
+    const startedAt = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    const finishedAt = new Date(Date.now() - 29 * 60 * 1000).toISOString();
+
+    api.login.mockResolvedValue(AUTHENTICATED_SESSION);
+    api.getWorkflows.mockResolvedValue({
+      workflows: [
+        {
+          workflow_id: 'wf_text_preview',
+          workspace_id: 'ws_default',
+          name: 'Email Draft Flow',
+          description: 'Starter text preview flow.',
+          version: 1,
+          updated_at: '2026-05-24T10:00:00Z'
+        }
+      ]
+    });
+    api.getWorkspaceRuns.mockResolvedValue({
+      runs: [
+        {
+          run_id: 'run_6734',
+          workflow_id: 'wf_text_preview',
+          workflow_version: 1,
+          status: 'succeeded',
+          trigger: { kind: 'manual' },
+          started_at: startedAt,
+          finished_at: finishedAt,
+          node_runs: [],
+          logs: [],
+          error: null
+        }
+      ]
+    });
+    api.getWorkspaceRun.mockResolvedValue({
+      run: {
+        run_id: 'run_6734',
+        workflow_id: 'wf_text_preview',
+        workflow_name_at_run: 'Email Draft Flow',
+        workflow_version: 1,
+        status: 'succeeded',
+        trigger: { kind: 'manual' },
+        started_at: startedAt,
+        finished_at: finishedAt,
+        duration_ms: 60000,
+        retry_count: 0,
+        error_count: 0,
+        node_runs: [],
+        error: null
+      }
+    });
+    api.getWorkspaceRunEvents.mockResolvedValue({ events: [] });
+    api.getWorkspaceRunLogs.mockResolvedValue({ logs: [] });
+
+    render(<App />);
+
+    await screen.findByRole('heading', { name: /log in/i });
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Open latest run in panel' }));
+
+    expect(await screen.findByLabelText('Runs history window')).toBeInTheDocument();
+    expect(await screen.findByText('Run Detail')).toBeInTheDocument();
+    expect(screen.getByText('Run Facts')).toBeInTheDocument();
+    expect(screen.getAllByText('run_6734').length).toBeGreaterThan(0);
   });
 
   it('opens the workspace directory popup and shows workspace workflows as a tree', async () => {

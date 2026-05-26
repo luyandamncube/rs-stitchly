@@ -169,6 +169,13 @@ Suggested flow:
 
 Not every executor will support instant interruption, so the state model should reflect in-progress cancellation rather than pretending it is immediate.
 
+Current v1 implementation applies cancellation at runtime boundaries:
+- before the next node starts
+- during configured execution waits
+- after the current adapter call returns
+
+Long synchronous adapter work is therefore best-effort cancellable for now rather than hard-preempted.
+
 ## Failure Model
 
 Failure reporting should separate:

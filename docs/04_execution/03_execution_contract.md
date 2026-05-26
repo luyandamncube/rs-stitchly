@@ -40,6 +40,21 @@ Before execution starts, the runtime should already have ensured:
 
 That means adapter execution should not be responsible for graph planning.
 
+### Shared Timing Controls
+
+For v1, any node may also carry optional workflow-level execution timing in config:
+
+- `config.execution.wait_before_seconds`
+- `config.execution.wait_after_seconds`
+
+These waits are runtime-owned orchestration controls, not adapter-owned business logic.
+
+Practical rule:
+
+- before wait keeps the node in its running phase before adapter execution starts
+- after wait keeps the node in its running phase after adapter success and before node completion is recorded
+- absent or `0` means no extra wait
+
 ### Execution Outcome
 
 A node execution should resolve to one of:
@@ -72,10 +87,10 @@ The node executor owns:
 
 | Node type | Preconditions | Consumes | Produces | Side effects | V1 execution rule |
 | --- | --- | --- | --- | --- | --- |
-| `text_input` | valid `config.text` | config only | one text output | none | pure source execution; no upstream dependency |
+| `text_input` | valid `config.text` | config only | one text output | none | pure source execution; no upstream dependency; optional runtime wait before/after |
 | `text_transform` | valid `config.operation`; `source` input present | one upstream text input | one transformed text output | none | pure transform execution; synchronous in-process |
 | `preview_output` | `text` input present | one upstream text input | no graph outputs | structured logs | sink-style execution; consumes text and logs preview content |
-| `send_email` | valid `to` and `subject`; optional body from input or config | optional upstream `body`, config fields | no graph outputs | notification side effect, structured logs | output-side execution; consumes body and records send intent |
+| `send_email` | valid `to` and `subject`; optional body from input or config | optional upstream `body`, config fields | no graph outputs | notification side effect, structured logs | output-side execution; consumes body and records send intent; optional runtime wait before/after |
 
 ## Notes By Node
 

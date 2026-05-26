@@ -13,6 +13,20 @@ Use this file to capture important product and technical decisions in a compact 
 
 ## Entries
 
+### 2026-05-26 - Real workflow execution should ship in phased vertical slices
+
+- status: proposed
+- context: the product now has persisted workflows, workspace-scoped run history, execution contracts, and workflow-local DuckDB bootstrap, but actual end-to-end workflow execution still needs to be introduced carefully so runtime behavior, UI feedback, persistence, and data passing can be verified incrementally.
+- decision: draft a dedicated phased execution rollout that starts with a minimal happy-path `text_input -> send_email` slice, then layers live canvas runtime states, richer debugging surfaces, workflow-local DuckDB writes, and broader node coverage.
+- consequence: implementation should follow the phase order and acceptance criteria captured in `04_execution/06_run_execution_implementation_spec.md` rather than trying to land the full run system in one step.
+
+### 2026-05-25 - Workflow-local table management should start with one DuckDB file per workflow
+
+- status: proposed
+- context: the rooted storage model is now defined, but workflow-local table storage still needs a first concrete implementation that is simple, portable, and strong for local analytical workloads.
+- decision: draft a dedicated workflow-local DuckDB direction built around `<workflow_id>/workflow.json`, `db/workflow.duckdb`, and `files/`, with `runs`, `staging`, `tables`, and `outputs` initialized for every new workflow while the control plane remains canonical for workflow metadata and run history.
+- consequence: implementation should wait for review of the workflow-local DuckDB keys captured in `24_workflow_duckdb_storage_spec.md`.
+
 ### 2026-05-25 - Storage should split platform identity data from rooted workflow-owned files
 
 - status: proposed

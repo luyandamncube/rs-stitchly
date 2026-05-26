@@ -125,6 +125,12 @@ export function getWorkspaceRunLogs(workspaceId, runId) {
   return request(`/api/workspaces/${workspaceId}/runs/${runId}/logs`);
 }
 
+export function cancelWorkspaceRun(workspaceId, runId) {
+  return request(`/api/workspaces/${workspaceId}/runs/${runId}/cancel`, {
+    method: 'POST'
+  });
+}
+
 export function createWorkspaceRun(workspaceId, workflow) {
   return request(`/api/workspaces/${workspaceId}/runs`, {
     body: JSON.stringify({
@@ -167,13 +173,19 @@ export function getRunSnapshot(runId) {
 }
 
 export function subscribeToRun(runId, { onEvent, onError }) {
+  let closed = false;
   const source = new EventSource(buildUrl(`/api/runs/${runId}/events`));
   source.addEventListener('run_event', (event) => {
     onEvent(JSON.parse(event.data));
   });
   source.onerror = (event) => {
-    onError?.(event);
+    if (!closed) {
+      onError?.(event);
+    }
   };
 
-  return () => source.close();
+  return () => {
+    closed = true;
+    source.close();
+  };
 }

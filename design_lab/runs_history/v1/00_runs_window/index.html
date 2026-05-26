@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Runs History Window</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../shared.css" />
+  </head>
+  <body>
+    <main class="runs-history-lab">
+      <section class="runs-history-lab__note">
+        <span class="runs-history-lab__eyebrow">Runs History</span>
+        <h1 class="runs-history-lab__title">Canvas popup for workflow runs and logs</h1>
+        <p class="runs-history-lab__caption">
+          First pass at adapting the analytical run-list reference into the Stitchly left-rail popup system.
+        </p>
+      </section>
+
+      <section class="runs-history-shell">
+        <div class="runs-history-control">
+          <div class="runs-history-control__dock" aria-label="Canvas menu">
+            <button class="runs-history-control__button runs-history-control__button--brand" type="button" aria-label="Stitchly">
+              <img
+                class="runs-history-control__brand-image"
+                src="../../../../apps/web/public/brand/symbol/stitchly-symbol-mark-white.svg"
+                alt=""
+              />
+            </button>
+
+            <button class="runs-history-control__button" type="button" aria-label="Workspaces">
+              <span class="runs-history-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                  <path d="M4 7.5h6l1.6 2H20v8.8H4z" />
+                </svg>
+              </span>
+            </button>
+
+            <button class="runs-history-control__button" type="button" aria-label="Workflows">
+              <span class="runs-history-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                  <path d="M5 6.5h14M5 12h14M5 17.5h14" />
+                </svg>
+              </span>
+            </button>
+
+            <button class="runs-history-control__button is-active" type="button" aria-label="Runs">
+              <span class="runs-history-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                  <rect x="5" y="6.5" width="14" height="11" rx="1.5" />
+                  <path d="M8 10.5h8M8 13.5h5" />
+                </svg>
+              </span>
+            </button>
+
+            <div class="runs-history-control__divider" aria-hidden="true"></div>
+
+            <button class="runs-history-control__button" type="button" aria-label="Exit">
+              <span class="runs-history-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                  <path d="M9 7h9v10H9" />
+                  <path d="M6 12h8" />
+                  <path d="M10.5 8.5 14 12l-3.5 3.5" />
+                </svg>
+              </span>
+            </button>
+          </div>
+
+          <section class="runs-history-control__panel" aria-label="Runs popup">
+            <div class="runs-history-panel__top">
+              <div class="runs-history-panel__heading">
+                <span class="runs-history-panel__badge" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                    <rect x="5" y="6.5" width="14" height="11" rx="1.5"></rect>
+                    <path d="M8 10.5h8M8 13.5h5"></path>
+                  </svg>
+                </span>
+                <div>
+                  <h2>Runs &amp; Logs</h2>
+                  <p>workspace-6 · last 24h</p>
+                </div>
+              </div>
+
+              <div class="runs-history-panel__actions">
+                <button class="runs-history-button" type="button">
+                  Export
+                  <span aria-hidden="true">▾</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="runs-history-panel__filters">
+              <div class="runs-history-panel__filter-group">
+                <button class="runs-history-chip is-selected" type="button">All</button>
+                <button class="runs-history-chip" type="button">Success</button>
+                <button class="runs-history-chip" type="button">Failed</button>
+                <button class="runs-history-chip" type="button">In progress</button>
+                <button class="runs-history-chip" type="button">
+                  Workflows
+                  <span aria-hidden="true">▾</span>
+                </button>
+                <button class="runs-history-chip" type="button">
+                  Last 24h
+                  <span aria-hidden="true">◔</span>
+                </button>
+                <button class="runs-history-chip" type="button">
+                  More filters
+                  <span aria-hidden="true">▾</span>
+                </button>
+              </div>
+
+              <div class="runs-history-search" role="search">
+                <span>Name, ID, errors...</span>
+                <span aria-hidden="true">⌕</span>
+              </div>
+            </div>
+
+            <div class="runs-history-kpis">
+              <article class="runs-history-kpi">
+                <span class="runs-history-kpi__label">Total runs</span>
+                <div class="runs-history-kpi__value">
+                  <strong>237</strong>
+                  <span>230 · 2 · 5</span>
+                </div>
+              </article>
+
+              <article class="runs-history-kpi">
+                <span class="runs-history-kpi__label">Workflow success</span>
+                <div class="runs-history-kpi__value">
+                  <strong>98.7%</strong>
+                  <span class="runs-history-kpi__trend">↗ 2%</span>
+                </div>
+              </article>
+
+              <article class="runs-history-kpi">
+                <span class="runs-history-kpi__label">Average lag</span>
+                <div class="runs-history-kpi__value">
+                  <strong>38s</strong>
+                  <span>queue to run</span>
+                </div>
+              </article>
+
+              <article class="runs-history-kpi">
+                <span class="runs-history-kpi__label">Avg latency</span>
+                <div class="runs-history-kpi__value">
+                  <strong>1.8s</strong>
+                  <span>runtime</span>
+                </div>
+              </article>
+            </div>
+
+            <section class="runs-history-table" aria-label="Runs history table">
+              <header class="runs-history-table__header">
+                <span class="runs-history-row__cell"><span class="runs-history-checkbox" aria-hidden="true"></span></span>
+                <span class="runs-history-row__cell">Run ID</span>
+                <span class="runs-history-row__cell">Started</span>
+                <span class="runs-history-row__cell">Workflow</span>
+                <span class="runs-history-row__cell">Duration</span>
+                <span class="runs-history-row__cell">Status</span>
+                <span class="runs-history-row__cell">Error</span>
+                <span class="runs-history-row__cell">Errors / Retries</span>
+              </header>
+
+              <div class="runs-history-table__body">
+                <div class="runs-history-row">
+                  <span class="runs-history-row__cell"><span class="runs-history-checkbox" aria-hidden="true"></span></span>
+                  <span class="runs-history-row__cell">6734</span>
+                  <span class="runs-history-row__cell runs-history-row__muted">22 Jun 2025, 11:02:48</span>
+                  <span class="runs-history-row__cell runs-history-row__workflow">Product Catalog Sync</span>
+                  <span class="runs-history-row__cell">45.2s</span>
+                  <span class="runs-history-row__cell">
+                    <span class="runs-history-status runs-history-status--running"><span class="runs-history-status__dot"></span>Running</span>
+                  </span>
+                  <span class="runs-history-row__cell runs-history-row__error">TimeoutError: Supplier API timed out</span>
+                  <span class="runs-history-row__cell runs-history-row__errors"><strong>0</strong> / 0</span>
+                </div>
+
+                <div class="runs-history-row">
+                  <span class="runs-history-row__cell"><span class="runs-history-checkbox" aria-hidden="true"></span></span>
+                  <span class="runs-history-row__cell">6733</span>
+                  <span class="runs-history-row__cell runs-history-row__muted">22 Jun 2025, 11:05:12</span>
+                  <span class="runs-history-row__cell runs-history-row__workflow">Customer Webhook Listener</span>
+                  <span class="runs-history-row__cell">30.1s</span>
+                  <span class="runs-history-row__cell">
+                    <span class="runs-history-status runs-history-status--running"><span class="runs-history-status__dot"></span>Running</span>
+                  </span>
+                  <span class="runs-history-row__cell runs-history-row__error runs-history-row__muted">None</span>
+                  <span class="runs-history-row__cell runs-history-row__errors"><strong>0</strong> / 0</span>
+                </div>
+
+                <div class="runs-history-row">
+                  <span class="runs-history-row__cell"><span class="runs-history-checkbox" aria-hidden="true"></span></span>
+                  <span class="runs-history-row__cell">6732</span>
+                  <span class="runs-history-row__cell runs-history-row__muted">22 Jun 2025, 11:07:42</span>
+                  <span class="runs-history-row__cell runs-history-row__workflow">Data Enrichment</span>
+                  <span class="runs-history-row__cell">10.4s</span>
+                  <span class="runs-history-row__cell">
+                    <span class="runs-history-status runs-history-status--success"><span class="runs-history-status__dot"></span>Success</span>
+                  </span>
+                  <span class="runs-history-row__cell runs-history-row__error runs-history-row__muted">None</span>
+                  <span class="runs-history-row__cell runs-history-row__errors"><strong>0</strong> / 1</span>
+                </div>
+
+                <div class="runs-history-row">
+                  <span class="runs-history-row__cell"><span class="runs-history-checkbox" aria-hidden="true"></span></span>
+                  <span class="runs-history-row__cell">6731</span>
+                  <span class="runs-history-row__cell runs-history-row__muted">22 Jun 2025, 11:10:27</span>
+                  <span class="runs-history-row__cell runs-history-row__workflow">Analytics Refresh</span>
+                  <span class="runs-history-row__cell">25.9s</span>
+                  <span class="runs-history-row__cell">
+                    <span class="runs-history-status runs-history-status--success"><span class="runs-history-status__dot"></span>Success</span>
+                  </span>
+                  <span class="runs-history-row__cell runs-history-row__error runs-history-row__muted">None</span>
+                  <span class="runs-history-row__cell runs-history-row__errors"><strong>0</strong> / 0</span>
+                </div>
+
+                <div class="runs-history-row">
+                  <span class="runs-history-row__cell"><span class="runs-history-checkbox" aria-hidden="true"></span></span>
+                  <span class="runs-history-row__cell">6730</span>
+                  <span class="runs-history-row__cell runs-history-row__muted">22 Jun 2025, 11:12:59</span>
+                  <span class="runs-history-row__cell runs-history-row__workflow">Billing Reconciliation</span>
+                  <span class="runs-history-row__cell">12.7s</span>
+                  <span class="runs-history-row__cell">
+                    <span class="runs-history-status runs-history-status--success"><span class="runs-history-status__dot"></span>Success</span>
+                  </span>
+                  <span class="runs-history-row__cell runs-history-row__error runs-history-row__muted">None</span>
+                  <span class="runs-history-row__cell runs-history-row__errors"><strong>0</strong> / 0</span>
+                </div>
+
+                <div class="runs-history-row">
+                  <span class="runs-history-row__cell"><span class="runs-history-checkbox" aria-hidden="true"></span></span>
+                  <span class="runs-history-row__cell">6729</span>
+                  <span class="runs-history-row__cell runs-history-row__muted">22 Jun 2025, 11:15:45</span>
+                  <span class="runs-history-row__cell runs-history-row__workflow">Inventory Level Sync</span>
+                  <span class="runs-history-row__cell">8.2s</span>
+                  <span class="runs-history-row__cell">
+                    <span class="runs-history-status runs-history-status--failed"><span class="runs-history-status__dot"></span>Failed</span>
+                  </span>
+                  <span class="runs-history-row__cell runs-history-row__error">HTTPError 404: Not Found</span>
+                  <span class="runs-history-row__cell runs-history-row__errors"><strong>2</strong> / 4</span>
+                </div>
+
+                <div class="runs-history-row">
+                  <span class="runs-history-row__cell"><span class="runs-history-checkbox" aria-hidden="true"></span></span>
+                  <span class="runs-history-row__cell">6728</span>
+                  <span class="runs-history-row__cell runs-history-row__muted">22 Jun 2025, 11:18:13</span>
+                  <span class="runs-history-row__cell runs-history-row__workflow">KYC Data Update</span>
+                  <span class="runs-history-row__cell">18.6s</span>
+                  <span class="runs-history-row__cell">
+                    <span class="runs-history-status runs-history-status--success"><span class="runs-history-status__dot"></span>Success</span>
+                  </span>
+                  <span class="runs-history-row__cell runs-history-row__error runs-history-row__muted">None</span>
+                  <span class="runs-history-row__cell runs-history-row__errors"><strong>0</strong> / 0</span>
+                </div>
+
+                <div class="runs-history-row">
+                  <span class="runs-history-row__cell"><span class="runs-history-checkbox" aria-hidden="true"></span></span>
+                  <span class="runs-history-row__cell">6727</span>
+                  <span class="runs-history-row__cell runs-history-row__muted">22 Jun 2025, 11:20:55</span>
+                  <span class="runs-history-row__cell runs-history-row__workflow">Monthly Log Archiver</span>
+                  <span class="runs-history-row__cell">15.3s</span>
+                  <span class="runs-history-row__cell">
+                    <span class="runs-history-status runs-history-status--success"><span class="runs-history-status__dot"></span>Success</span>
+                  </span>
+                  <span class="runs-history-row__cell runs-history-row__error runs-history-row__muted">None</span>
+                  <span class="runs-history-row__cell runs-history-row__errors"><strong>0</strong> / 0</span>
+                </div>
+              </div>
+            </section>
+          </section>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

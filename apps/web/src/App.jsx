@@ -11,11 +11,15 @@ import {
 } from 'react-router-dom';
 import CanvasWorkspace from './components/CanvasWorkspace';
 import {
+  cancelWorkspaceRun,
   createWorkspace,
   createWorkflow,
   deleteWorkflow,
   getSession,
   getWorkflow,
+  getWorkspaceRun,
+  getWorkspaceRunEvents,
+  getWorkspaceRunLogs,
   getWorkflows,
   getWorkspaceRuns,
   login,
@@ -29,6 +33,7 @@ import {
   buildBlankWorkflowDefinition,
   buildStarterWorkflowDefinition
 } from './lib/workflowTemplates';
+import { emitWorkspaceRunUpdated } from './lib/runSync';
 
 const APP_SCREENS = [
   {
@@ -538,17 +543,20 @@ function ProductShell({
   const [activeCanvasMenuId, setActiveCanvasMenuId] = useState(null);
   const [draggedCanvasNodeType, setDraggedCanvasNodeType] = useState(null);
   const [canvasActions, setCanvasActions] = useState(null);
+  const [canvasRunsSelectedRunId, setCanvasRunsSelectedRunId] = useState('');
   const [isCreatingCanvasWorkflow, setIsCreatingCanvasWorkflow] = useState(false);
   const activeCanvasShelfGroup =
     NODE_SHELF_GROUPS.find((group) => group.id === activeCanvasMenuId) ?? null;
   const isCanvasBrandMenuOpen = activeCanvasMenuId === 'brand';
   const isCanvasWorkspacePanelOpen = activeCanvasMenuId === 'workspace';
   const isCanvasWorkflowPanelOpen = activeCanvasMenuId === 'workflows';
+  const isCanvasRunsPanelOpen = activeCanvasMenuId === 'runs';
   const isSidebarCollapsedEffective = true;
 
   useEffect(() => {
     setActiveCanvasMenuId(null);
     setDraggedCanvasNodeType(null);
+    setCanvasRunsSelectedRunId('');
   }, [activeWorkflowId, activeWorkspace.workspace_id, isCanvasRoute]);
 
   function handleCanvasMenuToggle(nextId) {
@@ -590,6 +598,19 @@ function ProductShell({
     await updateWorkflowState(workspaceId, workflowId).catch(() => {});
     onCanvasOpenWorkflow?.(workflowId);
     setActiveCanvasMenuId(null);
+  }
+
+  function handleCanvasInspectRun(runId) {
+    if (!runId) {
+      return;
+    }
+
+    setCanvasRunsSelectedRunId(runId);
+    setActiveCanvasMenuId('runs');
+  }
+
+  function handleCanvasOpenRunControl() {
+    canvasActions?.openRunControl?.();
   }
 
   async function handleCanvasManagedWorkflowCreate(mode) {
@@ -639,6 +660,8 @@ function ProductShell({
             onCreateWorkspace={handleCanvasCreateWorkspace}
             onCreateManagedWorkflow={handleCanvasManagedWorkflowCreate}
             onCreateWorkflow={handleCanvasNewWorkflow}
+            onInspectRun={handleCanvasInspectRun}
+            onOpenRunControl={handleCanvasOpenRunControl}
             onOpenWorkspace={handleCanvasOpenWorkspace}
             onOpenWorkflow={handleCanvasOpenWorkflow}
             onNodeDragEnd={() => {
@@ -648,8 +671,12 @@ function ProductShell({
             onNodeDragStart={setDraggedCanvasNodeType}
             onShelfToggle={handleCanvasMenuToggle}
             onSignOut={onLogout}
+            onRunsToggle={() => handleCanvasMenuToggle('runs')}
+            onSelectedRunIdChange={setCanvasRunsSelectedRunId}
             onWorkspaceToggle={() => handleCanvasMenuToggle('workspace')}
             onWorkflowToggle={() => handleCanvasMenuToggle('workflows')}
+            isRunsPanelOpen={isCanvasRunsPanelOpen}
+            selectedRunId={canvasRunsSelectedRunId}
             workspaces={session.workspaces}
           />
         ) : (
@@ -816,6 +843,7 @@ function ProductShell({
               <CanvasScreen
                 draggedNodeType={draggedCanvasNodeType}
                 isFullScreen
+                onOpenRunInPanel={handleCanvasInspectRun}
                 onRegisterCanvasActions={setCanvasActions}
                 onWorkflowMissing={onCanvasWorkflowMissing}
                 onWorkflowResolved={onCanvasWorkflowResolved}
@@ -885,6 +913,7 @@ function CanvasMenuDock({
   groups,
   isCreatingWorkflow = false,
   isBrandMenuOpen = false,
+  isRunsPanelOpen = false,
   isWorkspacePanelOpen = false,
   isWorkflowPanelOpen = false,
   onAddNode,
@@ -892,21 +921,27 @@ function CanvasMenuDock({
   onCreateWorkspace,
   onCreateManagedWorkflow,
   onCreateWorkflow,
+  onInspectRun,
+  onOpenRunControl,
   onOpenWorkspace,
   onOpenWorkflow,
   onNodeDragEnd,
   onNodeDragStart,
+  onSelectedRunIdChange,
   onShelfToggle,
   onSignOut,
+  onRunsToggle,
   onWorkspaceToggle,
   onWorkflowToggle
   ,
+  selectedRunId = '',
   workspaces = []
 }) {
   return (
     <aside
       className={`canvas-menu${
         activeGroup || isBrandMenuOpen || isWorkspacePanelOpen || isWorkflowPanelOpen
+          || isRunsPanelOpen
           ? ' is-open'
           : ''
       }`}
@@ -945,6 +980,14 @@ function CanvasMenuDock({
           isExpanded={isWorkflowPanelOpen}
           label="Workflows"
           onClick={onWorkflowToggle}
+        />
+
+        <CanvasMenuButton
+          icon={<CanvasMenuIcon kind="runs" />}
+          isActive={isRunsPanelOpen}
+          isExpanded={isRunsPanelOpen}
+          label="Runs"
+          onClick={onRunsToggle}
         />
 
         <span className="canvas-menu__divider" aria-hidden="true" />
@@ -999,7 +1042,19 @@ function CanvasMenuDock({
         />
       ) : null}
 
-      {activeGroup && !isWorkspacePanelOpen && !isWorkflowPanelOpen ? (
+      {isRunsPanelOpen ? (
+        <CanvasRunsHistoryPanel
+          activeWorkflowId={activeWorkflowId}
+          activeWorkspace={activeWorkspace}
+          onInspectRun={onInspectRun}
+          onOpenRunControl={onOpenRunControl}
+          onOpenWorkflow={onOpenWorkflow}
+          onSelectedRunIdChange={onSelectedRunIdChange}
+          selectedRunId={selectedRunId}
+        />
+      ) : null}
+
+      {activeGroup && !isWorkspacePanelOpen && !isWorkflowPanelOpen && !isRunsPanelOpen ? (
         <CanvasNodeShelfDrawer
           group={activeGroup}
           onAddNode={onAddNode}
@@ -1809,6 +1864,735 @@ function CanvasWorkflowMenuPanel({
   );
 }
 
+function CanvasRunsHistoryPanel({
+  activeWorkflowId = null,
+  activeWorkspace,
+  onInspectRun,
+  onOpenRunControl,
+  onOpenWorkflow,
+  onSelectedRunIdChange = null,
+  selectedRunId: selectedRunIdProp = undefined
+}) {
+  const [runState, setRunState] = useState({
+    error: '',
+    runs: [],
+    status: 'loading',
+    workflows: []
+  });
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [workflowFilter, setWorkflowFilter] = useState('all');
+  const [isLast24hOnly, setIsLast24hOnly] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedRunIdInternal, setSelectedRunIdInternal] = useState('');
+  const [runDetailState, setRunDetailState] = useState({
+    error: '',
+    events: [],
+    logs: [],
+    run: null,
+    status: 'idle'
+  });
+  const [runActionState, setRunActionState] = useState({
+    cancel: false
+  });
+  const panelRef = useRef(null);
+  const selectedRunId =
+    selectedRunIdProp === undefined ? selectedRunIdInternal : selectedRunIdProp;
+
+  function setSelectedRunId(nextRunId) {
+    if (selectedRunIdProp === undefined) {
+      setSelectedRunIdInternal(nextRunId);
+    }
+
+    onSelectedRunIdChange?.(nextRunId);
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+
+    setWorkflowFilter('all');
+    setSearchQuery('');
+    setSelectedRunIdInternal('');
+    setRunDetailState({
+      error: '',
+      events: [],
+      logs: [],
+      run: null,
+      status: 'idle'
+    });
+
+    async function loadRunsWindowData() {
+      try {
+        const [runsResponse, workflowsResponse] = await Promise.all([
+          getWorkspaceRuns(activeWorkspace.workspace_id),
+          getWorkflows(activeWorkspace.workspace_id)
+        ]);
+
+        if (cancelled) {
+          return;
+        }
+
+        const runs = [...(runsResponse.runs ?? [])].sort((left, right) => {
+          const leftTime =
+            Date.parse(left.started_at ?? '') ||
+            Date.parse(left.finished_at ?? '') ||
+            0;
+          const rightTime =
+            Date.parse(right.started_at ?? '') ||
+            Date.parse(right.finished_at ?? '') ||
+            0;
+          return rightTime - leftTime;
+        });
+        const workflows = [...(workflowsResponse.workflows ?? [])].sort((left, right) =>
+          left.name.localeCompare(right.name)
+        );
+
+        setRunState({
+          error: '',
+          runs,
+          status: 'ready',
+          workflows
+        });
+      } catch (error) {
+        if (!cancelled) {
+          setRunState({
+            error: error.message ?? 'Unable to load workspace runs.',
+            runs: [],
+            status: 'error',
+            workflows: []
+          });
+        }
+      }
+    }
+
+    setRunState((current) => ({
+      ...current,
+      error: '',
+      status: current.runs.length ? 'refreshing' : 'loading'
+    }));
+
+    void loadRunsWindowData();
+    const intervalId = window.setInterval(() => {
+      void loadRunsWindowData();
+    }, 4000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [activeWorkspace.workspace_id]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadRunDetail() {
+      if (!selectedRunId) {
+        return;
+      }
+
+      const selectedSummaryRun =
+        runState.runs.find((run) => run.run_id === selectedRunId) ?? null;
+
+      setRunDetailState((current) => ({
+        error: '',
+        events:
+          current.run?.run_id === selectedRunId && current.events.length ? current.events : [],
+        logs: current.run?.run_id === selectedRunId && current.logs.length ? current.logs : [],
+        run: selectedSummaryRun ?? current.run,
+        status: current.run?.run_id === selectedRunId ? 'refreshing' : 'loading'
+      }));
+
+      try {
+        const [runResponse, eventsResponse, logsResponse] = await Promise.all([
+          getWorkspaceRun(activeWorkspace.workspace_id, selectedRunId),
+          getWorkspaceRunEvents(activeWorkspace.workspace_id, selectedRunId),
+          getWorkspaceRunLogs(activeWorkspace.workspace_id, selectedRunId)
+        ]);
+
+        if (cancelled) {
+          return;
+        }
+
+        setRunDetailState({
+          error: '',
+          events: eventsResponse.events ?? [],
+          logs: logsResponse.logs ?? [],
+          run: runResponse.run ?? selectedSummaryRun,
+          status: 'ready'
+        });
+      } catch (error) {
+        if (!cancelled) {
+          setRunDetailState((current) => ({
+            error: error.message ?? 'Unable to load run detail.',
+            events: [],
+            logs: [],
+            run: current.run,
+            status: 'error'
+          }));
+        }
+      }
+    }
+
+    void loadRunDetail();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspace.workspace_id, runState.runs, selectedRunId]);
+
+  useEffect(() => {
+    if (!selectedRunId || !panelRef.current || typeof panelRef.current.scrollTo !== 'function') {
+      return;
+    }
+
+    panelRef.current.scrollTo({ top: 0, behavior: 'auto' });
+  }, [selectedRunId]);
+
+  const workflowNameById = Object.fromEntries(
+    runState.workflows.map((workflow) => [workflow.workflow_id, workflow.name])
+  );
+  const now = Date.now();
+  const last24hThreshold = now - 24 * 60 * 60 * 1000;
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+
+  const filteredRuns = runState.runs.filter((run) => {
+    if (statusFilter === 'success' && run.status !== 'succeeded') {
+      return false;
+    }
+
+    if (statusFilter === 'failed' && !['failed', 'cancelled'].includes(run.status)) {
+      return false;
+    }
+
+    if (
+      statusFilter === 'in_progress' &&
+      !['created', 'queued', 'planning', 'running', 'cancelling'].includes(run.status)
+    ) {
+      return false;
+    }
+
+    if (workflowFilter !== 'all' && run.workflow_id !== workflowFilter) {
+      return false;
+    }
+
+    if (isLast24hOnly) {
+      const runTime =
+        Date.parse(run.started_at ?? '') ||
+        Date.parse(run.finished_at ?? '') ||
+        0;
+      if (!runTime || runTime < last24hThreshold) {
+        return false;
+      }
+    }
+
+    if (!normalizedSearchQuery) {
+      return true;
+    }
+
+    const workflowName = workflowNameById[run.workflow_id] ?? run.workflow_id;
+    const searchable = [
+      run.run_id,
+      run.workflow_name_at_run ?? workflowName,
+      run.workflow_id,
+      run.error?.message ?? '',
+      humanizeRunStatus(run.status)
+    ]
+      .join(' ')
+      .toLowerCase();
+
+    return searchable.includes(normalizedSearchQuery);
+  });
+
+  const metrics = summarizeWorkspaceRuns(filteredRuns);
+  const averageLatency = metrics.averageDuration;
+  const averageLag = '—';
+  const selectedRunSummary = selectedRunId
+    ? runState.runs.find((run) => run.run_id === selectedRunId) ?? null
+    : null;
+  const selectedRun = runDetailState.run ?? selectedRunSummary ?? null;
+  const isRunDetailOpen = Boolean(selectedRunId);
+  const canCancelSelectedRun = isWorkspaceRunCancellable(selectedRun);
+
+  function handleExport() {
+    if (typeof window === 'undefined' || !filteredRuns.length) {
+      return;
+    }
+
+    const exportRows = filteredRuns.map((run) => ({
+      run_id: run.run_id,
+      workflow_id: run.workflow_id,
+      workflow_name:
+        run.workflow_name_at_run ?? workflowNameById[run.workflow_id] ?? run.workflow_id,
+      status: run.status,
+      started_at: run.started_at,
+      finished_at: run.finished_at,
+      duration_ms: runDurationMs(run),
+      error_message: run.error?.message ?? null,
+      error_count: countRunErrors(run),
+      retry_count: countRunRetries(run)
+    }));
+
+    const blob = new Blob([JSON.stringify(exportRows, null, 2)], {
+      type: 'application/json'
+    });
+    const objectUrl = window.URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = `${activeWorkspace.slug}-runs.json`;
+    anchor.click();
+    window.URL.revokeObjectURL(objectUrl);
+  }
+
+  async function handleCancelSelectedRun() {
+    if (!selectedRun?.run_id || !canCancelSelectedRun) {
+      return;
+    }
+
+    setRunActionState({ cancel: true });
+
+    try {
+      const response = await cancelWorkspaceRun(activeWorkspace.workspace_id, selectedRun.run_id);
+      setRunState((current) => ({
+        ...current,
+        runs: sortRunsByMostRecent(
+          current.runs.map((run) => (run.run_id === response.run.run_id ? response.run : run))
+        )
+      }));
+      setRunDetailState((current) => ({
+        ...current,
+        run: response.run
+      }));
+      emitWorkspaceRunUpdated(activeWorkspace.workspace_id, response.run);
+    } catch (error) {
+      setRunDetailState((current) => ({
+        ...current,
+        error: error.message ?? 'Unable to cancel run.'
+      }));
+    } finally {
+      setRunActionState({ cancel: false });
+    }
+  }
+
+  return (
+    <aside className="canvas-runs-panel" aria-label="Runs history window" ref={panelRef}>
+      <header className="canvas-runs-panel__header">
+        <div className="canvas-runs-panel__title-group">
+          {isRunDetailOpen ? (
+            <button
+              className="canvas-runs-panel__back"
+              onClick={() => {
+                setSelectedRunId('');
+                setRunDetailState({
+                  error: '',
+                  events: [],
+                  logs: [],
+                  run: null,
+                  status: 'idle'
+                });
+              }}
+              type="button"
+            >
+              <span aria-hidden="true">‹</span>
+              <span>Back</span>
+            </button>
+          ) : null}
+          <span className="canvas-runs-panel__title-icon" aria-hidden="true">
+            <CanvasMenuIcon kind="runs" />
+          </span>
+          <div className="canvas-runs-panel__title-copy">
+            <strong>{isRunDetailOpen ? 'Run Detail' : 'Runs &amp; Logs'}</strong>
+            <span>{isRunDetailOpen ? selectedRun?.run_id ?? activeWorkspace.name : activeWorkspace.name}</span>
+          </div>
+        </div>
+
+        <div className="canvas-runs-panel__header-actions">
+          <button
+            className="canvas-runs-panel__run-action"
+            onClick={() => onOpenRunControl?.()}
+            type="button"
+          >
+            Run workflow
+          </button>
+
+          <button className="canvas-runs-panel__export" onClick={handleExport} type="button">
+            Export
+            <span aria-hidden="true">▾</span>
+          </button>
+        </div>
+      </header>
+
+      {isRunDetailOpen ? (
+        <div className="canvas-runs-panel__detail card-stack">
+          {selectedRun ? (
+            <div className="canvas-runs-panel__detail-actions">
+              <button
+                className="canvas-runs-panel__run-action canvas-runs-panel__run-action--danger"
+                disabled={!canCancelSelectedRun || runActionState.cancel}
+                onClick={() => {
+                  void handleCancelSelectedRun();
+                }}
+                type="button"
+              >
+                {runActionState.cancel || selectedRun.status === 'cancelling'
+                  ? 'Cancelling…'
+                  : 'Force stop'}
+              </button>
+            </div>
+          ) : null}
+
+          {runDetailState.status === 'error' ? (
+            <div className="canvas-runs-panel__empty">{runDetailState.error}</div>
+          ) : null}
+
+          {!selectedRun && runDetailState.status === 'loading' ? (
+            <div className="canvas-runs-panel__empty">Loading run detail…</div>
+          ) : null}
+
+          {selectedRun ? (
+            <>
+              <div className="card-metric-grid">
+                <div className="card-metric">
+                  <span>Status</span>
+                  <strong>{humanizeRunStatus(selectedRun.status)}</strong>
+                </div>
+                <div className="card-metric">
+                  <span>Workflow</span>
+                  <strong>
+                    {selectedRun.workflow_name_at_run ??
+                      workflowNameById[selectedRun.workflow_id] ??
+                      selectedRun.workflow_id}
+                  </strong>
+                </div>
+                <div className="card-metric">
+                  <span>Duration</span>
+                  <strong>{formatRunDuration(selectedRun)}</strong>
+                </div>
+                <div className="card-metric">
+                  <span>Retries</span>
+                  <strong>{countRunRetries(selectedRun)}</strong>
+                </div>
+              </div>
+
+              {selectedRun.error?.message ? (
+                <section className="canvas-runs-panel__detail-callout">
+                  <p>
+                    <strong>{humanizeRunStatus(selectedRun.error.category)}</strong>
+                    {' · '}
+                    {selectedRun.error.message}
+                  </p>
+                </section>
+              ) : null}
+
+              <section className="drawer-section">
+                <div className="drawer-section__heading">
+                  <span>Run Facts</span>
+                </div>
+                <div className="drawer-kv-list">
+                  <div className="drawer-kv">
+                    <span>Run ID</span>
+                    <strong>{selectedRun.run_id}</strong>
+                  </div>
+                  <div className="drawer-kv">
+                    <span>Started</span>
+                    <strong>{formatRunTimestamp(selectedRun.started_at)}</strong>
+                  </div>
+                  <div className="drawer-kv">
+                    <span>Finished</span>
+                    <strong>{formatRunTimestamp(selectedRun.finished_at)}</strong>
+                  </div>
+                  <div className="drawer-kv">
+                    <span>Errors</span>
+                    <strong>{countRunErrors(selectedRun)}</strong>
+                  </div>
+                </div>
+              </section>
+
+              <section className="drawer-section">
+                <div className="drawer-section__heading">
+                  <span>Node States</span>
+                </div>
+                {selectedRun.node_runs?.length ? (
+                  <div className="drawer-list">
+                    {selectedRun.node_runs.map((nodeRun) => (
+                      <div className="drawer-item" key={nodeRun.node_id}>
+                        <span className="drawer-item__icon">N</span>
+                        <span className="drawer-item__content">
+                          <strong>{nodeRun.node_id}</strong>
+                          <span>{summarizeRunNodeDetail(nodeRun)}</span>
+                        </span>
+                        <span className="drawer-item__badge">{humanizeRunStatus(nodeRun.status)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="drawer-empty">No node state has been captured for this run yet.</p>
+                )}
+              </section>
+
+              <section className="drawer-section">
+                <div className="drawer-section__heading">
+                  <span>Recent Events</span>
+                </div>
+                {runDetailState.events.length ? (
+                  <div className="drawer-list">
+                    {runDetailState.events.slice().reverse().map((event) => (
+                      <div className="drawer-item" key={event.event_id}>
+                        <span className="drawer-item__icon">&gt;</span>
+                        <span className="drawer-item__content">
+                          <strong>{summarizeRunEventTitle(event)}</strong>
+                          <span>{summarizeRunEventDetail(event)}</span>
+                        </span>
+                        <span className="drawer-item__badge">{event.sequence}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="drawer-empty">No persisted events are available for this run yet.</p>
+                )}
+              </section>
+
+              <section className="drawer-section">
+                <div className="drawer-section__heading">
+                  <span>Recent Logs</span>
+                </div>
+                {runDetailState.logs.length ? (
+                  <div className="drawer-list">
+                    {runDetailState.logs.slice().reverse().map((entry, index) => (
+                      <div className="drawer-item" key={`${entry.timestamp}-${index}`}>
+                        <span className="drawer-item__icon">{formatRunLogLevel(entry.level)}</span>
+                        <span className="drawer-item__content">
+                          <strong>{entry.message}</strong>
+                          <span>{summarizeRunLogDetail(entry)}</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="drawer-empty">No persisted logs are available for this run yet.</p>
+                )}
+              </section>
+            </>
+          ) : null}
+        </div>
+      ) : (
+        <>
+          <div className="canvas-runs-panel__toolbar">
+            <div className="canvas-runs-panel__filter-group">
+              <button
+                className={`canvas-runs-panel__chip${statusFilter === 'all' ? ' is-active' : ''}`}
+                onClick={() => setStatusFilter('all')}
+                type="button"
+              >
+                All
+              </button>
+              <button
+                className={`canvas-runs-panel__chip${statusFilter === 'success' ? ' is-active' : ''}`}
+                onClick={() => setStatusFilter('success')}
+                type="button"
+              >
+                Success
+              </button>
+              <button
+                className={`canvas-runs-panel__chip${statusFilter === 'failed' ? ' is-active' : ''}`}
+                onClick={() => setStatusFilter('failed')}
+                type="button"
+              >
+                Failed
+              </button>
+              <button
+                className={`canvas-runs-panel__chip${statusFilter === 'in_progress' ? ' is-active' : ''}`}
+                onClick={() => setStatusFilter('in_progress')}
+                type="button"
+              >
+                In progress
+              </button>
+
+              <label className="canvas-runs-panel__chip canvas-runs-panel__chip--select">
+                <span>Workflows</span>
+                <select
+                  aria-label="Workflow filter"
+                  onChange={(event) => setWorkflowFilter(event.target.value)}
+                  value={workflowFilter}
+                >
+                  <option value="all">All workflows</option>
+                  {runState.workflows.map((workflow) => (
+                    <option key={workflow.workflow_id} value={workflow.workflow_id}>
+                      {workflow.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <button
+                className={`canvas-runs-panel__chip${isLast24hOnly ? ' is-active' : ''}`}
+                onClick={() => setIsLast24hOnly((current) => !current)}
+                type="button"
+              >
+                Last 24h
+              </button>
+
+              <button className="canvas-runs-panel__chip" disabled type="button">
+                More filters
+              </button>
+            </div>
+
+            <label className="canvas-runs-panel__search">
+              <input
+                aria-label="Search runs"
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Name, ID, errors..."
+                type="search"
+                value={searchQuery}
+              />
+              <span aria-hidden="true">⌕</span>
+            </label>
+          </div>
+
+          <div className="canvas-runs-panel__kpis">
+            <article className="canvas-runs-panel__kpi">
+              <span className="canvas-runs-panel__kpi-label">Total runs</span>
+              <div className="canvas-runs-panel__kpi-value">
+                <strong>{metrics.total}</strong>
+                <span>
+                  {metrics.succeeded} · {metrics.running} · {metrics.failed}
+                </span>
+              </div>
+            </article>
+
+            <article className="canvas-runs-panel__kpi">
+              <span className="canvas-runs-panel__kpi-label">Workflow success</span>
+              <div className="canvas-runs-panel__kpi-value">
+                <strong>{metrics.successRate}</strong>
+                <span className="canvas-runs-panel__kpi-good">
+                  {metrics.completedRuns ? `${metrics.completedRuns} done` : 'No completed runs'}
+                </span>
+              </div>
+            </article>
+
+            <article className="canvas-runs-panel__kpi">
+              <span className="canvas-runs-panel__kpi-label">Average lag</span>
+              <div className="canvas-runs-panel__kpi-value">
+                <strong>{averageLag}</strong>
+                <span>No queue data</span>
+              </div>
+            </article>
+
+            <article className="canvas-runs-panel__kpi">
+              <span className="canvas-runs-panel__kpi-label">Avg latency</span>
+              <div className="canvas-runs-panel__kpi-value">
+                <strong>{averageLatency}</strong>
+                <span>Runtime</span>
+              </div>
+            </article>
+          </div>
+
+          {runState.status === 'error' ? (
+            <div className="canvas-runs-panel__empty">{runState.error}</div>
+          ) : null}
+
+          {runState.status !== 'error' && !filteredRuns.length ? (
+            <div className="canvas-runs-panel__empty">
+              <span>
+                {runState.status === 'loading'
+                  ? 'Loading workspace runs…'
+                  : runState.runs.length
+                    ? 'No runs match the current filters.'
+                    : 'No runs yet in this workspace.'}
+              </span>
+              {runState.status !== 'loading' ? (
+                <button
+                  className="canvas-runs-panel__empty-action"
+                  onClick={() => onOpenRunControl?.()}
+                  type="button"
+                >
+                  Run workflow
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+
+          {filteredRuns.length ? (
+            <section className="canvas-runs-panel__table" aria-label="Runs history table">
+              <header className="canvas-runs-panel__table-header">
+                <span className="canvas-runs-panel__cell canvas-runs-panel__cell--check">
+                  <span className="canvas-runs-panel__checkbox" aria-hidden="true" />
+                </span>
+                <span className="canvas-runs-panel__cell">Run ID</span>
+                <span className="canvas-runs-panel__cell">Started</span>
+                <span className="canvas-runs-panel__cell">Workflow</span>
+                <span className="canvas-runs-panel__cell">Duration</span>
+                <span className="canvas-runs-panel__cell">Status</span>
+                <span className="canvas-runs-panel__cell">Error</span>
+                <span className="canvas-runs-panel__cell">Errors / Retries</span>
+              </header>
+
+              <div className="canvas-runs-panel__table-body">
+                {filteredRuns.map((run) => {
+                  const statusTone = dashboardStatusTone(run.status);
+                  const workflowName =
+                    run.workflow_name_at_run ?? workflowNameById[run.workflow_id] ?? run.workflow_id;
+                  const errorMessage = run.error?.message ?? 'None';
+                  const errorCount = countRunErrors(run);
+                  const retryCount = countRunRetries(run);
+
+                  return (
+                    <div className="canvas-runs-panel__row" key={run.run_id}>
+                      <span className="canvas-runs-panel__cell canvas-runs-panel__cell--check">
+                        <span className="canvas-runs-panel__checkbox" aria-hidden="true" />
+                      </span>
+                      <span className="canvas-runs-panel__cell">
+                        <button
+                          className="canvas-runs-panel__run-link"
+                          onClick={() => {
+                            setSelectedRunId(run.run_id);
+                          }}
+                          type="button"
+                        >
+                          {shortRunId(run.run_id)}
+                        </button>
+                      </span>
+                      <span className="canvas-runs-panel__cell canvas-runs-panel__cell--muted">
+                        {formatRunTimestamp(run.started_at)}
+                      </span>
+                      <span className="canvas-runs-panel__cell canvas-runs-panel__cell--truncate">
+                        <button
+                          className={`canvas-runs-panel__workflow-link${
+                            run.workflow_id === activeWorkflowId ? ' is-current' : ''
+                          }`}
+                          onClick={() => onOpenWorkflow?.(run.workflow_id)}
+                          type="button"
+                        >
+                          {workflowName}
+                        </button>
+                      </span>
+                      <span className="canvas-runs-panel__cell">{formatRunDuration(run)}</span>
+                      <span className="canvas-runs-panel__cell">
+                        <span className={`canvas-runs-panel__status canvas-runs-panel__status--${statusTone}`}>
+                          <span className="canvas-runs-panel__status-dot" aria-hidden="true" />
+                          {humanizeRunStatus(run.status)}
+                        </span>
+                      </span>
+                      <span
+                        className={`canvas-runs-panel__cell canvas-runs-panel__cell--truncate${
+                          errorMessage === 'None' ? ' canvas-runs-panel__cell--muted' : ''
+                        }`}
+                      >
+                        {errorMessage}
+                      </span>
+                      <span className="canvas-runs-panel__cell canvas-runs-panel__cell--muted">
+                        <strong>{errorCount}</strong> / {retryCount}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
+        </>
+      )}
+    </aside>
+  );
+}
+
 function CanvasMenuIcon({ kind }) {
   switch (kind) {
     case 'workspace':
@@ -1834,6 +2618,19 @@ function CanvasMenuIcon({ kind }) {
         <svg viewBox="0 0 20 20" fill="none">
           <rect x="4.1" y="4.1" width="11.8" height="11.8" rx="1.8" stroke="currentColor" strokeWidth="1.3" />
           <path d="M7.9 4.3V15.7M12.1 4.3V15.7M4.3 7.9H15.7M4.3 12.1H10.9" stroke="currentColor" strokeWidth="1.15" strokeLinecap="square" opacity="0.8" />
+        </svg>
+      );
+    case 'runs':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <rect x="4.2" y="4.85" width="11.6" height="10.3" rx="1.8" stroke="currentColor" strokeWidth="1.3" />
+          <path
+            d="M7.05 8.4H12.95M7.05 11.15H10.95"
+            stroke="currentColor"
+            strokeWidth="1.15"
+            strokeLinecap="square"
+            opacity="0.82"
+          />
         </svg>
       );
     case 'canvas':
@@ -2722,6 +3519,7 @@ function OverviewScreen({ activeWorkspace, viewMode }) {
 function CanvasScreen({
   draggedNodeType = null,
   isFullScreen = false,
+  onOpenRunInPanel = null,
   onRegisterCanvasActions = null,
   onWorkflowMissing = null,
   onWorkflowResolved = null,
@@ -2738,6 +3536,7 @@ function CanvasScreen({
       <div className={`workspace-stage__viewport workspace-stage__viewport--${viewportVariant}`}>
         <CanvasWorkspace
           draggedNodeType={draggedNodeType}
+          onOpenRunInPanel={onOpenRunInPanel}
           onRegisterCanvasActions={onRegisterCanvasActions}
           onWorkflowMissing={onWorkflowMissing}
           onWorkflowResolved={onWorkflowResolved}
@@ -3194,6 +3993,12 @@ function humanizeRunStatus(status) {
     .join(' ');
 }
 
+function isWorkspaceRunCancellable(run) {
+  return ['created', 'queued', 'planning', 'running', 'cancelling'].includes(
+    String(run?.status ?? '').toLowerCase()
+  );
+}
+
 function shortRunId(runId) {
   return runId?.startsWith('run_') ? runId.slice(4) : runId;
 }
@@ -3242,6 +4047,10 @@ function formatRunDuration(run) {
 }
 
 function runDurationMs(run) {
+  if (Number.isFinite(run?.duration_ms) && run.duration_ms >= 0) {
+    return run.duration_ms;
+  }
+
   if (!run?.started_at) {
     return 0;
   }
@@ -3272,6 +4081,10 @@ function formatDurationMs(durationMs) {
 }
 
 function countRunRetries(run) {
+  if (Number.isFinite(run?.retry_count)) {
+    return Math.max(0, run.retry_count);
+  }
+
   return (run?.node_runs ?? []).reduce(
     (sum, nodeRun) => sum + Math.max(0, (nodeRun.attempt ?? 1) - 1),
     0
@@ -3279,8 +4092,109 @@ function countRunRetries(run) {
 }
 
 function countRunErrors(run) {
+  if (Number.isFinite(run?.error_count)) {
+    return Math.max(0, run.error_count);
+  }
+
   const nodeFailures = (run?.node_runs ?? []).filter((nodeRun) => nodeRun.error).length;
   return run?.error ? Math.max(nodeFailures, 1) : nodeFailures;
+}
+
+function sortRunsByMostRecent(runs = []) {
+  return [...runs].sort((left, right) => {
+    const leftTime =
+      Date.parse(left.started_at ?? '') ||
+      Date.parse(left.finished_at ?? '') ||
+      0;
+    const rightTime =
+      Date.parse(right.started_at ?? '') ||
+      Date.parse(right.finished_at ?? '') ||
+      0;
+
+    return rightTime - leftTime;
+  });
+}
+
+function summarizeRunNodeDetail(nodeRun) {
+  const detailParts = [];
+
+  if (nodeRun.error?.message) {
+    detailParts.push(nodeRun.error.message);
+  }
+
+  if (Number.isFinite(nodeRun.attempt) && nodeRun.attempt > 1) {
+    detailParts.push(`Attempt ${nodeRun.attempt}`);
+  }
+
+  return detailParts.join(' · ') || 'No additional detail';
+}
+
+function summarizeRunEventTitle(event) {
+  return humanizeRunStatus(event?.event_type ?? 'unknown');
+}
+
+function summarizeRunEventDetail(event) {
+  const detailParts = [];
+
+  if (event?.target?.node_id) {
+    detailParts.push(event.target.node_id);
+  } else if (event?.target?.kind) {
+    detailParts.push(event.target.kind);
+  }
+
+  if (event?.timestamp) {
+    detailParts.push(formatRunTimestamp(event.timestamp));
+  }
+
+  if (event?.payload && typeof event.payload === 'object') {
+    const payloadSummary = Object.entries(event.payload)
+      .slice(0, 2)
+      .map(([key, value]) => `${key}: ${String(value)}`)
+      .join(' · ');
+
+    if (payloadSummary) {
+      detailParts.push(payloadSummary);
+    }
+  }
+
+  return detailParts.join(' · ') || 'No additional detail';
+}
+
+function formatRunLogLevel(level) {
+  if (!level) {
+    return 'I';
+  }
+
+  const normalizedLevel = String(level).toLowerCase();
+  if (normalizedLevel.startsWith('error')) {
+    return 'E';
+  }
+  if (normalizedLevel.startsWith('warn')) {
+    return 'W';
+  }
+  if (normalizedLevel.startsWith('debug')) {
+    return 'D';
+  }
+
+  return 'I';
+}
+
+function summarizeRunLogDetail(entry) {
+  const detailParts = [];
+
+  if (entry?.timestamp) {
+    detailParts.push(formatRunTimestamp(entry.timestamp));
+  }
+
+  if (entry?.node_id) {
+    detailParts.push(entry.node_id);
+  }
+
+  if (entry?.level) {
+    detailParts.push(humanizeRunStatus(entry.level));
+  }
+
+  return detailParts.join(' · ') || 'No additional detail';
 }
 
 function useGoogleCodeClient({ clientId, enabled, onCode, onError }) {

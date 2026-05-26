@@ -114,8 +114,18 @@ Current practical shape:
   - `workspace_id`
   - `run_id`
   - `workflow_id`
+  - `workflow_name_at_run`
   - `workflow_version`
   - `status`
+  - `trigger_kind`
+  - `requested_by_user_id`
+  - `started_at`
+  - `finished_at`
+  - `duration_ms`
+  - `error_category`
+  - `error_message`
+  - `error_count`
+  - `retry_count`
   - `snapshot_json`
   - `created_at`
   - `updated_at`
@@ -152,14 +162,18 @@ Recommended fields:
 | `workspace_id` | text | ownership boundary |
 | `run_id` | text | stable run identifier |
 | `workflow_id` | text | workflow linkage |
+| `workflow_name_at_run` | text | stable workflow label for history lists even after later rename |
 | `workflow_version` | integer | workflow version linkage |
 | `trigger_kind` | text | manual, schedule, event, backfill |
 | `status` | text | latest top-level workflow run state |
 | `requested_by_user_id` | text nullable | later audit/debug usefulness |
 | `started_at` | text nullable | run timing |
 | `finished_at` | text nullable | run timing |
+| `duration_ms` | integer nullable | denormalized duration for list views and aggregate metrics |
 | `error_category` | text nullable | denormalized list/debug field |
 | `error_message` | text nullable | denormalized short summary |
+| `error_count` | integer | denormalized count for run-list error columns |
+| `retry_count` | integer | denormalized count for retry-heavy run views |
 | `snapshot_json` | text | latest structured snapshot |
 | `created_at` | text | row creation |
 | `updated_at` | text | latest snapshot write |
@@ -170,6 +184,8 @@ Rules:
 - update the row as the run progresses
 - keep `snapshot_json` as the canonical latest summary blob
 - also keep key query fields denormalized for practical list performance
+- derive `duration_ms`, `error_count`, and `retry_count` from the latest snapshot on write
+- preserve `workflow_name_at_run` as the workflow label captured for that run history row
 
 ### Layer 2: `run_events`
 

@@ -53,6 +53,7 @@ const NODE_TYPES = {
 }
 
 function WorkflowCanvas({
+  activeRunSnapshot = null,
   draggedNodeType = null,
   nodeDefinitions = [],
   onDebugStateChange,
@@ -98,8 +99,16 @@ function WorkflowCanvas({
   })
 
   const { edges, nodes } = useMemo(
-    () => createCanvasElements(workflow, nodeDefinitions, selectedNodeId, null, selectedEdgeId),
-    [nodeDefinitions, selectedEdgeId, selectedNodeId, workflow]
+    () =>
+      createCanvasElements(
+        workflow,
+        nodeDefinitions,
+        selectedNodeId,
+        null,
+        selectedEdgeId,
+        activeRunSnapshot
+      ),
+    [activeRunSnapshot, nodeDefinitions, selectedEdgeId, selectedNodeId, workflow]
   )
 
   const publishDebugState = useCallback(
@@ -607,9 +616,15 @@ function WorkflowCanvas({
 }
 
 function TextInputNode({ data, dragging, selected }) {
+  const runtime = data.uiState?.runtime ?? null
   const nodeLabel = data.node?.label ?? data.label ?? 'Text input'
-  const textValue = data.node?.config?.text ?? '--'
+  const emittedText = extractRuntimeTextValue(runtime?.lastOutput)
+  const textValue = emittedText ?? data.node?.config?.text ?? '--'
   const charCount = typeof textValue === 'string' ? textValue.length : 0
+  const runtimeState = runtime?.status ?? null
+  const footerLabel = runtimeState ? 'Last run' : 'Text'
+  const footerValue = runtimeState ? humanizeRuntimeStatus(runtimeState) : `${charCount} chars`
+  const executionWait = getNodeExecutionWaitState(data.node?.config)
 
   return (
     <div
@@ -618,7 +633,8 @@ function TextInputNode({ data, dragging, selected }) {
         hovered: Boolean(data.uiState?.interaction?.hovered),
         selected
       })}
-      title="Click to select. Drag to move. Double-click to inspect."
+      data-runtime-state={runtimeState ?? undefined}
+      title={buildNodeRuntimeTitle(runtime, 'Click to select. Drag to move. Double-click to inspect.')}
     >
       <header className="workflow-node-card__header">
         <div className="workflow-node-card__heading">
@@ -627,9 +643,18 @@ function TextInputNode({ data, dragging, selected }) {
           </span>
           <strong>{nodeLabel}</strong>
         </div>
-        <span className="workflow-node-card__menu" aria-hidden="true">
-          ...
-        </span>
+        <div className="workflow-node-card__tools">
+          {executionWait.enabled ? (
+            <NodeExecutionWaitIcon
+              className="workflow-node-card__delay-icon"
+              hasAfterWait={executionWait.hasAfterWait}
+              hasBeforeWait={executionWait.hasBeforeWait}
+            />
+          ) : null}
+          <span className="workflow-node-card__menu" aria-hidden="true">
+            ...
+          </span>
+        </div>
       </header>
 
       <section className="workflow-node-card__body">
@@ -641,8 +666,8 @@ function TextInputNode({ data, dragging, selected }) {
       </section>
 
       <footer className="workflow-node-card__footer">
-        <span className="workflow-node-card__footer-meta">Text</span>
-        <strong>{charCount} chars</strong>
+        <span className="workflow-node-card__footer-meta">{footerLabel}</span>
+        <strong>{footerValue}</strong>
       </footer>
 
       <Handle
@@ -656,9 +681,13 @@ function TextInputNode({ data, dragging, selected }) {
 }
 
 function SendEmailNode({ data, dragging, selected }) {
+  const runtime = data.uiState?.runtime ?? null
   const nodeLabel = data.node?.label ?? data.label ?? 'Send Email'
   const recipient = data.node?.config?.to ?? '--'
   const subject = data.node?.config?.subject ?? '--'
+  const runtimeState = runtime?.status ?? null
+  const footerValue = runtimeState ? humanizeRuntimeStatus(runtimeState) : 'Idle'
+  const executionWait = getNodeExecutionWaitState(data.node?.config)
 
   return (
     <div
@@ -670,7 +699,8 @@ function SendEmailNode({ data, dragging, selected }) {
           selected
         }
       )}
-      title="Click to select. Drag to move. Double-click to inspect."
+      data-runtime-state={runtimeState ?? undefined}
+      title={buildNodeRuntimeTitle(runtime, 'Click to select. Drag to move. Double-click to inspect.')}
     >
       <Handle
         className="schema-node__handle workflow-node-card__handle"
@@ -686,9 +716,18 @@ function SendEmailNode({ data, dragging, selected }) {
           </span>
           <strong>{nodeLabel}</strong>
         </div>
-        <span className="workflow-node-card__menu" aria-hidden="true">
-          ...
-        </span>
+        <div className="workflow-node-card__tools">
+          {executionWait.enabled ? (
+            <NodeExecutionWaitIcon
+              className="workflow-node-card__delay-icon"
+              hasAfterWait={executionWait.hasAfterWait}
+              hasBeforeWait={executionWait.hasBeforeWait}
+            />
+          ) : null}
+          <span className="workflow-node-card__menu" aria-hidden="true">
+            ...
+          </span>
+        </div>
       </header>
 
       <section className="workflow-node-card__body">
@@ -709,7 +748,7 @@ function SendEmailNode({ data, dragging, selected }) {
 
       <footer className="workflow-node-card__footer">
         <span className="workflow-node-card__footer-meta">Last send</span>
-        <strong>Idle</strong>
+        <strong>{footerValue}</strong>
       </footer>
     </div>
   )
@@ -718,6 +757,7 @@ function SendEmailNode({ data, dragging, selected }) {
 function StitchlyNode({ data, dragging, selected }) {
   const card = data.card
   const hovered = Boolean(data.uiState?.interaction?.hovered)
+  const executionWait = getNodeExecutionWaitState(data.node?.config)
 
   return (
     <div
@@ -750,6 +790,13 @@ function StitchlyNode({ data, dragging, selected }) {
         </div>
 
         <div className="schema-node__header-tools">
+          {executionWait.enabled ? (
+            <NodeExecutionWaitIcon
+              className="schema-node__delay-icon"
+              hasAfterWait={executionWait.hasAfterWait}
+              hasBeforeWait={executionWait.hasBeforeWait}
+            />
+          ) : null}
           {card?.showOverflowMenu ? (
             <span className="schema-node__menu" aria-hidden="true">
               ...
@@ -840,6 +887,57 @@ function buildTextInputClassName({ dragging, hovered, selected }) {
   )
 }
 
+function getNodeExecutionWaitState(config = null) {
+  const execution = config?.execution ?? {}
+  const hasBeforeWait = normalizeExecutionWaitSeconds(execution.wait_before_seconds) > 0
+  const hasAfterWait = normalizeExecutionWaitSeconds(execution.wait_after_seconds) > 0
+
+  return {
+    enabled: hasBeforeWait || hasAfterWait,
+    hasAfterWait,
+    hasBeforeWait
+  }
+}
+
+function normalizeExecutionWaitSeconds(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return 0
+  }
+
+  return value
+}
+
+function NodeExecutionWaitIcon({
+  className = '',
+  hasAfterWait = false,
+  hasBeforeWait = false
+}) {
+  return (
+    <span aria-hidden="true" className={className} title="Execution wait configured">
+      {hasBeforeWait ? (
+        <span className="node-execution-wait-icon__arrow node-execution-wait-icon__arrow--before">
+          ←
+        </span>
+      ) : null}
+      <svg viewBox="0 0 20 20" fill="none">
+        <circle cx="10" cy="10" r="5.9" stroke="currentColor" strokeWidth="1.3" />
+        <path
+          d="M10 6.95V10L12.35 11.45"
+          stroke="currentColor"
+          strokeLinecap="square"
+          strokeLinejoin="miter"
+          strokeWidth="1.3"
+        />
+      </svg>
+      {hasAfterWait ? (
+        <span className="node-execution-wait-icon__arrow node-execution-wait-icon__arrow--after">
+          →
+        </span>
+      ) : null}
+    </span>
+  )
+}
+
 function buildWorkflowNodeCardClassName(variantClassName, { dragging, hovered, selected }) {
   const classes = ['workflow-node-card', variantClassName]
 
@@ -856,6 +954,34 @@ function buildWorkflowNodeCardClassName(variantClassName, { dragging, hovered, s
   }
 
   return classes.join(' ')
+}
+
+function extractRuntimeTextValue(lastOutput) {
+  if (lastOutput?.data_type === 'text' && typeof lastOutput.value === 'string') {
+    return lastOutput.value
+  }
+
+  return null
+}
+
+function buildNodeRuntimeTitle(runtime, baseTitle) {
+  const message = runtime?.error?.message
+  if (!message) {
+    return baseTitle
+  }
+
+  return `${baseTitle} Last error: ${message}`
+}
+
+function humanizeRuntimeStatus(status) {
+  if (!status) {
+    return 'Idle'
+  }
+
+  return String(status)
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
 }
 
 function describeCanvasElement(element) {

@@ -9,7 +9,8 @@ export function createCanvasElements(
   nodeDefinitions,
   selectedNodeId,
   hoveredNodeId = null,
-  selectedEdgeId = null
+  selectedEdgeId = null,
+  runtimeSnapshot = null
 ) {
   const definitionMap = Object.fromEntries(
     nodeDefinitions.map((definition) => [definition.type_id, definition])
@@ -28,7 +29,8 @@ export function createCanvasElements(
         uiState: {
           interaction: {
             hovered: node.node_id === hoveredNodeId
-          }
+          },
+          runtime: buildNodeRuntimeUiState(runtimeSnapshot, node.node_id)
         },
         typeId: node.type_id,
         card: buildNodeCardModel({
@@ -45,14 +47,80 @@ export function createCanvasElements(
       }
     })),
     edges: workflow.edges.map((edge) => ({
+      className: edgeRuntimeClassName(runtimeSnapshot, edge),
       id: edge.edge_id,
       selected: edge.edge_id === selectedEdgeId,
       source: edge.source_node_id,
       sourceHandle: edge.source_port_id,
+      style: edgeRuntimeStyle(runtimeSnapshot, edge),
       target: edge.target_node_id,
       targetHandle: edge.target_port_id
     }))
   }
+}
+
+function buildNodeRuntimeUiState(runtimeSnapshot, nodeId) {
+  if (!runtimeSnapshot) {
+    return null
+  }
+
+  const nodeRun = runtimeSnapshot.node_runs?.find((candidate) => candidate.node_id === nodeId)
+  if (!nodeRun) {
+    return {
+      status: null,
+      workflowStatus: normalizeDataType(runtimeSnapshot.status)
+    }
+  }
+
+  return {
+    attempt: nodeRun.attempt ?? 0,
+    error: nodeRun.error ?? null,
+    finishedAt: nodeRun.finished_at ?? null,
+    lastOutput: nodeRun.last_output ?? null,
+    logCount: nodeRun.log_count ?? 0,
+    startedAt: nodeRun.started_at ?? null,
+    status: normalizeDataType(nodeRun.status),
+    workflowStatus: normalizeDataType(runtimeSnapshot.status)
+  }
+}
+
+function edgeRuntimeClassName(runtimeSnapshot, edge) {
+  const status = edgeRuntimeStatus(runtimeSnapshot, edge)
+  return status ? `workflow-edge--${status}` : ''
+}
+
+function edgeRuntimeStyle(runtimeSnapshot, edge) {
+  const status = edgeRuntimeStatus(runtimeSnapshot, edge)
+
+  if (status === 'succeeded') {
+    return {
+      stroke: 'rgba(121, 199, 139, 0.72)',
+      strokeWidth: 1.6
+    }
+  }
+
+  return undefined
+}
+
+function edgeRuntimeStatus(runtimeSnapshot, edge) {
+  if (!runtimeSnapshot) {
+    return null
+  }
+
+  const sourceStatus = nodeRunStatus(runtimeSnapshot, edge.source_node_id)
+  const targetStatus = nodeRunStatus(runtimeSnapshot, edge.target_node_id)
+
+  if (sourceStatus === 'succeeded' && targetStatus === 'succeeded') {
+    return 'succeeded'
+  }
+
+  return null
+}
+
+function nodeRunStatus(runtimeSnapshot, nodeId) {
+  return normalizeDataType(
+    runtimeSnapshot.node_runs?.find((candidate) => candidate.node_id === nodeId)?.status
+  )
 }
 
 export function connectWorkflowNodes(workflow, connection, nodeDefinitions = []) {

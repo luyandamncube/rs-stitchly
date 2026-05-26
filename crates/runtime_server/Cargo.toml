@@ -9,6 +9,7 @@ api_contract = { path = "../api_contract" }
 argon2 = "0.5.3"
 axum = { workspace = true }
 chrono = { workspace = true }
+duckdb = { version = "1.2.2", features = ["bundled"] }
 futures = { workspace = true }
 rand_core = { version = "0.6.4", features = ["getrandom"] }
 reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls"] }

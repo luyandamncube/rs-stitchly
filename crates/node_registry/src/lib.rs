@@ -316,6 +316,19 @@ pub fn builtin_node_definitions() -> Vec<NodeDefinition> {
                     "text": {
                         "type": "string",
                         "title": "Text"
+                    },
+                    "trim_mode": {
+                        "type": "string",
+                        "enum": ["automatic", "trim", "exact"],
+                        "default": "automatic"
+                    },
+                    "preserve_whitespace": {
+                        "type": "boolean",
+                        "default": true
+                    },
+                    "include_line_breaks": {
+                        "type": "boolean",
+                        "default": true
                     }
                 }
             }),
@@ -495,6 +508,22 @@ pub fn builtin_node_definitions() -> Vec<NodeDefinition> {
                     },
                     "body": {
                         "type": "string"
+                    },
+                    "body_mode": {
+                        "type": "string",
+                        "enum": ["input", "custom"],
+                        "default": "input"
+                    },
+                    "body_text": {
+                        "type": "string"
+                    },
+                    "connection_id": {
+                        "type": "string"
+                    },
+                    "content_type": {
+                        "type": "string",
+                        "enum": ["text/plain", "text/html"],
+                        "default": "text/plain"
                     }
                 }
             }),
@@ -514,7 +543,9 @@ pub fn builtin_node_definitions() -> Vec<NodeDefinition> {
                 color_token: "var(--node-output)".to_string(),
                 default_width: 392,
                 default_height: 176,
-                help_text: Some("Deliver a simple email-style notification from the flow.".to_string()),
+                help_text: Some(
+                    "Deliver a simple email-style notification from the flow.".to_string(),
+                ),
                 node_card: Some(NodeCardUi {
                     variant: "output".to_string(),
                     icon_key: "send_email".to_string(),

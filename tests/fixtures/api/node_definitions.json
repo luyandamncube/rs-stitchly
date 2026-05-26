@@ -36,6 +36,28 @@
           "body": {
             "type": "string",
             "title": "Body"
+          },
+          "body_mode": {
+            "type": "string",
+            "enum": [
+              "input",
+              "custom"
+            ],
+            "default": "input"
+          },
+          "body_text": {
+            "type": "string"
+          },
+          "connection_id": {
+            "type": "string"
+          },
+          "content_type": {
+            "type": "string",
+            "enum": [
+              "text/plain",
+              "text/html"
+            ],
+            "default": "text/plain"
           }
         }
       },
@@ -246,6 +268,23 @@
           "text": {
             "type": "string",
             "title": "Text"
+          },
+          "trim_mode": {
+            "type": "string",
+            "enum": [
+              "automatic",
+              "trim",
+              "exact"
+            ],
+            "default": "automatic"
+          },
+          "preserve_whitespace": {
+            "type": "boolean",
+            "default": true
+          },
+          "include_line_breaks": {
+            "type": "boolean",
+            "default": true
           }
         }
       },

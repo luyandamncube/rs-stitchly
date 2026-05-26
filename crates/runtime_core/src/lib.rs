@@ -1,6 +1,9 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 
 use api_contract::{
@@ -14,7 +17,8 @@ use node_registry::NodeRegistry;
 use runtime_adapters::{AdapterError, PortValues, RuntimeAdapters};
 use serde_json::{json, Value};
 use thiserror::Error;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, Notify, RwLock};
+use tokio::time::{sleep, Duration};
 use uuid::Uuid;
 use workflow_schema::{WorkflowDefinition, WorkflowNode, CURRENT_SCHEMA_VERSION};
 
@@ -34,6 +38,8 @@ struct RunRecord {
     snapshot: RwLock<RunSnapshot>,
     history: RwLock<Vec<RunEvent>>,
     sender: broadcast::Sender<RunEvent>,
+    cancellation_requested: AtomicBool,
+    cancellation_notify: Notify,
 }
 
 pub struct RunEventSubscription {
@@ -248,6 +254,44 @@ impl RuntimeService {
                     ));
                 }
             }
+
+            if node.type_id == "send_email" {
+                let body_mode = node.config.get("body_mode").and_then(Value::as_str);
+                let body_key = (node.node_id.clone(), "body".to_string());
+                let body_input_count = incoming_counts.get(&body_key).copied().unwrap_or_default();
+                let configured_body = node
+                    .config
+                    .get("body_text")
+                    .and_then(Value::as_str)
+                    .or_else(|| node.config.get("body").and_then(Value::as_str));
+
+                if body_mode == Some("input") && body_input_count == 0 {
+                    errors.push(issue(
+                        "missing_send_email_body_input",
+                        format!(
+                            "Node `{}` uses `body_mode=input` but has no connected `body` input.",
+                            node.node_id
+                        ),
+                        Some(format!("workflow.nodes.{}.config.body_mode", node.node_id)),
+                    ));
+                }
+
+                if body_mode == Some("custom")
+                    && configured_body
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .is_none()
+                {
+                    errors.push(issue(
+                        "invalid_send_email_body_text",
+                        format!(
+                            "Node `{}` uses `body_mode=custom` but has no non-empty custom body text.",
+                            node.node_id
+                        ),
+                        Some(format!("workflow.nodes.{}.config.body_text", node.node_id)),
+                    ));
+                }
+            }
         }
 
         if errors.is_empty() {
@@ -316,6 +360,8 @@ impl RuntimeService {
             snapshot: RwLock::new(snapshot),
             history: RwLock::new(Vec::new()),
             sender,
+            cancellation_requested: AtomicBool::new(false),
+            cancellation_notify: Notify::new(),
         });
 
         self.state
@@ -355,6 +401,53 @@ impl RuntimeService {
         Some(snapshot)
     }
 
+    pub async fn cancel_run(&self, run_id: &str) -> Result<RunSnapshot, RuntimeError> {
+        let record = self
+            .get_record(run_id)
+            .await
+            .ok_or_else(|| RuntimeError::RunNotFound(run_id.to_string()))?;
+
+        let mut should_emit_cancellation_requested = false;
+        let snapshot = {
+            let mut snapshot = record.snapshot.write().await;
+            if is_terminal_run_status(&snapshot.status) || snapshot.status == RunStatus::Cancelled {
+                snapshot.clone()
+            } else {
+                snapshot.status = RunStatus::Cancelling;
+                for node_run in &mut snapshot.node_runs {
+                    if matches!(node_run.status, NodeRunStatus::Running) {
+                        node_run.status = NodeRunStatus::Cancelling;
+                    }
+                }
+                should_emit_cancellation_requested = true;
+                snapshot.clone()
+            }
+        };
+
+        if should_emit_cancellation_requested {
+            record.cancellation_requested.store(true, Ordering::SeqCst);
+            record.cancellation_notify.notify_waiters();
+            self.push_event(
+                &record,
+                run_id,
+                RunEventType::CancellationRequested,
+                run_target(),
+                json!({ "status": RunStatus::Cancelling }),
+            )
+            .await;
+            self.push_event(
+                &record,
+                run_id,
+                RunEventType::RunStatusChanged,
+                run_target(),
+                json!({ "status": RunStatus::Cancelling }),
+            )
+            .await;
+        }
+
+        Ok(snapshot)
+    }
+
     pub async fn subscribe(&self, run_id: &str) -> Option<RunEventSubscription> {
         let record = self.get_record(run_id).await?;
         let history = record.history.read().await.clone();
@@ -372,6 +465,10 @@ impl RuntimeService {
         let Some(record) = self.get_record(&run_id).await else {
             return;
         };
+
+        if self.finalize_run_if_cancelled(&record, &run_id).await {
+            return;
+        }
 
         self.mark_planning(&record, &run_id).await;
 
@@ -397,10 +494,18 @@ impl RuntimeService {
             json!({ "planned_nodes": plan.len() }),
         )
         .await;
+
+        if self.finalize_run_if_cancelled(&record, &run_id).await {
+            return;
+        }
         self.mark_running(&record, &run_id).await;
 
         let mut outputs = BTreeMap::<(String, String), workflow_schema::TypedValue>::new();
         for node_id in plan {
+            if self.finalize_run_if_cancelled(&record, &run_id).await {
+                return;
+            }
+
             let Some(node) = workflow
                 .nodes
                 .iter()
@@ -440,12 +545,50 @@ impl RuntimeService {
             };
 
             self.mark_node_started(&record, &run_id, node).await;
+            if self.finalize_run_if_cancelled(&record, &run_id).await {
+                return;
+            }
+            let execution_timing = node_execution_timing(node);
+
+            if let Some(wait_before) = execution_timing.before_duration() {
+                self.record_log(
+                    &record,
+                    &run_id,
+                    Some(&node.node_id),
+                    format!(
+                        "Waiting {} before execution.",
+                        format_execution_wait_seconds(execution_timing.wait_before_seconds)
+                    ),
+                )
+                .await;
+                if self.sleep_or_cancel(&record, wait_before).await {
+                    self.finalize_run_as_cancelled(&record, &run_id).await;
+                    return;
+                }
+            }
 
             match self.adapters.execute(definition, node, &inputs) {
                 Ok(result) => {
                     for log_line in &result.logs {
                         self.record_log(&record, &run_id, Some(&node.node_id), log_line.clone())
                             .await;
+                    }
+
+                    if let Some(wait_after) = execution_timing.after_duration() {
+                        self.record_log(
+                            &record,
+                            &run_id,
+                            Some(&node.node_id),
+                            format!(
+                                "Waiting {} after execution.",
+                                format_execution_wait_seconds(execution_timing.wait_after_seconds)
+                            ),
+                        )
+                        .await;
+                        if self.sleep_or_cancel(&record, wait_after).await {
+                            self.finalize_run_as_cancelled(&record, &run_id).await;
+                            return;
+                        }
                     }
 
                     let last_output = result.outputs.values().next().cloned();
@@ -462,6 +605,10 @@ impl RuntimeService {
                         None,
                     )
                     .await;
+
+                    if self.finalize_run_if_cancelled(&record, &run_id).await {
+                        return;
+                    }
                 }
                 Err(error) => {
                     self.fail_run(
@@ -666,6 +813,73 @@ impl RuntimeService {
         .await;
     }
 
+    async fn sleep_or_cancel(&self, record: &Arc<RunRecord>, duration: Duration) -> bool {
+        if record.cancellation_requested.load(Ordering::SeqCst) {
+            return true;
+        }
+
+        tokio::select! {
+            _ = sleep(duration) => false,
+            _ = record.cancellation_notify.notified() => record.cancellation_requested.load(Ordering::SeqCst),
+        }
+    }
+
+    async fn finalize_run_if_cancelled(&self, record: &Arc<RunRecord>, run_id: &str) -> bool {
+        if !record.cancellation_requested.load(Ordering::SeqCst) {
+            return false;
+        }
+
+        self.finalize_run_as_cancelled(record, run_id).await;
+        true
+    }
+
+    async fn finalize_run_as_cancelled(&self, record: &Arc<RunRecord>, run_id: &str) {
+        let should_emit_run_cancelled = {
+            let mut snapshot = record.snapshot.write().await;
+            if snapshot.status == RunStatus::Cancelled {
+                false
+            } else {
+                let now = Utc::now();
+                snapshot.status = RunStatus::Cancelled;
+                snapshot.finished_at = Some(now);
+                snapshot.error = Some(cancelled_run_error());
+
+                for node_run in &mut snapshot.node_runs {
+                    if matches!(
+                        node_run.status,
+                        NodeRunStatus::Pending
+                            | NodeRunStatus::Ready
+                            | NodeRunStatus::Running
+                            | NodeRunStatus::Cancelling
+                            | NodeRunStatus::Retrying
+                    ) {
+                        let was_started = node_run.started_at.is_some();
+                        node_run.status = NodeRunStatus::Cancelled;
+                        if was_started {
+                            node_run.finished_at = Some(now);
+                            node_run.error = Some(cancelled_run_error());
+                        }
+                    }
+                }
+                true
+            }
+        };
+
+        if should_emit_run_cancelled {
+            self.push_event(
+                record,
+                run_id,
+                RunEventType::RunCancelled,
+                run_target(),
+                json!({
+                    "status": RunStatus::Cancelled,
+                    "error": cancelled_run_error(),
+                }),
+            )
+            .await;
+        }
+    }
+
     async fn push_event(
         &self,
         record: &Arc<RunRecord>,
@@ -731,21 +945,70 @@ fn issue(code: &str, message: String, path: Option<String>) -> ValidationIssue {
 }
 
 fn validate_node_config(node: &WorkflowNode) -> Option<ValidationIssue> {
+    if let Some(issue) = validate_execution_timing_config(node) {
+        return Some(issue);
+    }
+
     match node.type_id.as_str() {
         "text_input" => {
             let text = node.config.get("text").and_then(Value::as_str);
             if text.is_none() {
-                Some(issue(
+                return Some(issue(
                     "invalid_text_input_config",
                     format!(
                         "Node `{}` requires a string `text` config field.",
                         node.node_id
                     ),
                     Some(format!("workflow.nodes.{}.config.text", node.node_id)),
-                ))
-            } else {
-                None
+                ));
             }
+
+            if let Some(trim_mode) = node.config.get("trim_mode") {
+                match trim_mode.as_str() {
+                    Some("automatic" | "trim" | "exact") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_text_input_trim_mode",
+                            format!("Node `{}` has unsupported `trim_mode` value.", node.node_id),
+                            Some(format!("workflow.nodes.{}.config.trim_mode", node.node_id)),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(preserve_whitespace) = node.config.get("preserve_whitespace") {
+                if !preserve_whitespace.is_boolean() {
+                    return Some(issue(
+                        "invalid_text_input_preserve_whitespace",
+                        format!(
+                            "Node `{}` expects boolean `preserve_whitespace` when provided.",
+                            node.node_id
+                        ),
+                        Some(format!(
+                            "workflow.nodes.{}.config.preserve_whitespace",
+                            node.node_id
+                        )),
+                    ));
+                }
+            }
+
+            if let Some(include_line_breaks) = node.config.get("include_line_breaks") {
+                if !include_line_breaks.is_boolean() {
+                    return Some(issue(
+                        "invalid_text_input_include_line_breaks",
+                        format!(
+                            "Node `{}` expects boolean `include_line_breaks` when provided.",
+                            node.node_id
+                        ),
+                        Some(format!(
+                            "workflow.nodes.{}.config.include_line_breaks",
+                            node.node_id
+                        )),
+                    ));
+                }
+            }
+
+            None
         }
         "text_transform" => {
             if let Some(operation) = node.config.get("operation") {
@@ -811,9 +1074,177 @@ fn validate_node_config(node: &WorkflowNode) -> Option<ValidationIssue> {
                 }
             }
 
+            if let Some(body_text) = node.config.get("body_text") {
+                if !body_text.is_string() {
+                    return Some(issue(
+                        "invalid_send_email_body_text",
+                        format!(
+                            "Node `{}` expects optional string `body_text`.",
+                            node.node_id
+                        ),
+                        Some(format!("workflow.nodes.{}.config.body_text", node.node_id)),
+                    ));
+                }
+            }
+
+            if let Some(body_mode) = node.config.get("body_mode") {
+                match body_mode.as_str() {
+                    Some("input" | "custom") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_send_email_body_mode",
+                            format!("Node `{}` has unsupported `body_mode` value.", node.node_id),
+                            Some(format!("workflow.nodes.{}.config.body_mode", node.node_id)),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(connection_id) = node.config.get("connection_id") {
+                if !connection_id.is_string() {
+                    return Some(issue(
+                        "invalid_send_email_connection_id",
+                        format!(
+                            "Node `{}` expects optional string `connection_id`.",
+                            node.node_id
+                        ),
+                        Some(format!(
+                            "workflow.nodes.{}.config.connection_id",
+                            node.node_id
+                        )),
+                    ));
+                }
+            }
+
+            if let Some(content_type) = node.config.get("content_type") {
+                match content_type.as_str() {
+                    Some("text/plain" | "text/html") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_send_email_content_type",
+                            format!(
+                                "Node `{}` has unsupported `content_type` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.content_type",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
             None
         }
         _ => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct NodeExecutionTiming {
+    wait_before_seconds: f64,
+    wait_after_seconds: f64,
+}
+
+impl NodeExecutionTiming {
+    fn before_duration(&self) -> Option<Duration> {
+        duration_from_seconds(self.wait_before_seconds)
+    }
+
+    fn after_duration(&self) -> Option<Duration> {
+        duration_from_seconds(self.wait_after_seconds)
+    }
+}
+
+fn node_execution_timing(node: &WorkflowNode) -> NodeExecutionTiming {
+    let execution = node.config.get("execution").and_then(Value::as_object);
+
+    NodeExecutionTiming {
+        wait_before_seconds: execution
+            .and_then(|config| config.get("wait_before_seconds"))
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .unwrap_or(0.0),
+        wait_after_seconds: execution
+            .and_then(|config| config.get("wait_after_seconds"))
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .unwrap_or(0.0),
+    }
+}
+
+fn validate_execution_timing_config(node: &WorkflowNode) -> Option<ValidationIssue> {
+    let Some(execution) = node.config.get("execution") else {
+        return None;
+    };
+
+    let execution_object = execution.as_object().ok_or_else(|| {
+        issue(
+            "invalid_node_execution_config",
+            format!(
+                "Node `{}` expects optional object `execution` when provided.",
+                node.node_id
+            ),
+            Some(format!("workflow.nodes.{}.config.execution", node.node_id)),
+        )
+    });
+
+    let execution_object = match execution_object {
+        Ok(value) => value,
+        Err(issue) => return Some(issue),
+    };
+
+    for field_name in ["wait_before_seconds", "wait_after_seconds"] {
+        let Some(value) = execution_object.get(field_name) else {
+            continue;
+        };
+
+        let Some(seconds) = value.as_f64() else {
+            return Some(issue(
+                "invalid_node_execution_wait",
+                format!(
+                    "Node `{}` expects numeric `execution.{field_name}` when provided.",
+                    node.node_id
+                ),
+                Some(format!(
+                    "workflow.nodes.{}.config.execution.{field_name}",
+                    node.node_id
+                )),
+            ));
+        };
+
+        if !seconds.is_finite() || seconds < 0.0 {
+            return Some(issue(
+                "invalid_node_execution_wait",
+                format!(
+                    "Node `{}` requires non-negative finite `execution.{field_name}`.",
+                    node.node_id
+                ),
+                Some(format!(
+                    "workflow.nodes.{}.config.execution.{field_name}",
+                    node.node_id
+                )),
+            ));
+        }
+    }
+
+    None
+}
+
+fn duration_from_seconds(seconds: f64) -> Option<Duration> {
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return None;
+    }
+
+    Some(Duration::from_secs_f64(seconds))
+}
+
+fn format_execution_wait_seconds(seconds: f64) -> String {
+    if (seconds.fract()).abs() < f64::EPSILON {
+        format!("{seconds:.0}s")
+    } else {
+        format!("{seconds:.2}s")
     }
 }
 
@@ -916,6 +1347,20 @@ fn to_run_error(issue: ValidationIssue, category: RunErrorCategory) -> RunErrorS
     }
 }
 
+fn cancelled_run_error() -> RunErrorSummary {
+    RunErrorSummary {
+        category: RunErrorCategory::Cancellation,
+        message: "Run cancelled by user.".to_string(),
+    }
+}
+
+fn is_terminal_run_status(status: &RunStatus) -> bool {
+    matches!(
+        status,
+        RunStatus::Succeeded | RunStatus::Failed | RunStatus::Cancelled
+    )
+}
+
 fn to_run_error_from_adapter(node: &WorkflowNode, error: AdapterError) -> RunErrorSummary {
     RunErrorSummary {
         category: RunErrorCategory::ExecutionError,
@@ -928,7 +1373,7 @@ mod tests {
     use api_contract::{CreateRunRequest, RunStatus};
     use serde_json::json;
     use tokio::time::{sleep, Duration};
-    use workflow_schema::WorkflowDefinition;
+    use workflow_schema::{NodePosition, WorkflowDefinition, WorkflowEdge, WorkflowNode};
 
     use super::RuntimeService;
 
@@ -967,5 +1412,214 @@ mod tests {
         assert!(history
             .iter()
             .any(|event| event.event_type == api_contract::RunEventType::RunSucceeded));
+    }
+
+    #[tokio::test]
+    async fn fan_out_workflow_runs_both_send_email_nodes() {
+        let runtime = RuntimeService::default();
+        let mut workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+        workflow.nodes.push(WorkflowNode {
+            node_id: "send_email_secondary".to_string(),
+            type_id: "send_email".to_string(),
+            definition_version: 1,
+            label: Some("Second Email".to_string()),
+            config: json!({
+                "to": "alerts@stitchly.dev",
+                "subject": "Secondary notification",
+                "body_mode": "input"
+            }),
+            position: NodePosition { x: 880.0, y: 180.0 },
+        });
+        workflow.edges.push(WorkflowEdge {
+            edge_id: "edge_input_text_to_send_email_secondary_body".to_string(),
+            source_node_id: "input_text".to_string(),
+            source_port_id: "text".to_string(),
+            target_node_id: "send_email_secondary".to_string(),
+            target_port_id: "body".to_string(),
+        });
+
+        let run = runtime
+            .create_run(CreateRunRequest {
+                workflow,
+                trigger: Default::default(),
+                params: json!({}).as_object().cloned().unwrap_or_default(),
+            })
+            .await
+            .expect("run should be created");
+
+        let mut snapshot = runtime.get_run(&run.run_id).await.expect("run snapshot");
+        for _ in 0..50 {
+            snapshot = runtime.get_run(&run.run_id).await.expect("run snapshot");
+            if matches!(snapshot.status, RunStatus::Succeeded | RunStatus::Failed) {
+                break;
+            }
+            sleep(Duration::from_millis(20)).await;
+        }
+
+        assert_eq!(snapshot.status, RunStatus::Succeeded);
+        assert_eq!(snapshot.node_runs.len(), 3);
+        assert!(snapshot
+            .node_runs
+            .iter()
+            .filter(|node_run| node_run.type_id == "send_email")
+            .all(|node_run| node_run.status == api_contract::NodeRunStatus::Succeeded));
+    }
+
+    #[tokio::test]
+    async fn execution_waits_are_logged_and_applied() {
+        let runtime = RuntimeService::default();
+        let mut workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+
+        if let Some(text_input) = workflow
+            .nodes
+            .iter_mut()
+            .find(|node| node.node_id == "input_text")
+        {
+            text_input.config["execution"] = json!({
+                "wait_before_seconds": 0.01
+            });
+        }
+
+        if let Some(send_email) = workflow
+            .nodes
+            .iter_mut()
+            .find(|node| node.node_id == "send_email_notification")
+        {
+            send_email.config["execution"] = json!({
+                "wait_after_seconds": 0.01
+            });
+        }
+
+        let run = runtime
+            .create_run(CreateRunRequest {
+                workflow,
+                trigger: Default::default(),
+                params: json!({}).as_object().cloned().unwrap_or_default(),
+            })
+            .await
+            .expect("run should be created");
+
+        let mut snapshot = runtime.get_run(&run.run_id).await.expect("run snapshot");
+        for _ in 0..80 {
+            snapshot = runtime.get_run(&run.run_id).await.expect("run snapshot");
+            if matches!(snapshot.status, RunStatus::Succeeded | RunStatus::Failed) {
+                break;
+            }
+            sleep(Duration::from_millis(20)).await;
+        }
+
+        assert_eq!(snapshot.status, RunStatus::Succeeded);
+        assert!(snapshot
+            .logs
+            .iter()
+            .any(|entry| entry.message.contains("Waiting 0.01s before execution.")));
+        assert!(snapshot
+            .logs
+            .iter()
+            .any(|entry| entry.message.contains("Waiting 0.01s after execution.")));
+    }
+
+    #[tokio::test]
+    async fn cancellation_requested_during_wait_finishes_run_as_cancelled() {
+        let runtime = RuntimeService::default();
+        let mut workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+
+        if let Some(text_input) = workflow
+            .nodes
+            .iter_mut()
+            .find(|node| node.node_id == "input_text")
+        {
+            text_input.config["execution"] = json!({
+                "wait_before_seconds": 0.25
+            });
+        }
+
+        let run = runtime
+            .create_run(CreateRunRequest {
+                workflow,
+                trigger: Default::default(),
+                params: json!({}).as_object().cloned().unwrap_or_default(),
+            })
+            .await
+            .expect("run should be created");
+
+        sleep(Duration::from_millis(40)).await;
+        let cancelling_snapshot = runtime
+            .cancel_run(&run.run_id)
+            .await
+            .expect("run should accept cancellation");
+        assert_eq!(cancelling_snapshot.status, RunStatus::Cancelling);
+
+        let mut snapshot = runtime.get_run(&run.run_id).await.expect("run snapshot");
+        for _ in 0..50 {
+            snapshot = runtime.get_run(&run.run_id).await.expect("run snapshot");
+            if snapshot.status == RunStatus::Cancelled {
+                break;
+            }
+            sleep(Duration::from_millis(20)).await;
+        }
+
+        assert_eq!(snapshot.status, RunStatus::Cancelled);
+        assert!(snapshot
+            .error
+            .as_ref()
+            .is_some_and(|error| error.category == api_contract::RunErrorCategory::Cancellation));
+        assert!(snapshot
+            .node_runs
+            .iter()
+            .any(|node_run| { node_run.status == api_contract::NodeRunStatus::Cancelled }));
+
+        let history = runtime
+            .event_history(&run.run_id)
+            .await
+            .expect("event history");
+        assert!(history.iter().any(|event| {
+            event.event_type == api_contract::RunEventType::CancellationRequested
+        }));
+        assert!(history
+            .iter()
+            .any(|event| event.event_type == api_contract::RunEventType::RunCancelled));
+    }
+
+    #[test]
+    fn send_email_input_mode_requires_body_connection() {
+        let runtime = RuntimeService::default();
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_send_email_input".to_string(),
+            version: 1,
+            name: "Send Email Input Mode".to_string(),
+            description: None,
+            nodes: vec![WorkflowNode {
+                node_id: "send_email_notification".to_string(),
+                type_id: "send_email".to_string(),
+                definition_version: 1,
+                label: Some("Send Email".to_string()),
+                config: json!({
+                    "to": "ops@stitchly.dev",
+                    "subject": "Needs input",
+                    "body_mode": "input"
+                }),
+                position: NodePosition::default(),
+            }],
+            edges: vec![],
+            metadata: Default::default(),
+        };
+
+        let validation = runtime.validate_workflow(&workflow);
+        assert!(!validation.valid);
+        assert!(validation
+            .errors
+            .iter()
+            .any(|error| error.code == "missing_send_email_body_input"));
     }
 }

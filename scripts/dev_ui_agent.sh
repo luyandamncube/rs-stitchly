@@ -53,6 +53,40 @@ read_pid() {
   fi
 }
 
+backend_port() {
+  echo "${BACKEND_BIND_ADDR##*:}"
+}
+
+backend_listener_pid() {
+  lsof -nP -iTCP:"$(backend_port)" -sTCP:LISTEN -t 2>/dev/null | head -n 1 || true
+}
+
+backend_pid_matches_stitchly() {
+  local pid="$1"
+  local exe_path
+
+  [[ -n "$pid" ]] || return 1
+  exe_path="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
+  [[ "$exe_path" == "$ROOT_DIR/target/debug/stitchly-server"* ]]
+}
+
+backend_pid_uses_deleted_binary() {
+  local pid="$1"
+  local exe_path
+
+  [[ -n "$pid" ]] || return 1
+  exe_path="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
+  [[ "$exe_path" == *" (deleted)" ]]
+}
+
+track_backend_listener_pid() {
+  local listener_pid="$1"
+
+  if [[ -n "$listener_pid" ]] && backend_pid_matches_stitchly "$listener_pid"; then
+    echo "$listener_pid" >"$BACKEND_PID_FILE"
+  fi
+}
+
 pid_is_running() {
   local pid="$1"
 
@@ -120,10 +154,23 @@ start_backend() {
 
   local existing_pid
   existing_pid="$(read_pid "$BACKEND_PID_FILE")"
+  local listener_pid
+  listener_pid="$(backend_listener_pid)"
 
   if backend_ready; then
-    echo "Backend already available at $BACKEND_HTTP_URL"
-    return 0
+    if backend_pid_uses_deleted_binary "$listener_pid"; then
+      echo "Tracked backend listener $listener_pid is using a deleted binary."
+      echo "Restarting backend so the live server matches the current code."
+      kill "$listener_pid" 2>/dev/null || true
+      sleep 1
+      listener_pid="$(backend_listener_pid)"
+    else
+      if [[ -z "$existing_pid" ]]; then
+        track_backend_listener_pid "$listener_pid"
+      fi
+      echo "Backend already available at $BACKEND_HTTP_URL"
+      return 0
+    fi
   fi
 
   if pid_is_running "$existing_pid"; then
@@ -135,7 +182,11 @@ start_backend() {
   echo "Starting backend on $BACKEND_BIND_ADDR"
   (
     cd "$ROOT_DIR"
-    nohup env STITCHLY_SERVER_ADDR="$BACKEND_BIND_ADDR" cargo run -p runtime_server --bin stitchly-server \
+    cargo build -p runtime_server --bin stitchly-server >"$BACKEND_LOG_FILE" 2>&1
+  )
+  (
+    cd "$ROOT_DIR"
+    nohup setsid env STITCHLY_SERVER_ADDR="$BACKEND_BIND_ADDR" "$ROOT_DIR/target/debug/stitchly-server" \
       >"$BACKEND_LOG_FILE" 2>&1 < /dev/null &
     echo $! >"$BACKEND_PID_FILE"
   )
@@ -202,9 +253,18 @@ stop_process() {
   local label="$1"
   local pid_file="$2"
   local pid
+  local normalized_label="${label,,}"
 
   clear_stale_pid_file "$pid_file"
   pid="$(read_pid "$pid_file")"
+
+  if [[ "$normalized_label" == "backend" ]] && ! pid_is_running "$pid"; then
+    local listener_pid
+    listener_pid="$(backend_listener_pid)"
+    if backend_pid_matches_stitchly "$listener_pid"; then
+      pid="$listener_pid"
+    fi
+  fi
 
   if ! pid_is_running "$pid"; then
     rm -f "$pid_file"

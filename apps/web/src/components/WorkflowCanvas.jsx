@@ -525,7 +525,7 @@ function WorkflowCanvas({
             stroke: 'rgba(255, 122, 26, 0.62)',
             strokeWidth: 1.45
           },
-          type: 'bezier'
+          type: 'default'
         }}
         defaultViewport={{
           x: 0,

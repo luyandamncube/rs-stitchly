@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Integrations Window</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../shared.css" />
+  </head>
+  <body>
+    <main class="integrations-lab">
+      <section class="integrations-lab__note">
+        <span class="integrations-lab__eyebrow">Integrations</span>
+        <h1 class="integrations-lab__title">Canvas popup for connectors and external accounts</h1>
+        <p class="integrations-lab__caption">
+          First pass at a simplified integrations window based on the `Runs &amp; Logs` popup language.
+        </p>
+      </section>
+
+      <section class="integrations-shell">
+        <div class="integrations-control">
+          <div class="integrations-control__dock" aria-label="Canvas menu">
+            <button class="integrations-control__button integrations-control__button--brand" type="button" aria-label="Stitchly">
+              <img
+                class="integrations-control__brand-image"
+                src="../../../../apps/web/public/brand/symbol/stitchly-symbol-mark-white.svg"
+                alt=""
+              />
+            </button>
+
+            <button class="integrations-control__button" type="button" aria-label="Workspaces">
+              <span class="integrations-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                  <path d="M4 7.5h6l1.6 2H20v8.8H4z" />
+                </svg>
+              </span>
+            </button>
+
+            <button class="integrations-control__button" type="button" aria-label="Workflows">
+              <span class="integrations-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                  <path d="M5 6.5h14M5 12h14M5 17.5h14" />
+                </svg>
+              </span>
+            </button>
+
+            <button class="integrations-control__button" type="button" aria-label="Runs">
+              <span class="integrations-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                  <rect x="5" y="6.5" width="14" height="11" rx="1.5" />
+                  <path d="M8 10.5h8M8 13.5h5" />
+                </svg>
+              </span>
+            </button>
+
+            <button class="integrations-control__button is-active" type="button" aria-label="Integrations">
+              <span class="integrations-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                  <path d="M8.5 7.5h-1a3 3 0 1 0 0 6h2" />
+                  <path d="M15.5 16.5h1a3 3 0 0 0 0-6h-2" />
+                  <path d="M9.5 12h5" />
+                </svg>
+              </span>
+            </button>
+
+            <div class="integrations-control__divider" aria-hidden="true"></div>
+
+            <button class="integrations-control__button" type="button" aria-label="Exit">
+              <span class="integrations-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                  <path d="M9 7h9v10H9" />
+                  <path d="M6 12h8" />
+                  <path d="M10.5 8.5 14 12l-3.5 3.5" />
+                </svg>
+              </span>
+            </button>
+          </div>
+
+          <section class="integrations-control__panel" aria-label="Integrations popup">
+            <div class="integrations-panel__top">
+              <div class="integrations-panel__heading">
+                <span class="integrations-panel__badge" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                    <path d="M8.5 7.5h-1a3 3 0 1 0 0 6h2"></path>
+                    <path d="M15.5 16.5h1a3 3 0 0 0 0-6h-2"></path>
+                    <path d="M9.5 12h5"></path>
+                  </svg>
+                </span>
+                <div>
+                  <h2>Integrations</h2>
+                  <p>workspace-6 · external accounts</p>
+                </div>
+              </div>
+
+              <div class="integrations-panel__actions">
+                <button class="integrations-icon-button integrations-icon-button--active" type="button" aria-label="New integration">
+                  +
+                </button>
+              </div>
+            </div>
+
+            <div class="integrations-create-flyout" aria-label="Connector list">
+              <button class="integrations-create-menu__item" type="button"><span class="integrations-service integrations-service--gmail">M</span>Gmail</button>
+              <button class="integrations-create-menu__item" type="button"><span class="integrations-service integrations-service--gdrive">D</span>Google Drive</button>
+              <button class="integrations-create-menu__item" type="button"><span class="integrations-service integrations-service--gcalendar">C</span>Google Calendar</button>
+              <button class="integrations-create-menu__item" type="button"><span class="integrations-service integrations-service--instagram">I</span>Instagram</button>
+              <button class="integrations-create-menu__item" type="button"><span class="integrations-service integrations-service--whatsapp">W</span>WhatsApp</button>
+              <button class="integrations-create-menu__item" type="button"><span class="integrations-service integrations-service--twitter">X</span>Twitter</button>
+              <button class="integrations-create-menu__item" type="button"><span class="integrations-service integrations-service--telegram">T</span>Telegram</button>
+              <button class="integrations-create-menu__item" type="button"><span class="integrations-service integrations-service--slack">S</span>Slack</button>
+              <button class="integrations-create-menu__item" type="button"><span class="integrations-service integrations-service--outlook">O</span>Outlook</button>
+              <button class="integrations-create-menu__item" type="button"><span class="integrations-service integrations-service--notion">N</span>Notion</button>
+            </div>
+
+            <section class="integrations-table" aria-label="Integrations table">
+              <header class="integrations-table__header">
+                <span class="integrations-table__cell">Type</span>
+                <span class="integrations-table__cell">Name</span>
+                <span class="integrations-table__cell">Created at</span>
+                <span class="integrations-table__cell">Comment</span>
+              </header>
+
+              <div class="integrations-table__body">
+                <div class="integrations-row">
+                  <span class="integrations-table__cell">
+                    <span class="integrations-service integrations-service--gmail">M</span>
+                  </span>
+                  <span class="integrations-table__cell integrations-row__name">Gmail · Ops Inbox</span>
+                  <span class="integrations-table__cell integrations-row__meta">25 May, 15:43</span>
+                  <span class="integrations-table__cell integrations-row__comment">Refund alerts and escalation mailer</span>
+                </div>
+
+                <div class="integrations-row">
+                  <span class="integrations-table__cell">
+                    <span class="integrations-service integrations-service--gdrive">D</span>
+                  </span>
+                  <span class="integrations-table__cell integrations-row__name">Google Drive · Finance Drop</span>
+                  <span class="integrations-table__cell integrations-row__meta">24 May, 11:18</span>
+                  <span class="integrations-table__cell integrations-row__comment">Shared staging folder for daily reconciliations</span>
+                </div>
+
+                <div class="integrations-row is-current">
+                  <span class="integrations-table__cell">
+                    <span class="integrations-service integrations-service--slack">S</span>
+                  </span>
+                  <span class="integrations-table__cell integrations-row__name">Slack · Revenue Ops</span>
+                  <span class="integrations-table__cell integrations-row__meta">23 May, 09:04</span>
+                  <span class="integrations-table__cell integrations-row__comment">Current incident and workflow notifications</span>
+                </div>
+
+                <div class="integrations-row">
+                  <span class="integrations-table__cell">
+                    <span class="integrations-service integrations-service--telegram">T</span>
+                  </span>
+                  <span class="integrations-table__cell integrations-row__name">Telegram · Batch Monitor</span>
+                  <span class="integrations-table__cell integrations-row__meta">22 May, 18:26</span>
+                  <span class="integrations-table__cell integrations-row__comment">Fallback delivery for overnight batch failures</span>
+                </div>
+
+                <div class="integrations-row">
+                  <span class="integrations-table__cell">
+                    <span class="integrations-service integrations-service--notion">N</span>
+                  </span>
+                  <span class="integrations-table__cell integrations-row__name">Notion · Campaign Tracker</span>
+                  <span class="integrations-table__cell integrations-row__meta">21 May, 13:52</span>
+                  <span class="integrations-table__cell integrations-row__comment">Pushes approved workflow summaries into weekly docs</span>
+                </div>
+              </div>
+            </section>
+          </section>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

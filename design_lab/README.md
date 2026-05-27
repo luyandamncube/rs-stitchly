@@ -26,6 +26,8 @@ Structure:
   Node-level runtime state and execution-appearance studies.
 - `runs_history/`
   Canvas popup run-history and logs-window studies.
+- `integrations/`
+  Canvas popup connector and integration-management studies.
 
 Current convention:
 
@@ -43,6 +45,9 @@ Current convention:
 
 - `menu/v1/00_xxx/`
   Ordered menu and navigation studies for the first collapsed-rail pass.
+
+- `integrations/v1/00_xxx/`
+  Ordered connector and integration popup studies for the first canvas-integrations pass.
 
 How to use:
 

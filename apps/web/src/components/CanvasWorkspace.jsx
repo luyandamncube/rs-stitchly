@@ -11,6 +11,7 @@ import {
   getConnections,
   getNodeDefinitions,
   getRunSnapshot,
+  getWorkspaceConnections,
   getWorkspaceRun,
   getWorkspaceRunEvents,
   getWorkspaceRunLogs,
@@ -35,6 +36,10 @@ import {
   extractWorkspaceRunUpdate,
   WORKSPACE_RUN_UPDATED_EVENT
 } from '../lib/runSync';
+import {
+  extractWorkspaceConnectionUpdate,
+  WORKSPACE_CONNECTIONS_UPDATED_EVENT
+} from '../lib/workspaceConnectionsSync';
 import { cloneWorkflow, updateNodeConfig, updateNodeLabel } from '../lib/workflow';
 
 const CANVAS_DEBUG_COLLAPSE_STORAGE_KEY = 'stitchly.canvas.debug-panel-collapsed.v1';
@@ -76,6 +81,7 @@ export default function CanvasWorkspace({
   const [workflow, setWorkflow] = useState(() => cloneWorkflow(starterWorkflowFixture));
   const [nodeDefinitions, setNodeDefinitions] = useState(nodeDefinitionFixture.node_definitions);
   const [connections, setConnections] = useState(connectionFixture.connections);
+  const [workspaceConnections, setWorkspaceConnections] = useState([]);
   const [validation, setValidation] = useState(null);
   const [runSnapshot, setRunSnapshot] = useState(null);
   const [runHistory, setRunHistory] = useState([]);
@@ -185,6 +191,55 @@ export default function CanvasWorkspace({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!workspaceId) {
+      setWorkspaceConnections([]);
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function loadWorkspaceConnections() {
+      try {
+        const response = await getWorkspaceConnections(workspaceId);
+        if (!cancelled) {
+          setWorkspaceConnections(response.connections ?? []);
+        }
+      } catch (_error) {
+        if (!cancelled) {
+          setWorkspaceConnections([]);
+        }
+      }
+    }
+
+    void loadWorkspaceConnections();
+
+    function handleWorkspaceConnectionsUpdated(event) {
+      const nextConnection = extractWorkspaceConnectionUpdate(event, workspaceId);
+      if (!nextConnection) {
+        return;
+      }
+
+      setWorkspaceConnections((current) => {
+        const next = current.filter(
+          (connection) => connection.connection_id !== nextConnection.connection_id
+        );
+        next.unshift(nextConnection);
+        return next;
+      });
+    }
+
+    window.addEventListener(WORKSPACE_CONNECTIONS_UPDATED_EVENT, handleWorkspaceConnectionsUpdated);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener(
+        WORKSPACE_CONNECTIONS_UPDATED_EVENT,
+        handleWorkspaceConnectionsUpdated
+      );
+    };
+  }, [workspaceId]);
 
   useEffect(() => {
     if (!selectedNode) {
@@ -1014,6 +1069,7 @@ export default function CanvasWorkspace({
 
             applyWorkflowChange(updateNodeLabel(workflow, selectedNode.node_id, nextLabel));
           }}
+          workspaceConnections={workspaceConnections}
           workflow={workflow}
           workflowSyncState={workflowSyncState}
         />
@@ -1476,6 +1532,7 @@ function CanvasNodeManagementPanel({
   node,
   onNodeConfigChange,
   onNodeLabelChange,
+  workspaceConnections = [],
   workflow,
   workflowSyncState = 'local'
 }) {
@@ -1486,6 +1543,7 @@ function CanvasNodeManagementPanel({
         node={node}
         onNodeConfigChange={onNodeConfigChange}
         onNodeLabelChange={onNodeLabelChange}
+        workspaceConnections={workspaceConnections}
         workflow={workflow}
         workflowSyncState={workflowSyncState}
       />
@@ -1616,11 +1674,15 @@ function CanvasSendEmailManagementPanel({
   node,
   onNodeConfigChange,
   onNodeLabelChange,
+  workspaceConnections = [],
   workflow,
   workflowSyncState = 'local'
 }) {
   const config = normalizeSendEmailPanelConfig(node, workflow);
-  const connectionOptions = buildSendEmailConnectionOptions(config.connection_id);
+  const connectionOptions = buildSendEmailConnectionOptions(
+    config.connection_id,
+    workspaceConnections
+  );
 
   return (
     <aside className="canvas-node-panel" aria-label="Node management panel">
@@ -3220,13 +3282,29 @@ function parseExecutionWaitSeconds(value) {
   return normalizeExecutionWaitSeconds(parsed);
 }
 
-function buildSendEmailConnectionOptions(activeConnectionId) {
+function buildSendEmailConnectionOptions(activeConnectionId, workspaceConnections = []) {
   const options = [
     {
       label: 'Default workspace mailer',
       value: 'default_mailer'
     }
   ];
+
+  workspaceConnections
+    .filter(
+      (connection) =>
+        connection?.status === 'active' &&
+        (connection?.capabilities?.send_email === true ||
+          connection?.connection_kind === 'gmail')
+    )
+    .forEach((connection) => {
+      if (!options.some((option) => option.value === connection.connection_id)) {
+        options.push({
+          label: connection.display_name,
+          value: connection.connection_id
+        });
+      }
+    });
 
   if (
     activeConnectionId &&

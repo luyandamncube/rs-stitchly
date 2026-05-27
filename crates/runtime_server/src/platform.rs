@@ -9,7 +9,8 @@ use api_contract::{
     AuthSessionResponse, DeleteWorkflowResponse, EventTargetKind, LogLevel, RunErrorCategory,
     RunEvent, RunEventType, RunLogEntry, RunSnapshot, SessionUserSummary, TriggerKind,
     WorkflowListResponse, WorkflowResponse, WorkflowStateResponse, WorkflowSummary,
-    WorkspaceListResponse, WorkspaceMembershipRole, WorkspaceSummary,
+    WorkspaceConnectionSummary, WorkspaceConnectionsResponse, WorkspaceListResponse,
+    WorkspaceMembershipRole, WorkspaceSummary,
 };
 use argon2::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
@@ -46,6 +47,29 @@ pub struct GoogleIdentityProfile {
     pub email: String,
     pub email_verified: bool,
     pub display_name: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct GoogleConnectionTokens {
+    pub access_token: String,
+    pub refresh_token: Option<String>,
+    pub token_type: Option<String>,
+    pub scopes: Vec<String>,
+    pub expires_at: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct WorkspaceGmailConnection {
+    pub workspace_id: String,
+    pub connection_id: String,
+    pub display_name: String,
+    pub send_as_email: String,
+    pub external_account_id: String,
+    pub access_token: Option<String>,
+    pub refresh_token: Option<String>,
+    pub token_type: Option<String>,
+    pub scopes: Vec<String>,
+    pub expires_at: Option<String>,
 }
 
 impl PlatformStore {
@@ -399,6 +423,330 @@ impl PlatformStore {
                         slug: row.get(1)?,
                         name: row.get(2)?,
                         role: role_from_db(&row.get::<_, String>(3)?)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn list_workspace_connections(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+    ) -> anyhow::Result<WorkspaceConnectionsResponse> {
+        let connection = self.connection();
+        ensure_workspace_access(&connection, user_id, workspace_id)?;
+
+        let mut stmt = connection.prepare(
+            "select
+                workspace_id,
+                connection_id,
+                connection_kind,
+                display_name,
+                comment,
+                auth_scheme,
+                status,
+                external_account_label,
+                external_account_id,
+                capabilities_json,
+                scopes_json,
+                created_at,
+                updated_at,
+                last_error_message
+             from workspace_connections
+             where workspace_id = ?1
+               and archived_at is null
+             order by created_at desc, display_name asc",
+        )?;
+        let connections = stmt
+            .query_map(params![workspace_id], |row| {
+                let capabilities_json: String = row.get(9)?;
+                let scopes_json: String = row.get(10)?;
+                Ok(WorkspaceConnectionSummary {
+                    workspace_id: row.get(0)?,
+                    connection_id: row.get(1)?,
+                    connection_kind: row.get(2)?,
+                    display_name: row.get(3)?,
+                    comment: row.get(4)?,
+                    auth_scheme: row.get(5)?,
+                    status: row.get(6)?,
+                    external_account_label: row.get(7)?,
+                    external_account_id: row.get(8)?,
+                    capabilities: serde_json::from_str(&capabilities_json).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            9,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?,
+                    scopes: serde_json::from_str(&scopes_json).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            10,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?,
+                    created_at: row.get(11)?,
+                    updated_at: row.get(12)?,
+                    last_error_message: row.get(13)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(WorkspaceConnectionsResponse { connections })
+    }
+
+    pub fn upsert_gmail_connection(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        identity: &GoogleIdentityProfile,
+        tokens: &GoogleConnectionTokens,
+    ) -> anyhow::Result<WorkspaceConnectionSummary> {
+        let mut connection = self.connection();
+        ensure_workspace_access(&connection, user_id, workspace_id)?;
+
+        let tx = connection.transaction()?;
+        let now = Utc::now().to_rfc3339();
+        let existing_connection: Option<(String, String, String)> = tx
+            .query_row(
+                "select connection_id, created_at, coalesce(
+                    (select refresh_token
+                     from workspace_connection_oauth_tokens
+                     where workspace_id = workspace_connections.workspace_id
+                       and connection_id = workspace_connections.connection_id),
+                    ''
+                 )
+                 from workspace_connections
+                 where workspace_id = ?1
+                   and connection_kind = 'gmail'
+                   and external_account_id = ?2
+                   and archived_at is null",
+                params![workspace_id, identity.subject.as_str()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+
+        let (connection_id, created_at, existing_refresh_token) = existing_connection
+            .unwrap_or_else(|| {
+                (
+                    format!("conn_{}", Uuid::new_v4().simple()),
+                    now.clone(),
+                    String::new(),
+                )
+            });
+
+        let granted_scopes = if tokens.scopes.is_empty() {
+            vec![
+                "openid".to_string(),
+                "email".to_string(),
+                "profile".to_string(),
+                "https://www.googleapis.com/auth/gmail.send".to_string(),
+            ]
+        } else {
+            tokens.scopes.clone()
+        };
+
+        let display_name = format!("Gmail · {}", identity.email);
+        let config_json = serde_json::json!({
+            "provider": "google",
+            "send_as_email": identity.email
+        });
+        let capabilities_json = serde_json::json!({
+            "send_email": true
+        });
+        let scopes_json = serde_json::to_string(&granted_scopes)?;
+
+        tx.execute(
+            "insert into workspace_connections (
+                workspace_id,
+                connection_id,
+                connection_kind,
+                display_name,
+                comment,
+                auth_scheme,
+                status,
+                external_account_label,
+                external_account_id,
+                config_json,
+                secret_refs_json,
+                scopes_json,
+                capabilities_json,
+                created_by_user_id,
+                created_at,
+                updated_at,
+                last_validated_at,
+                last_used_at,
+                last_error_code,
+                last_error_message,
+                archived_at
+             ) values (
+                ?1, ?2, 'gmail', ?3, ?4, 'oauth2', 'active', ?5, ?6, ?7, '{}', ?8, ?9, ?10, ?11, ?12, ?13, null, null, null, null
+             )
+             on conflict(workspace_id, connection_id) do update set
+                connection_kind = excluded.connection_kind,
+                display_name = excluded.display_name,
+                comment = excluded.comment,
+                auth_scheme = excluded.auth_scheme,
+                status = excluded.status,
+                external_account_label = excluded.external_account_label,
+                external_account_id = excluded.external_account_id,
+                config_json = excluded.config_json,
+                scopes_json = excluded.scopes_json,
+                capabilities_json = excluded.capabilities_json,
+                updated_at = excluded.updated_at,
+                last_validated_at = excluded.last_validated_at,
+                last_error_code = null,
+                last_error_message = null,
+                archived_at = null",
+            params![
+                workspace_id,
+                connection_id.as_str(),
+                display_name.as_str(),
+                "Authorized Gmail sender",
+                identity.email.as_str(),
+                identity.subject.as_str(),
+                serde_json::to_string(&config_json)?,
+                scopes_json.as_str(),
+                serde_json::to_string(&capabilities_json)?,
+                user_id,
+                created_at.as_str(),
+                now.as_str(),
+                now.as_str()
+            ],
+        )?;
+
+        let refresh_token = tokens
+            .refresh_token
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                let trimmed = existing_refresh_token.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            });
+
+        tx.execute(
+            "insert into workspace_connection_oauth_tokens (
+                workspace_id,
+                connection_id,
+                provider,
+                access_token,
+                refresh_token,
+                token_type,
+                scopes_json,
+                expires_at,
+                created_at,
+                updated_at
+             ) values (?1, ?2, 'google', ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             on conflict(workspace_id, connection_id) do update set
+                provider = excluded.provider,
+                access_token = excluded.access_token,
+                refresh_token = coalesce(excluded.refresh_token, workspace_connection_oauth_tokens.refresh_token),
+                token_type = excluded.token_type,
+                scopes_json = excluded.scopes_json,
+                expires_at = excluded.expires_at,
+                updated_at = excluded.updated_at",
+            params![
+                workspace_id,
+                connection_id.as_str(),
+                tokens.access_token.as_str(),
+                refresh_token.as_deref(),
+                tokens.token_type.as_deref(),
+                scopes_json.as_str(),
+                tokens.expires_at.as_deref(),
+                created_at.as_str(),
+                now.as_str()
+            ],
+        )?;
+
+        let summary = workspace_connection_summary_by_id(&tx, workspace_id, connection_id.as_str())?
+            .ok_or_else(|| anyhow!("workspace connection `{connection_id}` was not found"))?;
+        tx.commit()?;
+
+        Ok(summary)
+    }
+
+    pub fn get_workspace_gmail_connection(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        connection_id: &str,
+    ) -> anyhow::Result<Option<WorkspaceGmailConnection>> {
+        let connection = self.connection();
+        ensure_workspace_access(&connection, user_id, workspace_id)?;
+
+        connection
+            .query_row(
+                "select
+                    wc.workspace_id,
+                    wc.connection_id,
+                    wc.display_name,
+                    wc.external_account_label,
+                    wc.external_account_id,
+                    wc.config_json,
+                    tokens.access_token,
+                    tokens.refresh_token,
+                    tokens.token_type,
+                    tokens.scopes_json,
+                    tokens.expires_at
+                 from workspace_connections wc
+                 left join workspace_connection_oauth_tokens tokens
+                   on tokens.workspace_id = wc.workspace_id
+                  and tokens.connection_id = wc.connection_id
+                 where wc.workspace_id = ?1
+                   and wc.connection_id = ?2
+                   and wc.connection_kind = 'gmail'
+                   and wc.status = 'active'
+                   and wc.archived_at is null",
+                params![workspace_id, connection_id],
+                |row| {
+                    let config_json: String = row.get(5)?;
+                    let scopes_json: String = row.get(9)?;
+                    let config_value = serde_json::from_str::<serde_json::Value>(&config_json)
+                        .map_err(|error| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                5,
+                                rusqlite::types::Type::Text,
+                                Box::new(error),
+                            )
+                        })?;
+                    let send_as_email = config_value
+                        .get("send_as_email")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(ToString::to_string)
+                        .or_else(|| row.get::<_, Option<String>>(3).ok().flatten())
+                        .ok_or_else(|| {
+                            rusqlite::Error::InvalidColumnType(
+                                3,
+                                "external_account_label".to_string(),
+                                rusqlite::types::Type::Null,
+                            )
+                        })?;
+
+                    Ok(WorkspaceGmailConnection {
+                        workspace_id: row.get(0)?,
+                        connection_id: row.get(1)?,
+                        display_name: row.get(2)?,
+                        send_as_email,
+                        external_account_id: row.get(4)?,
+                        access_token: row.get(6)?,
+                        refresh_token: row.get(7)?,
+                        token_type: row.get(8)?,
+                        scopes: serde_json::from_str(&scopes_json).map_err(|error| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                9,
+                                rusqlite::types::Type::Text,
+                                Box::new(error),
+                            )
+                        })?,
+                        expires_at: row.get(10)?,
                     })
                 },
             )
@@ -1109,6 +1457,50 @@ impl PlatformStore {
                   on delete cascade
             );
 
+            create table if not exists workspace_connections (
+                workspace_id text not null,
+                connection_id text not null,
+                connection_kind text not null,
+                display_name text not null,
+                comment text null,
+                auth_scheme text null,
+                status text not null default 'draft',
+                external_account_label text null,
+                external_account_id text null,
+                config_json text not null default '{}',
+                secret_refs_json text not null default '{}',
+                scopes_json text not null default '[]',
+                capabilities_json text not null default '{}',
+                created_by_user_id text null,
+                created_at text not null,
+                updated_at text not null,
+                last_validated_at text null,
+                last_used_at text null,
+                last_error_code text null,
+                last_error_message text null,
+                archived_at text null,
+                primary key (workspace_id, connection_id),
+                foreign key (workspace_id) references workspaces (workspace_id) on delete cascade,
+                foreign key (created_by_user_id) references users (user_id) on delete set null
+            );
+
+            create table if not exists workspace_connection_oauth_tokens (
+                workspace_id text not null,
+                connection_id text not null,
+                provider text not null,
+                access_token text null,
+                refresh_token text null,
+                token_type text null,
+                scopes_json text not null default '[]',
+                expires_at text null,
+                created_at text not null,
+                updated_at text not null,
+                primary key (workspace_id, connection_id),
+                foreign key (workspace_id, connection_id)
+                  references workspace_connections (workspace_id, connection_id)
+                  on delete cascade
+            );
+
             create table if not exists runs (
                 workspace_id text not null,
                 run_id text not null,
@@ -1173,6 +1565,15 @@ impl PlatformStore {
                 foreign key (workspace_id) references workspaces (workspace_id) on delete cascade,
                 foreign key (user_id) references users (user_id) on delete cascade
             );
+
+            create index if not exists idx_workspace_connections_workspace_status_created
+            on workspace_connections (workspace_id, archived_at, status, created_at desc);
+
+            create index if not exists idx_workspace_connections_workspace_kind
+            on workspace_connections (workspace_id, connection_kind, archived_at);
+
+            create index if not exists idx_workspace_connection_oauth_tokens_workspace_provider
+            on workspace_connection_oauth_tokens (workspace_id, provider);
             ",
         )?;
 
@@ -1818,6 +2219,70 @@ fn ensure_workspace_access(
     }
 }
 
+fn workspace_connection_summary_by_id(
+    connection: &Connection,
+    workspace_id: &str,
+    connection_id: &str,
+) -> anyhow::Result<Option<WorkspaceConnectionSummary>> {
+    connection
+        .query_row(
+            "select
+                workspace_id,
+                connection_id,
+                connection_kind,
+                display_name,
+                comment,
+                auth_scheme,
+                status,
+                external_account_label,
+                external_account_id,
+                capabilities_json,
+                scopes_json,
+                created_at,
+                updated_at,
+                last_error_message
+             from workspace_connections
+             where workspace_id = ?1
+               and connection_id = ?2
+               and archived_at is null",
+            params![workspace_id, connection_id],
+            |row| {
+                let capabilities_json: String = row.get(9)?;
+                let scopes_json: String = row.get(10)?;
+                Ok(WorkspaceConnectionSummary {
+                    workspace_id: row.get(0)?,
+                    connection_id: row.get(1)?,
+                    connection_kind: row.get(2)?,
+                    display_name: row.get(3)?,
+                    comment: row.get(4)?,
+                    auth_scheme: row.get(5)?,
+                    status: row.get(6)?,
+                    external_account_label: row.get(7)?,
+                    external_account_id: row.get(8)?,
+                    capabilities: serde_json::from_str(&capabilities_json).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            9,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?,
+                    scopes: serde_json::from_str(&scopes_json).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            10,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?,
+                    created_at: row.get(11)?,
+                    updated_at: row.get(12)?,
+                    last_error_message: row.get(13)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(Into::into)
+}
+
 fn normalize_workflow_definition(
     workflow: &WorkflowDefinition,
     workflow_id: &str,
@@ -2126,14 +2591,14 @@ mod tests {
     use std::fs;
 
     use api_contract::{
-        NodeRunSnapshot, NodeRunStatus, RunErrorCategory, RunErrorSummary, RunSnapshot, RunStatus,
-        RunTrigger, TriggerKind,
+        NodeRunSnapshot, NodeRunStatus, RunErrorCategory, RunErrorSummary, RunSnapshot,
+        RunStatus, RunTrigger, TriggerKind,
     };
     use chrono::{Duration, TimeZone, Utc};
     use duckdb::Connection as DuckDbConnection;
     use rusqlite::params;
 
-    use super::{GoogleIdentityProfile, PlatformStore};
+    use super::{GoogleConnectionTokens, GoogleIdentityProfile, PlatformStore};
     use workflow_schema::{TypedValue, WorkflowDefinition};
 
     #[test]
@@ -2592,6 +3057,212 @@ mod tests {
             )
             .expect("workflow run row count");
         assert_eq!(workflow_run_rows, 0);
+    }
+
+    #[test]
+    fn workspace_connections_table_has_expected_columns() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let connection = store.connection();
+        let mut stmt = connection
+            .prepare("pragma table_info(workspace_connections)")
+            .expect("prepare pragma table_info");
+        let columns = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("table_info query")
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("collect columns");
+
+        let expected = [
+            "workspace_id",
+            "connection_id",
+            "connection_kind",
+            "display_name",
+            "comment",
+            "auth_scheme",
+            "status",
+            "external_account_label",
+            "external_account_id",
+            "config_json",
+            "secret_refs_json",
+            "scopes_json",
+            "capabilities_json",
+            "created_by_user_id",
+            "created_at",
+            "updated_at",
+            "last_validated_at",
+            "last_used_at",
+            "last_error_code",
+            "last_error_message",
+            "archived_at",
+        ];
+
+        for column in expected {
+            assert!(
+                columns.iter().any(|value| value == column),
+                "missing workspace_connections column `{column}`"
+            );
+        }
+    }
+
+    #[test]
+    fn workspace_connection_oauth_tokens_table_has_expected_columns() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let connection = store.connection();
+        let mut stmt = connection
+            .prepare("pragma table_info(workspace_connection_oauth_tokens)")
+            .expect("prepare pragma table_info");
+        let columns = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("table_info query")
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("collect columns");
+
+        let expected = [
+            "workspace_id",
+            "connection_id",
+            "provider",
+            "access_token",
+            "refresh_token",
+            "token_type",
+            "scopes_json",
+            "expires_at",
+            "created_at",
+            "updated_at",
+        ];
+
+        for column in expected {
+            assert!(
+                columns.iter().any(|value| value == column),
+                "missing workspace_connection_oauth_tokens column `{column}`"
+            );
+        }
+    }
+
+    #[test]
+    fn upsert_gmail_connection_persists_workspace_record_and_tokens() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Gmail Workspace")
+            .expect("workspace");
+
+        let summary = store
+            .upsert_gmail_connection(
+                "usr_builder",
+                &workspace.workspace_id,
+                &GoogleIdentityProfile {
+                    subject: "google-subject-456".to_string(),
+                    email: "ops@gmail.com".to_string(),
+                    email_verified: true,
+                    display_name: "Ops Builder".to_string(),
+                },
+                &GoogleConnectionTokens {
+                    access_token: "access-token-1".to_string(),
+                    refresh_token: Some("refresh-token-1".to_string()),
+                    token_type: Some("Bearer".to_string()),
+                    scopes: vec![
+                        "openid".to_string(),
+                        "email".to_string(),
+                        "profile".to_string(),
+                        "https://www.googleapis.com/auth/gmail.send".to_string(),
+                    ],
+                    expires_at: Some("2026-05-27T12:34:56Z".to_string()),
+                },
+            )
+            .expect("gmail connection");
+
+        assert_eq!(summary.connection_kind, "gmail");
+        assert_eq!(summary.status, "active");
+        assert_eq!(summary.external_account_label.as_deref(), Some("ops@gmail.com"));
+        assert!(
+            summary
+                .scopes
+                .iter()
+                .any(|scope| scope == "https://www.googleapis.com/auth/gmail.send")
+        );
+
+        let listed = store
+            .list_workspace_connections("usr_builder", &workspace.workspace_id)
+            .expect("list workspace connections");
+        assert_eq!(listed.connections.len(), 1);
+        assert_eq!(listed.connections[0].connection_id, summary.connection_id);
+
+        let connection = store.connection();
+        let token_row = connection
+            .query_row(
+                "select provider, access_token, refresh_token, token_type, expires_at
+                 from workspace_connection_oauth_tokens
+                 where workspace_id = ?1 and connection_id = ?2",
+                params![workspace.workspace_id, summary.connection_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                    ))
+                },
+            )
+            .expect("oauth token row");
+
+        assert_eq!(token_row.0, "google");
+        assert_eq!(token_row.1.as_deref(), Some("access-token-1"));
+        assert_eq!(token_row.2.as_deref(), Some("refresh-token-1"));
+        assert_eq!(token_row.3.as_deref(), Some("Bearer"));
+        assert_eq!(token_row.4.as_deref(), Some("2026-05-27T12:34:56Z"));
+    }
+
+    #[test]
+    fn workspace_gmail_connection_lookup_returns_runtime_tokens() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Gmail Runtime Workspace")
+            .expect("workspace");
+
+        let summary = store
+            .upsert_gmail_connection(
+                "usr_builder",
+                &workspace.workspace_id,
+                &GoogleIdentityProfile {
+                    subject: "google-subject-runtime".to_string(),
+                    email: "runtime@gmail.com".to_string(),
+                    email_verified: true,
+                    display_name: "Runtime Sender".to_string(),
+                },
+                &GoogleConnectionTokens {
+                    access_token: "runtime-access-token".to_string(),
+                    refresh_token: Some("runtime-refresh-token".to_string()),
+                    token_type: Some("Bearer".to_string()),
+                    scopes: vec![
+                        "openid".to_string(),
+                        "email".to_string(),
+                        "profile".to_string(),
+                        "https://www.googleapis.com/auth/gmail.send".to_string(),
+                    ],
+                    expires_at: Some("2026-05-27T12:34:56Z".to_string()),
+                },
+            )
+            .expect("gmail connection");
+
+        let runtime_connection = store
+            .get_workspace_gmail_connection(
+                "usr_builder",
+                &workspace.workspace_id,
+                &summary.connection_id,
+            )
+            .expect("lookup succeeds")
+            .expect("runtime connection exists");
+
+        assert_eq!(runtime_connection.connection_id, summary.connection_id);
+        assert_eq!(runtime_connection.send_as_email, "runtime@gmail.com");
+        assert_eq!(
+            runtime_connection.access_token.as_deref(),
+            Some("runtime-access-token")
+        );
+        assert_eq!(
+            runtime_connection.refresh_token.as_deref(),
+            Some("runtime-refresh-token")
+        );
     }
 }
 

@@ -1845,7 +1845,10 @@ dependencies = [
 name = "runtime_adapters"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "base64",
  "node_registry",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

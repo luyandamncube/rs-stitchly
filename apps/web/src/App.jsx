@@ -12,11 +12,13 @@ import {
 import CanvasWorkspace from './components/CanvasWorkspace';
 import {
   cancelWorkspaceRun,
+  connectWorkspaceGmail,
   createWorkspace,
   createWorkflow,
   deleteWorkflow,
   getSession,
   getWorkflow,
+  getWorkspaceConnections,
   getWorkspaceRun,
   getWorkspaceRunEvents,
   getWorkspaceRunLogs,
@@ -34,6 +36,7 @@ import {
   buildStarterWorkflowDefinition
 } from './lib/workflowTemplates';
 import { emitWorkspaceRunUpdated } from './lib/runSync';
+import { emitWorkspaceConnectionsUpdated } from './lib/workspaceConnectionsSync';
 
 const APP_SCREENS = [
   {
@@ -161,6 +164,59 @@ const NODE_SHELF_GROUPS = [
       { typeId: 'debug', label: 'Debug', implemented: false },
       { typeId: 'note', label: 'Note', implemented: false }
     ]
+  }
+];
+
+const INTEGRATION_PLACEHOLDERS = [
+  {
+    kind: 'gmail',
+    label: 'Gmail',
+    comment: 'Connect Gmail accounts and send mail from workflow outputs.'
+  },
+  {
+    kind: 'google_drive',
+    label: 'Google Drive',
+    comment: 'Browse files, drop workflow exports, and watch shared folders.'
+  },
+  {
+    kind: 'google_calendar',
+    label: 'Google Calendar',
+    comment: 'Create events and sync operational schedule updates.'
+  },
+  {
+    kind: 'instagram',
+    label: 'Instagram',
+    comment: 'Publish or react to campaign activity from connected workflows.'
+  },
+  {
+    kind: 'whatsapp',
+    label: 'WhatsApp',
+    comment: 'Trigger operational messages and approval loops from workflows.'
+  },
+  {
+    kind: 'twitter',
+    label: 'Twitter',
+    comment: 'Post updates or ingest account activity into workflow runs.'
+  },
+  {
+    kind: 'telegram',
+    label: 'Telegram',
+    comment: 'Send workflow alerts and deliver bot-driven operator prompts.'
+  },
+  {
+    kind: 'slack',
+    label: 'Slack',
+    comment: 'Push run notifications and route human review tasks to channels.'
+  },
+  {
+    kind: 'outlook',
+    label: 'Outlook',
+    comment: 'Use Microsoft mail accounts for outbound workflow delivery.'
+  },
+  {
+    kind: 'notion',
+    label: 'Notion',
+    comment: 'Write workflow summaries and sync records into shared docs.'
   }
 ];
 
@@ -551,6 +607,7 @@ function ProductShell({
   const isCanvasWorkspacePanelOpen = activeCanvasMenuId === 'workspace';
   const isCanvasWorkflowPanelOpen = activeCanvasMenuId === 'workflows';
   const isCanvasRunsPanelOpen = activeCanvasMenuId === 'runs';
+  const isCanvasIntegrationsPanelOpen = activeCanvasMenuId === 'integrations';
   const isSidebarCollapsedEffective = true;
 
   useEffect(() => {
@@ -655,6 +712,7 @@ function ProductShell({
             isBrandMenuOpen={isCanvasBrandMenuOpen}
             isWorkspacePanelOpen={isCanvasWorkspacePanelOpen}
             isWorkflowPanelOpen={isCanvasWorkflowPanelOpen}
+            isIntegrationsPanelOpen={isCanvasIntegrationsPanelOpen}
             onAddNode={handleCanvasNodeAdd}
             onBrandToggle={() => handleCanvasMenuToggle('brand')}
             onCreateWorkspace={handleCanvasCreateWorkspace}
@@ -672,6 +730,7 @@ function ProductShell({
             onShelfToggle={handleCanvasMenuToggle}
             onSignOut={onLogout}
             onRunsToggle={() => handleCanvasMenuToggle('runs')}
+            onIntegrationsToggle={() => handleCanvasMenuToggle('integrations')}
             onSelectedRunIdChange={setCanvasRunsSelectedRunId}
             onWorkspaceToggle={() => handleCanvasMenuToggle('workspace')}
             onWorkflowToggle={() => handleCanvasMenuToggle('workflows')}
@@ -913,6 +972,7 @@ function CanvasMenuDock({
   groups,
   isCreatingWorkflow = false,
   isBrandMenuOpen = false,
+  isIntegrationsPanelOpen = false,
   isRunsPanelOpen = false,
   isWorkspacePanelOpen = false,
   isWorkflowPanelOpen = false,
@@ -930,6 +990,7 @@ function CanvasMenuDock({
   onSelectedRunIdChange,
   onShelfToggle,
   onSignOut,
+  onIntegrationsToggle,
   onRunsToggle,
   onWorkspaceToggle,
   onWorkflowToggle
@@ -941,7 +1002,7 @@ function CanvasMenuDock({
     <aside
       className={`canvas-menu${
         activeGroup || isBrandMenuOpen || isWorkspacePanelOpen || isWorkflowPanelOpen
-          || isRunsPanelOpen
+          || isRunsPanelOpen || isIntegrationsPanelOpen
           ? ' is-open'
           : ''
       }`}
@@ -988,6 +1049,14 @@ function CanvasMenuDock({
           isExpanded={isRunsPanelOpen}
           label="Runs"
           onClick={onRunsToggle}
+        />
+
+        <CanvasMenuButton
+          icon={<CanvasMenuIcon kind="connections" />}
+          isActive={isIntegrationsPanelOpen}
+          isExpanded={isIntegrationsPanelOpen}
+          label="Integrations"
+          onClick={onIntegrationsToggle}
         />
 
         <span className="canvas-menu__divider" aria-hidden="true" />
@@ -1054,7 +1123,15 @@ function CanvasMenuDock({
         />
       ) : null}
 
-      {activeGroup && !isWorkspacePanelOpen && !isWorkflowPanelOpen && !isRunsPanelOpen ? (
+      {isIntegrationsPanelOpen ? (
+        <CanvasIntegrationsPanel activeWorkspace={activeWorkspace} />
+      ) : null}
+
+      {activeGroup &&
+      !isWorkspacePanelOpen &&
+      !isWorkflowPanelOpen &&
+      !isRunsPanelOpen &&
+      !isIntegrationsPanelOpen ? (
         <CanvasNodeShelfDrawer
           group={activeGroup}
           onAddNode={onAddNode}
@@ -1864,6 +1941,208 @@ function CanvasWorkflowMenuPanel({
   );
 }
 
+function CanvasIntegrationsPanel({ activeWorkspace }) {
+  const [connectionState, setConnectionState] = useState({
+    connections: [],
+    error: '',
+    status: 'loading'
+  });
+  const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
+  const [isConnectingGmail, setIsConnectingGmail] = useState(false);
+  const googleEnabled = Boolean(GOOGLE_CLIENT_ID);
+  const { isReady: isGoogleReady, requestCode: requestGoogleCode } = useGoogleCodeClient({
+    clientId: GOOGLE_CLIENT_ID,
+    enabled: googleEnabled && Boolean(activeWorkspace?.workspace_id),
+    onCode: async (code) => {
+      setConnectionState((current) => ({
+        ...current,
+        error: ''
+      }));
+      setIsConnectingGmail(true);
+
+      try {
+        const response = await connectWorkspaceGmail(activeWorkspace.workspace_id, code);
+        setConnectionState((current) => ({
+          connections: upsertWorkspaceConnectionList(current.connections, response.connection),
+          error: '',
+          status: 'ready'
+        }));
+        emitWorkspaceConnectionsUpdated(activeWorkspace.workspace_id, response.connection);
+        setIsAddMenuOpen(false);
+      } catch (error) {
+        setConnectionState((current) => ({
+          ...current,
+          error: error.message ?? 'Unable to connect Gmail.',
+          status: current.status === 'ready' ? 'ready' : 'error'
+        }));
+      } finally {
+        setIsConnectingGmail(false);
+      }
+    },
+    onError: (message) => {
+      setConnectionState((current) => ({
+        ...current,
+        error: message,
+        status: current.status === 'ready' ? 'ready' : 'error'
+      }));
+      setIsConnectingGmail(false);
+    },
+    scope: 'openid email profile https://www.googleapis.com/auth/gmail.send'
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadWorkspaceConnections() {
+      setConnectionState((current) => ({
+        connections: current.connections,
+        error: '',
+        status: current.connections.length ? 'refreshing' : 'loading'
+      }));
+
+      try {
+        const response = await getWorkspaceConnections(activeWorkspace.workspace_id);
+        if (!cancelled) {
+          setConnectionState({
+            connections: sortWorkspaceConnectionsByMostRecent(response.connections ?? []),
+            error: '',
+            status: 'ready'
+          });
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setConnectionState({
+            connections: [],
+            error: error.message ?? 'Unable to load integrations.',
+            status: 'error'
+          });
+        }
+      }
+    }
+
+    void loadWorkspaceConnections();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspace.workspace_id]);
+
+  function handleCreateConnector(template) {
+    if (template.kind !== 'gmail') {
+      return;
+    }
+
+    setConnectionState((current) => ({
+      ...current,
+      error: ''
+    }));
+    setIsConnectingGmail(true);
+    requestGoogleCode();
+  }
+
+  return (
+    <aside className="canvas-integrations-panel" aria-label="Integrations window">
+      <header className="canvas-integrations-panel__header">
+        <div className="canvas-integrations-panel__title-group">
+          <span className="canvas-integrations-panel__title-icon" aria-hidden="true">
+            <CanvasMenuIcon kind="connections" />
+          </span>
+          <div className="canvas-integrations-panel__title-copy">
+            <strong>Integrations</strong>
+            <span>{activeWorkspace.name} · external accounts</span>
+          </div>
+        </div>
+
+        <div className="canvas-integrations-panel__header-actions">
+          <button
+            aria-label="New integration"
+            className="canvas-integrations-panel__add"
+            aria-expanded={isAddMenuOpen}
+            onClick={() => setIsAddMenuOpen((current) => !current)}
+            type="button"
+          >
+            <span aria-hidden="true">+</span>
+            <span className="canvas-integrations-panel__tooltip" role="tooltip">
+              New Integration
+            </span>
+          </button>
+        </div>
+      </header>
+
+      <div
+        className={`canvas-integrations-panel__flyout${isAddMenuOpen ? ' is-open' : ''}`}
+        aria-hidden={!isAddMenuOpen}
+      >
+        <div className="canvas-integrations-panel__flyout-list">
+          {INTEGRATION_PLACEHOLDERS.map((integration) => {
+            const isGmail = integration.kind === 'gmail';
+            const isDisabled = !isGmail || !googleEnabled || !isGoogleReady || isConnectingGmail;
+
+            return (
+              <button
+                className="canvas-integrations-panel__flyout-item"
+                disabled={isDisabled}
+                key={integration.kind}
+                onClick={() => handleCreateConnector(integration)}
+                type="button"
+              >
+                <span className="canvas-integrations-panel__service" aria-hidden="true">
+                  {connectorSymbolLabel(integration)}
+                </span>
+                <span className="canvas-integrations-panel__flyout-label">
+                  {isGmail && isConnectingGmail ? 'Connecting Gmail…' : integration.label}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <section className="canvas-integrations-panel__table" aria-label="Integrations table">
+        <header className="canvas-integrations-panel__table-header">
+          <span className="canvas-integrations-panel__cell">Type</span>
+          <span className="canvas-integrations-panel__cell">Name</span>
+          <span className="canvas-integrations-panel__cell">Created at</span>
+          <span className="canvas-integrations-panel__cell">Comment</span>
+        </header>
+
+        <div className="canvas-integrations-panel__table-body">
+          {connectionState.status === 'loading' ? (
+            <div className="canvas-integrations-panel__empty">Loading integrations…</div>
+          ) : connectionState.connections.length ? (
+            connectionState.connections.map((connection) => (
+              <div className="canvas-integrations-panel__row" key={connection.connection_id}>
+                <span className="canvas-integrations-panel__cell">
+                  <span className="canvas-integrations-panel__service" aria-hidden="true">
+                    {connectorSymbolLabel(connection)}
+                  </span>
+                </span>
+                <span className="canvas-integrations-panel__cell canvas-integrations-panel__cell--name">
+                  {connection.display_name}
+                </span>
+                <span className="canvas-integrations-panel__cell canvas-integrations-panel__cell--muted">
+                  {formatWorkflowTimestamp(connection.created_at)}
+                </span>
+                <span className="canvas-integrations-panel__cell canvas-integrations-panel__cell--comment">
+                  {connection.comment ?? connection.external_account_label ?? '—'}
+                </span>
+              </div>
+            ))
+          ) : (
+            <div className="canvas-integrations-panel__empty">
+              {connectionState.error || 'No integrations added yet.'}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {connectionState.error && connectionState.connections.length ? (
+        <p className="canvas-integrations-panel__error">{connectionState.error}</p>
+      ) : null}
+    </aside>
+  );
+}
+
 function CanvasRunsHistoryPanel({
   activeWorkflowId = null,
   activeWorkspace,
@@ -2626,6 +2905,32 @@ function CanvasMenuIcon({ kind }) {
           <rect x="4.2" y="4.85" width="11.6" height="10.3" rx="1.8" stroke="currentColor" strokeWidth="1.3" />
           <path
             d="M7.05 8.4H12.95M7.05 11.15H10.95"
+            stroke="currentColor"
+            strokeWidth="1.15"
+            strokeLinecap="square"
+            opacity="0.82"
+          />
+        </svg>
+      );
+    case 'connections':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <path
+            d="M8.25 7.05H7.4C5.77 7.05 4.45 8.37 4.45 10C4.45 11.63 5.77 12.95 7.4 12.95H8.95"
+            stroke="currentColor"
+            strokeWidth="1.3"
+            strokeLinecap="square"
+            strokeLinejoin="miter"
+          />
+          <path
+            d="M11.75 12.95H12.6C14.23 12.95 15.55 11.63 15.55 10C15.55 8.37 14.23 7.05 12.6 7.05H11.05"
+            stroke="currentColor"
+            strokeWidth="1.3"
+            strokeLinecap="square"
+            strokeLinejoin="miter"
+          />
+          <path
+            d="M7.95 10H12.05"
             stroke="currentColor"
             strokeWidth="1.15"
             strokeLinecap="square"
@@ -4041,6 +4346,60 @@ function formatWorkflowTimestamp(timestamp) {
   }).format(value);
 }
 
+function sortWorkspaceConnectionsByMostRecent(connections) {
+  return [...(connections ?? [])].sort((left, right) => {
+    const leftValue = Date.parse(left?.created_at ?? '');
+    const rightValue = Date.parse(right?.created_at ?? '');
+
+    if (Number.isNaN(leftValue) && Number.isNaN(rightValue)) {
+      return String(left?.display_name ?? '').localeCompare(String(right?.display_name ?? ''));
+    }
+    if (Number.isNaN(leftValue)) {
+      return 1;
+    }
+    if (Number.isNaN(rightValue)) {
+      return -1;
+    }
+
+    return rightValue - leftValue;
+  });
+}
+
+function upsertWorkspaceConnectionList(currentConnections, nextConnection) {
+  const next = (currentConnections ?? []).filter(
+    (connection) => connection.connection_id !== nextConnection.connection_id
+  );
+  next.unshift(nextConnection);
+  return sortWorkspaceConnectionsByMostRecent(next);
+}
+
+function connectorSymbolLabel(entry) {
+  switch (entry?.connection_kind ?? entry?.kind) {
+    case 'gmail':
+      return 'G';
+    case 'google_drive':
+      return 'D';
+    case 'google_calendar':
+      return 'C';
+    case 'instagram':
+      return 'I';
+    case 'whatsapp':
+      return 'W';
+    case 'twitter':
+      return 'X';
+    case 'telegram':
+      return 'T';
+    case 'slack':
+      return 'S';
+    case 'outlook':
+      return 'O';
+    case 'notion':
+      return 'N';
+    default:
+      return String(entry?.label ?? entry?.display_name ?? '?').charAt(0).toUpperCase() || '?';
+  }
+}
+
 function formatRunDuration(run) {
   const durationMs = runDurationMs(run);
   return durationMs ? formatDurationMs(durationMs) : '—';
@@ -4197,7 +4556,13 @@ function summarizeRunLogDetail(entry) {
   return detailParts.join(' · ') || 'No additional detail';
 }
 
-function useGoogleCodeClient({ clientId, enabled, onCode, onError }) {
+function useGoogleCodeClient({
+  clientId,
+  enabled,
+  onCode,
+  onError,
+  scope = 'openid email profile'
+}) {
   const clientRef = useRef(null);
   const [isReady, setIsReady] = useState(false);
 
@@ -4231,7 +4596,10 @@ function useGoogleCodeClient({ clientId, enabled, onCode, onError }) {
           void onCode(response.code);
         },
         client_id: clientId,
-        scope: 'openid email profile',
+        include_granted_scopes: true,
+        prompt: 'consent',
+        scope,
+        select_account: true,
         ux_mode: 'popup'
       });
 
@@ -4280,7 +4648,7 @@ function useGoogleCodeClient({ clientId, enabled, onCode, onError }) {
       script.removeEventListener('load', handleLoad);
       script.removeEventListener('error', handleError);
     };
-  }, [clientId, enabled, onCode, onError]);
+  }, [clientId, enabled, onCode, onError, scope]);
 
   function requestCode() {
     if (!clientRef.current) {

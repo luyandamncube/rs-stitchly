@@ -6,8 +6,15 @@ import nodeDefinitionFixture from '../../../../tests/fixtures/api/node_definitio
 import CanvasWorkspace from './CanvasWorkspace';
 
 vi.mock('./WorkflowCanvas', () => ({
-  default: function WorkflowCanvasMock() {
-    return <div data-testid="workflow-canvas">Workflow canvas</div>;
+  default: function WorkflowCanvasMock({ onSelectionChange }) {
+    return (
+      <div data-testid="workflow-canvas">
+        <span>Workflow canvas</span>
+        <button onClick={() => onSelectionChange?.('send_email_notification')} type="button">
+          Select send email node
+        </button>
+      </div>
+    );
   }
 }));
 
@@ -18,6 +25,7 @@ const api = vi.hoisted(() => ({
   getConnections: vi.fn(),
   getNodeDefinitions: vi.fn(),
   getRunSnapshot: vi.fn(),
+  getWorkspaceConnections: vi.fn(),
   getWorkspaceRun: vi.fn(),
   getWorkspaceRunEvents: vi.fn(),
   getWorkspaceRunLogs: vi.fn(),
@@ -101,6 +109,7 @@ describe('CanvasWorkspace', () => {
     api.getConnections.mockReset();
     api.getNodeDefinitions.mockReset();
     api.getRunSnapshot.mockReset();
+    api.getWorkspaceConnections.mockReset();
     api.getWorkspaceRun.mockReset();
     api.getWorkspaceRunEvents.mockReset();
     api.getWorkspaceRunLogs.mockReset();
@@ -121,6 +130,26 @@ describe('CanvasWorkspace', () => {
         version: starterWorkflowFixture.version
       },
       definition: starterWorkflowFixture
+    });
+    api.getWorkspaceConnections.mockResolvedValue({
+      connections: [
+        {
+          workspace_id: 'ws_test',
+          connection_id: 'conn_gmail_ops',
+          connection_kind: 'gmail',
+          display_name: 'Gmail · ops@gmail.com',
+          comment: 'Authorized Gmail sender',
+          auth_scheme: 'oauth2',
+          status: 'active',
+          external_account_label: 'ops@gmail.com',
+          external_account_id: 'google-subject-123',
+          capabilities: { send_email: true },
+          scopes: ['https://www.googleapis.com/auth/gmail.send'],
+          created_at: '2026-05-25T13:43:00Z',
+          updated_at: '2026-05-25T13:43:00Z',
+          last_error_message: null
+        }
+      ]
     });
     api.getWorkspaceRuns.mockResolvedValue({ runs: [LATEST_RUN] });
     api.getWorkspaceRun.mockResolvedValue({ run: LATEST_RUN });
@@ -160,5 +189,29 @@ describe('CanvasWorkspace', () => {
     expect(await screen.findByText('Run Facts')).toBeInTheDocument();
     expect(await screen.findByText('Queued mock email delivery.')).toBeInTheDocument();
     expect(await screen.findByText('Run Succeeded')).toBeInTheDocument();
+  });
+
+  it('lets the send email node select an added Gmail integration', async () => {
+    render(
+      <CanvasWorkspace
+        workflowId={starterWorkflowFixture.workflow_id}
+        workspaceId="ws_test"
+      />
+    );
+
+    await screen.findByLabelText('Workflow run status');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select send email node' }));
+
+    const connectionSelect = await screen.findByLabelText('Connection');
+    await waitFor(() => {
+      expect(screen.getByRole('option', { name: 'Gmail · ops@gmail.com' })).toBeInTheDocument();
+    });
+
+    fireEvent.change(connectionSelect, {
+      target: { value: 'conn_gmail_ops' }
+    });
+
+    expect(connectionSelect).toHaveValue('conn_gmail_ops');
   });
 });

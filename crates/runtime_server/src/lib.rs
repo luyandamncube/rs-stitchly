@@ -4,11 +4,11 @@ use api_contract::{
     AuthSessionResponse, ConnectionsResponse, CreateRunRequest, CreateWorkflowRequest,
     CreateWorkspaceRequest, DeleteWorkflowResponse, ErrorResponse, EventTarget, EventTargetKind,
     GoogleAuthCodeRequest, LogLevel, LoginRequest, NodeDefinitionsResponse, NodeRunStatus,
-    RunErrorCategory, RunErrorSummary, RunEvent, RunEventType, RunEventsResponse, RunLogsResponse,
-    RunSnapshot, RunStatus, UpdateWorkflowRequest, UpdateWorkflowStateRequest,
+    RunErrorCategory, RunErrorSummary, RunEvent, RunEventType, RunEventsResponse,
+    RunLogsResponse, RunSnapshot, RunStatus, UpdateWorkflowRequest, UpdateWorkflowStateRequest,
     ValidateWorkflowRequest, ValidateWorkflowResponse, WorkflowListResponse, WorkflowResponse,
-    WorkflowStateResponse, WorkspaceListResponse, WorkspaceResponse, WorkspaceRunResponse,
-    WorkspaceRunsResponse,
+    WorkflowStateResponse, WorkspaceConnectionResponse, WorkspaceConnectionsResponse,
+    WorkspaceListResponse, WorkspaceResponse, WorkspaceRunResponse, WorkspaceRunsResponse,
 };
 use axum::{
     extract::{Path, State},
@@ -23,9 +23,10 @@ use axum::{
 use futures::{stream, StreamExt};
 use platform::{AuthenticatedSession, PlatformStore};
 use runtime_core::{RunEventSubscription, RuntimeError, RuntimeService};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio_stream::wrappers::BroadcastStream;
 use uuid::Uuid;
+use workflow_schema::WorkflowDefinition;
 
 pub mod platform;
 
@@ -50,12 +51,21 @@ struct GoogleAuthClient {
 enum GoogleAuthError {
     InvalidCode,
     InvalidIdentity,
+    TokenRefreshRejected,
     Transport(anyhow::Error),
 }
 
 #[derive(Debug, Deserialize)]
 struct GoogleTokenResponse {
     access_token: String,
+    #[serde(default)]
+    refresh_token: Option<String>,
+    #[serde(default)]
+    expires_in: Option<i64>,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    token_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -65,6 +75,32 @@ struct GoogleUserInfoResponse {
     #[serde(default)]
     email_verified: bool,
     name: String,
+}
+
+#[derive(Clone, Debug)]
+struct GoogleCodeExchangeResult {
+    identity: platform::GoogleIdentityProfile,
+    access_token: String,
+    refresh_token: Option<String>,
+    expires_at: Option<String>,
+    scopes: Vec<String>,
+    token_type: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct GoogleAccessTokenResult {
+    access_token: String,
+    scopes: Vec<String>,
+    token_type: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct SendEmailRuntimeDeliveryPayload {
+    provider: String,
+    access_token: String,
+    send_as_email: String,
+    connection_id: String,
+    connection_label: String,
 }
 
 pub fn app(runtime: RuntimeService, platform: PlatformStore) -> Router {
@@ -80,6 +116,14 @@ pub fn app(runtime: RuntimeService, platform: PlatformStore) -> Router {
             get(list_workspaces).post(create_workspace),
         )
         .route("/api/workspaces/:workspace_id", get(get_workspace))
+        .route(
+            "/api/workspaces/:workspace_id/connections",
+            get(list_workspace_connections),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/connections/gmail/code",
+            post(connect_workspace_gmail),
+        )
         .route(
             "/api/workspaces/:workspace_id/workflows",
             get(list_workflows).post(create_workflow),
@@ -185,7 +229,7 @@ impl GoogleAuthClient {
         &self,
         origin: &str,
         code: &str,
-    ) -> Result<platform::GoogleIdentityProfile, GoogleAuthError> {
+    ) -> Result<GoogleCodeExchangeResult, GoogleAuthError> {
         let token_response = self
             .http
             .post(GOOGLE_TOKEN_ENDPOINT)
@@ -215,7 +259,7 @@ impl GoogleAuthClient {
         let userinfo_response = self
             .http
             .get(GOOGLE_USERINFO_ENDPOINT)
-            .bearer_auth(token_payload.access_token)
+            .bearer_auth(&token_payload.access_token)
             .send()
             .await
             .map_err(|error| GoogleAuthError::Transport(error.into()))?
@@ -233,11 +277,57 @@ impl GoogleAuthClient {
             return Err(GoogleAuthError::InvalidIdentity);
         }
 
-        Ok(platform::GoogleIdentityProfile {
-            subject: userinfo.sub,
-            email: userinfo.email,
-            email_verified: userinfo.email_verified,
-            display_name: userinfo.name,
+        Ok(GoogleCodeExchangeResult {
+            identity: platform::GoogleIdentityProfile {
+                subject: userinfo.sub,
+                email: userinfo.email,
+                email_verified: userinfo.email_verified,
+                display_name: userinfo.name,
+            },
+            access_token: token_payload.access_token,
+            refresh_token: token_payload.refresh_token,
+            expires_at: token_payload.expires_in.and_then(expires_at_from_seconds),
+            scopes: parse_google_scopes(token_payload.scope.as_deref()),
+            token_type: token_payload.token_type,
+        })
+    }
+
+    async fn refresh_access_token(
+        &self,
+        refresh_token: &str,
+    ) -> Result<GoogleAccessTokenResult, GoogleAuthError> {
+        let token_response = self
+            .http
+            .post(GOOGLE_TOKEN_ENDPOINT)
+            .form(&[
+                ("client_id", self.client_id.as_str()),
+                ("client_secret", self.client_secret.as_str()),
+                ("grant_type", "refresh_token"),
+                ("refresh_token", refresh_token),
+            ])
+            .send()
+            .await
+            .map_err(|error| GoogleAuthError::Transport(error.into()))?;
+
+        if matches!(
+            token_response.status(),
+            StatusCode::BAD_REQUEST | StatusCode::UNAUTHORIZED
+        ) {
+            return Err(GoogleAuthError::TokenRefreshRejected);
+        }
+
+        let token_response = token_response
+            .error_for_status()
+            .map_err(|error| GoogleAuthError::Transport(error.into()))?;
+        let token_payload: GoogleTokenResponse = token_response
+            .json()
+            .await
+            .map_err(|error| GoogleAuthError::Transport(error.into()))?;
+
+        Ok(GoogleAccessTokenResult {
+            access_token: token_payload.access_token,
+            scopes: parse_google_scopes(token_payload.scope.as_deref()),
+            token_type: token_payload.token_type,
         })
     }
 }
@@ -286,14 +376,14 @@ async fn login_with_google_code(
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| ApiError::bad_request("Google login origin is missing.".to_string()))?;
 
-    let identity = google_auth
+    let exchange = google_auth
         .exchange_code(origin, &request.code)
         .await
         .map_err(map_google_auth_error)?;
 
     let session = state
         .platform
-        .authenticate_google_identity(&identity)
+        .authenticate_google_identity(&exchange.identity)
         .map_err(ApiError::internal)?;
 
     let mut response_headers = HeaderMap::new();
@@ -369,6 +459,73 @@ async fn get_workspace(
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found(format!("Workspace `{workspace_id}` was not found.")))?;
     Ok(Json(WorkspaceResponse { workspace }))
+}
+
+async fn list_workspace_connections(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<String>,
+) -> Result<Json<WorkspaceConnectionsResponse>, ApiError> {
+    let session = require_session(&state, &headers)?;
+    let response = state
+        .platform
+        .list_workspace_connections(&session.user_id, &workspace_id)
+        .map_err(map_workflow_persistence_error)?;
+    Ok(Json(response))
+}
+
+async fn connect_workspace_gmail(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<String>,
+    Json(request): Json<GoogleAuthCodeRequest>,
+) -> Result<(StatusCode, Json<WorkspaceConnectionResponse>), ApiError> {
+    let session = require_session(&state, &headers)?;
+    let google_auth = state
+        .google_auth
+        .clone()
+        .or_else(GoogleAuthClient::from_env_or_local_file)
+        .ok_or_else(|| ApiError::unavailable("Gmail integration is not configured.".to_string()))?;
+
+    let requested_with = headers
+        .get("x-requested-with")
+        .and_then(|value| value.to_str().ok());
+    if requested_with != Some("XmlHttpRequest") {
+        return Err(ApiError::bad_request(
+            "Gmail integration requests must include X-Requested-With.".to_string(),
+        ));
+    }
+
+    let origin = headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| ApiError::bad_request("Google integration origin is missing.".to_string()))?;
+
+    let exchange = google_auth
+        .exchange_code(origin, &request.code)
+        .await
+        .map_err(map_google_auth_error)?;
+    let connection = state
+        .platform
+        .upsert_gmail_connection(
+            &session.user_id,
+            &workspace_id,
+            &exchange.identity,
+            &platform::GoogleConnectionTokens {
+                access_token: exchange.access_token,
+                refresh_token: exchange.refresh_token,
+                token_type: exchange.token_type,
+                scopes: exchange.scopes,
+                expires_at: exchange.expires_at,
+            },
+        )
+        .map_err(ApiError::internal)?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(WorkspaceConnectionResponse { connection }),
+    ))
 }
 
 async fn list_workflows(
@@ -527,7 +684,7 @@ async fn create_workspace_run(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(workspace_id): Path<String>,
-    Json(request): Json<CreateRunRequest>,
+    Json(mut request): Json<CreateRunRequest>,
 ) -> Result<(StatusCode, Json<api_contract::CreateRunResponse>), ApiError> {
     let session = require_session(&state, &headers)?;
     state
@@ -544,6 +701,14 @@ async fn create_workspace_run(
                 request.workflow.workflow_id
             ))
         })?;
+
+    hydrate_send_email_runtime_delivery(
+        &state,
+        &session.user_id,
+        &workspace_id,
+        &mut request.workflow,
+    )
+    .await?;
 
     let response = state
         .runtime
@@ -849,6 +1014,194 @@ async fn list_connections(State(state): State<AppState>) -> Json<ConnectionsResp
     Json(ConnectionsResponse {
         connections: state.runtime.connections(),
     })
+}
+
+fn parse_google_scopes(scope_list: Option<&str>) -> Vec<String> {
+    scope_list
+        .unwrap_or_default()
+        .split_whitespace()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+async fn hydrate_send_email_runtime_delivery(
+    state: &AppState,
+    user_id: &str,
+    workspace_id: &str,
+    workflow: &mut WorkflowDefinition,
+) -> Result<(), ApiError> {
+    for node in &mut workflow.nodes {
+        if node.type_id != "send_email" {
+            continue;
+        }
+
+        let selected_connection_id = node
+            .config
+            .get("connection_id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("default_mailer");
+
+        if selected_connection_id == "default_mailer" {
+            continue;
+        }
+
+        let connection = state
+            .platform
+            .get_workspace_gmail_connection(user_id, workspace_id, selected_connection_id)
+            .map_err(ApiError::internal)?
+            .ok_or_else(|| {
+                ApiError::bad_request(format!(
+                    "Send Email node `{}` references connection `{selected_connection_id}`, but no active Gmail integration with that ID exists in workspace `{workspace_id}`.",
+                    node.node_id
+                ))
+            })?;
+
+        let runtime_delivery =
+            resolve_gmail_runtime_delivery_context(state.google_auth.as_ref(), &connection).await?;
+
+        if !node.config.is_object() {
+            node.config = serde_json::Value::Object(Default::default());
+        }
+        let config = node
+            .config
+            .as_object_mut()
+            .ok_or_else(|| {
+                ApiError::bad_request(format!(
+                    "Send Email node `{}` must use an object config.",
+                    node.node_id
+                ))
+            })?;
+        config.insert(
+            "runtime_delivery".to_string(),
+            serde_json::to_value(&runtime_delivery).map_err(ApiError::internal)?,
+        );
+    }
+
+    Ok(())
+}
+
+async fn resolve_gmail_runtime_delivery_context(
+    google_auth: Option<&GoogleAuthClient>,
+    connection: &platform::WorkspaceGmailConnection,
+) -> Result<SendEmailRuntimeDeliveryPayload, ApiError> {
+    ensure_gmail_send_scope(connection)?;
+
+    let stored_access_token = connection
+        .access_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    let stored_access_is_valid = stored_access_token.is_some()
+        && google_access_token_is_usable(connection.expires_at.as_deref());
+
+    let (access_token, _token_type) = if stored_access_is_valid {
+        (
+            stored_access_token.expect("stored token already checked"),
+            connection.token_type.clone(),
+        )
+    } else if let Some(refresh_token) = connection
+        .refresh_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let google_auth = google_auth.ok_or_else(|| {
+            ApiError::unavailable(
+                "Gmail token refresh is not configured on the backend.".to_string(),
+            )
+        })?;
+        let refreshed = google_auth
+            .refresh_access_token(refresh_token)
+            .await
+            .map_err(map_google_gmail_refresh_error)?;
+        let effective_scopes = if refreshed.scopes.is_empty() {
+            connection.scopes.clone()
+        } else {
+            refreshed.scopes.clone()
+        };
+        ensure_gmail_send_scope_values(&connection.connection_id, &effective_scopes)?;
+        (refreshed.access_token, refreshed.token_type)
+    } else if let Some(access_token) = stored_access_token {
+        if connection.expires_at.is_some() {
+            return Err(ApiError::conflict(format!(
+                "Gmail connection `{}` needs to be reconnected before it can send mail again.",
+                connection.display_name
+            )));
+        }
+        (access_token, connection.token_type.clone())
+    } else {
+        return Err(ApiError::conflict(format!(
+            "Gmail connection `{}` does not currently have a usable access token. Reconnect it and try again.",
+            connection.display_name
+        )));
+    };
+
+    Ok(SendEmailRuntimeDeliveryPayload {
+        provider: "gmail".to_string(),
+        access_token,
+        send_as_email: connection.send_as_email.clone(),
+        connection_id: connection.connection_id.clone(),
+        connection_label: connection.display_name.clone(),
+    })
+}
+
+fn ensure_gmail_send_scope(connection: &platform::WorkspaceGmailConnection) -> Result<(), ApiError> {
+    ensure_gmail_send_scope_values(&connection.connection_id, &connection.scopes)
+}
+
+fn ensure_gmail_send_scope_values(
+    connection_id: &str,
+    scopes: &[String],
+) -> Result<(), ApiError> {
+    if scopes
+        .iter()
+        .any(|scope| scope == "https://www.googleapis.com/auth/gmail.send")
+    {
+        return Ok(());
+    }
+
+    Err(ApiError::conflict(format!(
+        "Gmail connection `{connection_id}` is missing the gmail.send scope."
+    )))
+}
+
+fn google_access_token_is_usable(expires_at: Option<&str>) -> bool {
+    let Some(expires_at) = expires_at else {
+        return true;
+    };
+    let Ok(expires_at) = chrono::DateTime::parse_from_rfc3339(expires_at) else {
+        return false;
+    };
+
+    expires_at.with_timezone(&chrono::Utc)
+        > (chrono::Utc::now() + chrono::Duration::seconds(60))
+}
+
+fn map_google_gmail_refresh_error(error: GoogleAuthError) -> ApiError {
+    match error {
+        GoogleAuthError::TokenRefreshRejected => ApiError::conflict(
+            "The selected Gmail connection needs to be reconnected before it can send mail."
+                .to_string(),
+        ),
+        GoogleAuthError::Transport(error) => ApiError::internal(error),
+        GoogleAuthError::InvalidCode | GoogleAuthError::InvalidIdentity => ApiError::conflict(
+            "The selected Gmail connection could not be refreshed. Reconnect it and try again."
+                .to_string(),
+        ),
+    }
+}
+
+fn expires_at_from_seconds(seconds: i64) -> Option<String> {
+    if seconds <= 0 {
+        return None;
+    }
+
+    Some((chrono::Utc::now() + chrono::Duration::seconds(seconds)).to_rfc3339())
 }
 
 fn event_stream(
@@ -1189,6 +1542,9 @@ fn map_google_auth_error(error: GoogleAuthError) -> ApiError {
         GoogleAuthError::InvalidIdentity => {
             ApiError::bad_request("Google did not return a usable identity profile.".to_string())
         }
+        GoogleAuthError::TokenRefreshRejected => ApiError::conflict(
+            "Google rejected the stored token refresh request.".to_string(),
+        ),
         GoogleAuthError::Transport(error) => ApiError::internal(error),
     }
 }
@@ -1209,10 +1565,12 @@ mod tests {
     use serde_json::json;
     use tokio::time::{sleep, Duration};
     use tower::ServiceExt;
-    use workflow_schema::WorkflowDefinition;
+    use workflow_schema::{NodePosition, WorkflowDefinition, WorkflowEdge, WorkflowNode};
 
-    use super::app;
-    use crate::platform::PlatformStore;
+    use super::{app, hydrate_send_email_runtime_delivery, AppState};
+    use crate::platform::{
+        GoogleConnectionTokens, GoogleIdentityProfile, PlatformStore,
+    };
 
     #[tokio::test]
     async fn validate_endpoint_accepts_fixture_workflow() {
@@ -1395,6 +1753,122 @@ mod tests {
         assert_eq!(
             session.active_workspace_id,
             Some(workspace.workspace.workspace_id)
+        );
+    }
+
+    #[tokio::test]
+    async fn gmail_send_email_nodes_receive_runtime_delivery_context_before_run() {
+        let platform = PlatformStore::for_tests().expect("platform store");
+        let workspace = platform
+            .create_workspace("usr_builder", "Hydration Workspace")
+            .expect("workspace");
+        let connection = platform
+            .upsert_gmail_connection(
+                "usr_builder",
+                &workspace.workspace_id,
+                &GoogleIdentityProfile {
+                    subject: "google-send-subject".to_string(),
+                    email: "ops@gmail.com".to_string(),
+                    email_verified: true,
+                    display_name: "Ops Sender".to_string(),
+                },
+                &GoogleConnectionTokens {
+                    access_token: "hydration-access-token".to_string(),
+                    refresh_token: None,
+                    token_type: Some("Bearer".to_string()),
+                    scopes: vec![
+                        "openid".to_string(),
+                        "email".to_string(),
+                        "profile".to_string(),
+                        "https://www.googleapis.com/auth/gmail.send".to_string(),
+                    ],
+                    expires_at: None,
+                },
+            )
+            .expect("gmail connection");
+        let state = AppState {
+            runtime: runtime_core::RuntimeService::default(),
+            platform: platform.clone(),
+            google_auth: None,
+        };
+        let mut workflow = WorkflowDefinition {
+            schema_version: workflow_schema::CURRENT_SCHEMA_VERSION,
+            workflow_id: "wf_gmail_runtime".to_string(),
+            version: 1,
+            name: "Gmail Runtime Delivery".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "input_text".to_string(),
+                    type_id: "text_input".to_string(),
+                    definition_version: 1,
+                    label: Some("Text Input".to_string()),
+                    config: json!({
+                        "text": "Test body"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "send_email_notification".to_string(),
+                    type_id: "send_email".to_string(),
+                    definition_version: 1,
+                    label: Some("Send Email".to_string()),
+                    config: json!({
+                        "to": "alerts@stitchly.dev",
+                        "subject": "Runtime delivery test",
+                        "body_mode": "input",
+                        "connection_id": connection.connection_id
+                    }),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![WorkflowEdge {
+                edge_id: "edge_body".to_string(),
+                source_node_id: "input_text".to_string(),
+                source_port_id: "text".to_string(),
+                target_node_id: "send_email_notification".to_string(),
+                target_port_id: "body".to_string(),
+            }],
+            metadata: Default::default(),
+        };
+
+        hydrate_send_email_runtime_delivery(
+            &state,
+            "usr_builder",
+            &workspace.workspace_id,
+            &mut workflow,
+        )
+        .await
+        .expect("workflow hydrated");
+
+        let send_email = workflow
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "send_email_notification")
+            .expect("send email node");
+        assert_eq!(
+            send_email
+                .config
+                .get("runtime_delivery")
+                .and_then(|value| value.get("provider"))
+                .and_then(serde_json::Value::as_str),
+            Some("gmail")
+        );
+        assert_eq!(
+            send_email
+                .config
+                .get("runtime_delivery")
+                .and_then(|value| value.get("access_token"))
+                .and_then(serde_json::Value::as_str),
+            Some("hydration-access-token")
+        );
+        assert_eq!(
+            send_email
+                .config
+                .get("runtime_delivery")
+                .and_then(|value| value.get("send_as_email"))
+                .and_then(serde_json::Value::as_str),
+            Some("ops@gmail.com")
         );
     }
 

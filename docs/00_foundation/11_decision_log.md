@@ -13,6 +13,20 @@ Use this file to capture important product and technical decisions in a compact 
 
 ## Entries
 
+### 2026-05-27 - Gmail is the first real workspace connector and stores OAuth tokens separately
+
+- status: accepted
+- context: the app now has a workspace-scoped integrations menu and a persisted `workspace_connections` table, but Gmail needs backend-owned OAuth storage before it can become the first real connector.
+- decision: implement Gmail as the first active provider, keep safe frontend-visible metadata in `workspace_connections`, and store access/refresh tokens in a separate backend-only `workspace_connection_oauth_tokens` table.
+- consequence: the integrations popup, Gmail connect flow, and `Send Email` connection selector can bind to a real workspace-scoped connector record now, while actual Gmail delivery can be wired next without changing the persisted connection shape.
+
+### 2026-05-27 - Workspace integrations should persist as backend-owned connection records
+
+- status: proposed
+- context: the canvas now has a design direction for an integrations popup, but the backend still lacks a concrete persisted table for workspace-scoped external accounts and connector metadata.
+- decision: add a workspace-scoped `workspace_connections` table with stable `connection_id`, provider kind, safe UI metadata, non-secret config JSON, secret reference JSON, lifecycle status, and validation/use timestamps.
+- consequence: later integrations UI and connector API work should build on the persisted shape documented in `16_connections_and_secrets.md` instead of inventing per-provider tables first.
+
 ### 2026-05-26 - Real workflow execution should ship in phased vertical slices
 
 - status: proposed

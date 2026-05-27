@@ -226,6 +226,42 @@ pub struct ConnectionsResponse {
     pub connections: Vec<ConnectionSummary>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct WorkspaceConnectionSummary {
+    pub workspace_id: String,
+    pub connection_id: String,
+    pub connection_kind: String,
+    pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_scheme: Option<String>,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_account_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_account_id: Option<String>,
+    #[serde(default)]
+    pub capabilities: Value,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error_message: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct WorkspaceConnectionsResponse {
+    #[serde(default)]
+    pub connections: Vec<WorkspaceConnectionSummary>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct WorkspaceConnectionResponse {
+    pub connection: WorkspaceConnectionSummary,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceMembershipRole {

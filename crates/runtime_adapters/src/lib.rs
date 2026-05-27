@@ -1,7 +1,9 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, time::Duration as StdDuration};
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use node_registry::NodeDefinition;
 use serde::Deserialize;
+use serde_json::json;
 use thiserror::Error;
 use workflow_schema::{TypedValue, WorkflowNode};
 
@@ -24,6 +26,10 @@ pub enum AdapterError {
     MissingInput { node_id: String, port: String },
     #[error("text value expected on port `{port}` for node `{node_id}`")]
     TextTypeMismatch { node_id: String, port: String },
+    #[error("connection failed for node `{node_id}`: {message}")]
+    ConnectionFailed { node_id: String, message: String },
+    #[error("execution failed for node `{node_id}`: {message}")]
+    ExecutionFailed { node_id: String, message: String },
     #[error("unsupported node type `{0}`")]
     UnsupportedNode(String),
 }
@@ -98,13 +104,36 @@ struct SendEmailConfig {
     connection_id: Option<String>,
     #[serde(default)]
     content_type: Option<String>,
+    #[serde(default)]
+    runtime_delivery: Option<SendEmailRuntimeDelivery>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum SendEmailBodyMode {
     Input,
     Custom,
+}
+
+#[derive(Deserialize)]
+struct SendEmailRuntimeDelivery {
+    provider: String,
+    #[serde(default)]
+    access_token: Option<String>,
+    #[serde(default)]
+    send_as_email: Option<String>,
+    #[serde(default)]
+    connection_id: Option<String>,
+    #[serde(default)]
+    connection_label: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GmailSendResponse {
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    thread_id: Option<String>,
 }
 
 fn execute_text_input(node: &WorkflowNode) -> Result<NodeExecutionResult, AdapterError> {
@@ -266,6 +295,17 @@ fn execute_send_email(
     let content_type = config.content_type.as_deref().unwrap_or("text/plain");
     let connection_id = config.connection_id.as_deref().unwrap_or("default_mailer");
 
+    if let Some(runtime_delivery) = config.runtime_delivery.as_ref() {
+        return execute_runtime_email_delivery(
+            node,
+            &config,
+            runtime_delivery,
+            connection_id,
+            content_type,
+            &body,
+        );
+    }
+
     Ok(NodeExecutionResult {
         outputs: PortValues::new(),
         logs: vec![format!(
@@ -273,6 +313,183 @@ fn execute_send_email(
             config.to, config.subject, body
         )],
     })
+}
+
+fn execute_runtime_email_delivery(
+    node: &WorkflowNode,
+    config: &SendEmailConfig,
+    runtime_delivery: &SendEmailRuntimeDelivery,
+    connection_id: &str,
+    content_type: &str,
+    body: &str,
+) -> Result<NodeExecutionResult, AdapterError> {
+    match runtime_delivery.provider.as_str() {
+        "gmail" => execute_gmail_send(
+            node,
+            config,
+            runtime_delivery,
+            connection_id,
+            content_type,
+            body,
+        ),
+        other => Err(AdapterError::InvalidConfig {
+            node_id: node.node_id.clone(),
+            message: format!("unsupported runtime delivery provider `{other}`"),
+        }),
+    }
+}
+
+fn execute_gmail_send(
+    node: &WorkflowNode,
+    config: &SendEmailConfig,
+    runtime_delivery: &SendEmailRuntimeDelivery,
+    connection_id: &str,
+    content_type: &str,
+    body: &str,
+) -> Result<NodeExecutionResult, AdapterError> {
+    let access_token =
+        runtime_delivery
+            .access_token
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| AdapterError::InvalidConfig {
+                node_id: node.node_id.clone(),
+                message: "gmail delivery requires a non-empty runtime access token.".to_string(),
+            })?;
+    let send_as_email =
+        runtime_delivery
+            .send_as_email
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| AdapterError::InvalidConfig {
+                node_id: node.node_id.clone(),
+                message: "gmail delivery requires a non-empty `send_as_email` value."
+                    .to_string(),
+            })?;
+
+    let mime_message = build_gmail_mime_message(send_as_email, &config.to, &config.subject, body, content_type)
+        .map_err(|error| AdapterError::InvalidConfig {
+            node_id: node.node_id.clone(),
+            message: error.to_string(),
+        })?;
+    let raw = URL_SAFE_NO_PAD.encode(mime_message.as_bytes());
+
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(StdDuration::from_secs(10))
+        .timeout(StdDuration::from_secs(30))
+        .build()
+        .map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: format!("failed to build Gmail HTTP client: {error}"),
+        })?;
+    let response = client
+        .post("https://gmail.googleapis.com/gmail/v1/users/me/messages/send")
+        .bearer_auth(access_token)
+        .json(&json!({ "raw": raw }))
+        .send()
+        .map_err(|error| AdapterError::ConnectionFailed {
+            node_id: node.node_id.clone(),
+            message: format!("Gmail send request failed: {error}"),
+        })?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let error_body = response.text().unwrap_or_default();
+        let error_detail = summarize_remote_error(&error_body);
+        return Err(AdapterError::ConnectionFailed {
+            node_id: node.node_id.clone(),
+            message: format!("Gmail send returned {status}: {error_detail}"),
+        });
+    }
+
+    let payload: GmailSendResponse =
+        response
+            .json()
+            .map_err(|error| AdapterError::ExecutionFailed {
+                node_id: node.node_id.clone(),
+                message: format!("failed to decode Gmail send response: {error}"),
+            })?;
+    let message_id = payload.id.unwrap_or_else(|| "unknown".to_string());
+    let runtime_connection_id = runtime_delivery
+        .connection_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty());
+    let delivery_label = runtime_delivery
+        .connection_label
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .or(runtime_connection_id)
+        .unwrap_or(connection_id);
+    let mut success_log = format!(
+        "Sent {content_type} email via `{delivery_label}` to {} with subject `{}` (message_id: {message_id})",
+        config.to, config.subject
+    );
+    if let Some(thread_id) = payload.thread_id.filter(|value| !value.trim().is_empty()) {
+        success_log.push_str(&format!(", thread_id: {thread_id}"));
+    }
+
+    Ok(NodeExecutionResult {
+        outputs: PortValues::new(),
+        logs: vec![success_log],
+    })
+}
+
+fn build_gmail_mime_message(
+    from: &str,
+    to: &str,
+    subject: &str,
+    body: &str,
+    content_type: &str,
+) -> anyhow::Result<String> {
+    let from = validate_mail_header_value("From", from)?;
+    let to = validate_mail_header_value("To", to)?;
+    let subject = validate_mail_header_value("Subject", subject)?;
+    let normalized_content_type = normalize_content_type(content_type);
+
+    Ok(format!(
+        "From: {from}\r\nTo: {to}\r\nSubject: {subject}\r\nMIME-Version: 1.0\r\nContent-Type: {normalized_content_type}; charset=UTF-8\r\n\r\n{body}"
+    ))
+}
+
+fn validate_mail_header_value(header_name: &str, value: &str) -> anyhow::Result<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("{header_name} header cannot be empty");
+    }
+    if trimmed.contains('\r') || trimmed.contains('\n') {
+        anyhow::bail!("{header_name} header cannot contain newline characters");
+    }
+
+    Ok(trimmed.to_string())
+}
+
+fn normalize_content_type(content_type: &str) -> &'static str {
+    match content_type.trim().to_ascii_lowercase().as_str() {
+        "text/html" => "text/html",
+        _ => "text/plain",
+    }
+}
+
+fn summarize_remote_error(response_body: &str) -> String {
+    let trimmed = response_body.trim();
+    if trimmed.is_empty() {
+        return "empty response body".to_string();
+    }
+
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if let Some(message) = value
+            .get("error")
+            .and_then(|error| error.get("message"))
+            .and_then(serde_json::Value::as_str)
+        {
+            return message.to_string();
+        }
+        if let Some(message) = value.get("message").and_then(serde_json::Value::as_str) {
+            return message.to_string();
+        }
+    }
+
+    trimmed.chars().take(180).collect()
 }
 
 fn normalize_text_input_value(
@@ -306,10 +523,11 @@ fn normalize_text_input_value(
 
 #[cfg(test)]
 mod tests {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
     use serde_json::json;
     use workflow_schema::{NodePosition, WorkflowNode};
 
-    use super::RuntimeAdapters;
+    use super::{build_gmail_mime_message, RuntimeAdapters};
     use crate::PortValues;
     use node_registry::builtin_node_definitions;
 
@@ -441,5 +659,52 @@ mod tests {
             result.outputs.get("text").and_then(|value| value.as_text()),
             Some("hello world")
         );
+    }
+
+    #[test]
+    fn gmail_mime_message_contains_expected_headers_and_body() {
+        let message = build_gmail_mime_message(
+            "ops@gmail.com",
+            "alerts@stitchly.dev",
+            "Workflow alert",
+            "Body text",
+            "text/plain",
+        )
+        .expect("mime message");
+
+        assert!(message.contains("From: ops@gmail.com\r\n"));
+        assert!(message.contains("To: alerts@stitchly.dev\r\n"));
+        assert!(message.contains("Subject: Workflow alert\r\n"));
+        assert!(message.contains("Content-Type: text/plain; charset=UTF-8\r\n\r\nBody text"));
+    }
+
+    #[test]
+    fn gmail_mime_message_rejects_header_injection() {
+        let result = build_gmail_mime_message(
+            "ops@gmail.com",
+            "alerts@stitchly.dev\r\nBcc: hidden@example.com",
+            "Workflow alert",
+            "Body text",
+            "text/plain",
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn gmail_message_body_can_be_base64url_encoded() {
+        let message = build_gmail_mime_message(
+            "ops@gmail.com",
+            "alerts@stitchly.dev",
+            "Workflow alert",
+            "Body text",
+            "text/plain",
+        )
+        .expect("mime message");
+
+        let encoded = URL_SAFE_NO_PAD.encode(message.as_bytes());
+        assert!(!encoded.is_empty());
+        assert!(!encoded.contains('+'));
+        assert!(!encoded.contains('/'));
     }
 }

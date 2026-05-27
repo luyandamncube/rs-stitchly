@@ -113,6 +113,20 @@ export function getWorkspaceRuns(workspaceId) {
   return request(`/api/workspaces/${workspaceId}/runs`);
 }
 
+export function getWorkspaceConnections(workspaceId) {
+  return request(`/api/workspaces/${workspaceId}/connections`);
+}
+
+export function connectWorkspaceGmail(workspaceId, code) {
+  return request(`/api/workspaces/${workspaceId}/connections/gmail/code`, {
+    body: JSON.stringify({ code }),
+    headers: {
+      'x-requested-with': 'XmlHttpRequest'
+    },
+    method: 'POST'
+  });
+}
+
 export function getWorkspaceRun(workspaceId, runId) {
   return request(`/api/workspaces/${workspaceId}/runs/${runId}`);
 }

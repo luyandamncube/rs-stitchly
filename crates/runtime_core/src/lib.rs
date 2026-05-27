@@ -17,6 +17,7 @@ use node_registry::NodeRegistry;
 use runtime_adapters::{AdapterError, PortValues, RuntimeAdapters};
 use serde_json::{json, Value};
 use thiserror::Error;
+use tokio::task;
 use tokio::sync::{broadcast, Notify, RwLock};
 use tokio::time::{sleep, Duration};
 use uuid::Uuid;
@@ -567,8 +568,49 @@ impl RuntimeService {
                 }
             }
 
-            match self.adapters.execute(definition, node, &inputs) {
-                Ok(result) => {
+            let adapter_execution = {
+                let adapters = Arc::clone(&self.adapters);
+                let definition = definition.clone();
+                let node = node.clone();
+                let inputs = inputs.clone();
+                task::spawn_blocking(move || adapters.execute(&definition, &node, &inputs))
+            };
+            let cancellation = record.cancellation_notify.notified();
+            tokio::pin!(cancellation);
+            if record.cancellation_requested.load(Ordering::SeqCst) {
+                adapter_execution.abort();
+                self.record_log(
+                    &record,
+                    &run_id,
+                    Some(&node.node_id),
+                    "Cancellation requested while node execution was starting.".to_string(),
+                )
+                .await;
+                self.finalize_run_as_cancelled(&record, &run_id).await;
+                return;
+            }
+
+            let adapter_result = tokio::select! {
+                result = adapter_execution => Some(result),
+                _ = &mut cancellation => None,
+            };
+
+            if adapter_result.is_none() && record.cancellation_requested.load(Ordering::SeqCst) {
+                self.record_log(
+                    &record,
+                    &run_id,
+                    Some(&node.node_id),
+                    "Cancellation requested while node execution was in flight. Marking the run as cancelled.".to_string(),
+                )
+                .await;
+                self.finalize_run_as_cancelled(&record, &run_id).await;
+                return;
+            }
+
+            match adapter_result
+                .expect("adapter result should exist when cancellation did not win the race")
+            {
+                Ok(Ok(result)) => {
                     for log_line in &result.logs {
                         self.record_log(&record, &run_id, Some(&node.node_id), log_line.clone())
                             .await;
@@ -610,12 +652,28 @@ impl RuntimeService {
                         return;
                     }
                 }
-                Err(error) => {
+                Ok(Err(error)) => {
                     self.fail_run(
                         &record,
                         &run_id,
                         Some(&node.node_id),
                         to_run_error_from_adapter(node, error),
+                    )
+                    .await;
+                    return;
+                }
+                Err(error) => {
+                    self.fail_run(
+                        &record,
+                        &run_id,
+                        Some(&node.node_id),
+                        RunErrorSummary {
+                            category: RunErrorCategory::ExecutionError,
+                            message: format!(
+                                "Node `{}` failed: adapter task crashed: {error}",
+                                node.node_id
+                            ),
+                        },
                     )
                     .await;
                     return;
@@ -1362,8 +1420,17 @@ fn is_terminal_run_status(status: &RunStatus) -> bool {
 }
 
 fn to_run_error_from_adapter(node: &WorkflowNode, error: AdapterError) -> RunErrorSummary {
+    let category = match &error {
+        AdapterError::UnsupportedNode(_) => RunErrorCategory::AdapterResolutionError,
+        AdapterError::ConnectionFailed { .. } => RunErrorCategory::ConnectionError,
+        AdapterError::ExecutionFailed { .. }
+        | AdapterError::InvalidConfig { .. }
+        | AdapterError::MissingInput { .. }
+        | AdapterError::TextTypeMismatch { .. } => RunErrorCategory::ExecutionError,
+    };
+
     RunErrorSummary {
-        category: RunErrorCategory::ExecutionError,
+        category,
         message: format!("Node `{}` failed: {error}", node.node_id),
     }
 }

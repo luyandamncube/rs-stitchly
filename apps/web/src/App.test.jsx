@@ -20,11 +20,13 @@ vi.mock('./components/CanvasWorkspace', () => ({
 
 const api = vi.hoisted(() => ({
   cancelWorkspaceRun: vi.fn(),
+  connectWorkspaceGmail: vi.fn(),
   createWorkflow: vi.fn(),
   createWorkspace: vi.fn(),
   deleteWorkflow: vi.fn(),
   getSession: vi.fn(),
   getWorkflow: vi.fn(),
+  getWorkspaceConnections: vi.fn(),
   getWorkspaceRun: vi.fn(),
   getWorkspaceRunEvents: vi.fn(),
   getWorkspaceRunLogs: vi.fn(),
@@ -71,11 +73,13 @@ describe('App platform shell', () => {
     window.history.replaceState({}, '', '/');
     delete window.google;
     api.cancelWorkspaceRun.mockReset();
+    api.connectWorkspaceGmail.mockReset();
     api.createWorkspace.mockReset();
     api.createWorkflow.mockReset();
     api.deleteWorkflow.mockReset();
     api.getSession.mockReset();
     api.getWorkflow.mockReset();
+    api.getWorkspaceConnections.mockReset();
     api.getWorkspaceRun.mockReset();
     api.getWorkspaceRunEvents.mockReset();
     api.getWorkspaceRunLogs.mockReset();
@@ -90,6 +94,7 @@ describe('App platform shell', () => {
     api.getSession.mockResolvedValue(UNAUTHENTICATED_SESSION);
     api.getWorkflowState.mockResolvedValue({ last_opened_workflow_id: null });
     api.getWorkflows.mockResolvedValue({ workflows: [] });
+    api.getWorkspaceConnections.mockResolvedValue({ connections: [] });
     api.getWorkspaceRuns.mockResolvedValue({ runs: [] });
     api.getWorkspaceRun.mockResolvedValue({ run: null });
     api.getWorkspaceRunEvents.mockResolvedValue({ events: [] });
@@ -264,6 +269,46 @@ describe('App platform shell', () => {
     expect(screen.getByRole('button', { name: 'Blank' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Starter' })).toBeInTheDocument();
     expect(await screen.findByText('Text Preview')).toBeInTheDocument();
+  });
+
+  it('opens the integrations popup on click from the collapsed rail', async () => {
+    api.login.mockResolvedValue(AUTHENTICATED_SESSION);
+    api.getWorkspaceConnections.mockResolvedValue({
+      connections: [
+        {
+          workspace_id: 'ws_default',
+          connection_id: 'conn_gmail_ops',
+          connection_kind: 'gmail',
+          display_name: 'Gmail · ops@gmail.com',
+          comment: 'Authorized Gmail sender',
+          auth_scheme: 'oauth2',
+          status: 'active',
+          external_account_label: 'ops@gmail.com',
+          external_account_id: 'google-subject-123',
+          capabilities: { send_email: true },
+          scopes: ['https://www.googleapis.com/auth/gmail.send'],
+          created_at: '2026-05-25T13:43:00Z',
+          updated_at: '2026-05-25T13:43:00Z',
+          last_error_message: null
+        }
+      ]
+    });
+
+    const { container } = render(<App />);
+
+    await screen.findByRole('heading', { name: /log in/i });
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+
+    const integrationsButton = await screen.findByRole('button', { name: 'Integrations' });
+    expect(integrationsButton).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(integrationsButton);
+
+    expect(integrationsButton).toHaveAttribute('aria-expanded', 'true');
+    expect(container.querySelector('.canvas-menu.is-open')).not.toBeNull();
+    expect(screen.getByLabelText('Integrations window')).toBeInTheDocument();
+    expect(await screen.findByText('Gmail · ops@gmail.com')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New integration' })).toBeEnabled();
   });
 
   it('opens the runs popup and shows workspace-scoped run history data', async () => {

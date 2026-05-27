@@ -13,6 +13,13 @@ Use this file to capture important product and technical decisions in a compact 
 
 ## Entries
 
+### 2026-05-27 - Venture evaluation is a first-class docs framework and future Stitchly workflow candidate
+
+- status: accepted
+- context: the product is increasingly being treated as both a business operating system and a backbone for future public utility or SaaS ideas, but the repo did not yet have a structured way to capture, compare, and prioritize those ideas before build work starts.
+- decision: add a docs-first venture framework under `docs/05_venture/` with fixed idea records, a weighted scoring rubric, deterministic recommendation rules, a portfolio backlog, and seeded example evaluations.
+- consequence: future idea selection should use the shared framework instead of ad hoc brainstorming, and the docs can later be translated into a reusable Stitchly workflow/template without redefining the underlying method.
+
 ### 2026-05-27 - Gmail is the first real workspace connector and stores OAuth tokens separately
 
 - status: accepted

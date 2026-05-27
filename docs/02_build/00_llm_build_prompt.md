@@ -121,6 +121,12 @@ Use these docs for these responsibilities:
 - `docs/00_foundation/24_workflow_duckdb_storage_spec.md`
   Draft v1 direction for one DuckDB file per workflow, workflow-root bootstrap shape, and the first workflow-local table schemas.
 
+- `docs/05_venture/00_idea_framework.md`
+  Docs-first operating loop for evaluating new product ideas that Stitchly may later support as a backbone or business-OS layer.
+
+- `docs/05_venture/02_scoring_rubric.md`
+  Weighted scoring system, confidence model, and decision criteria for comparing candidate ideas.
+
 - `docs/04_execution/01_node_io_and_execution_contracts.md`
   Shared node input/output rules, v1 fan-out behavior, and the running per-node execution contract table.
 

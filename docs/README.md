@@ -19,6 +19,7 @@ The goal is to document:
 - Build prompt and implementation-guidance docs live under `02_build/` and use numbered filenames starting at `00_...`.
 - UI-specific product and interaction docs live under `03_ui/` and use numbered filenames starting at `00_...`.
 - Execution-specific runtime contract docs live under `04_execution/` and use numbered filenames starting at `01_...`.
+- Venture and idea-evaluation docs live under `05_venture/` and use numbered filenames starting at `00_...`.
 - When a major product or technical direction changes, update the relevant doc and add an entry to `00_foundation/11_decision_log.md`.
 - Prefer extending an existing numbered doc before creating a new one for overlapping content.
 
@@ -74,3 +75,15 @@ The goal is to document:
 ## Build
 
 - `02_build/00_llm_build_prompt.md`: reusable implementation prompt for coding LLMs, with doc source mapping and first-pass build scope
+
+## Venture
+
+- `05_venture/README.md`: index for the venture-evaluation framework and seeded idea records
+- `05_venture/00_idea_framework.md`: operating loop for capturing, normalizing, scoring, recommending, and tracking ideas
+- `05_venture/01_idea_record_template.md`: fixed per-idea schema and output format for idea records
+- `05_venture/02_scoring_rubric.md`: weighted scoring model, confidence rules, and scoring anchors
+- `05_venture/03_recommendation_rules.md`: deterministic recommendation thresholds, gating rules, and next-action mapping
+- `05_venture/04_portfolio_backlog.md`: portfolio tracker for scored ideas and current next actions
+- `05_venture/20_idea_savr.md`: seeded example evaluation for Savr
+- `05_venture/21_idea_waterwatch.md`: seeded example evaluation for WaterWatch
+- `05_venture/22_idea_gridza.md`: seeded example evaluation for GridZA

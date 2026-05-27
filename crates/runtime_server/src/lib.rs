@@ -1044,21 +1044,15 @@ async fn hydrate_send_email_runtime_delivery(
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .unwrap_or("default_mailer");
-
-        if selected_connection_id == "default_mailer" {
+        let Some(connection) = resolve_send_email_workspace_connection(
+            state,
+            user_id,
+            workspace_id,
+            selected_connection_id,
+        )
+        .await? else {
             continue;
-        }
-
-        let connection = state
-            .platform
-            .get_workspace_gmail_connection(user_id, workspace_id, selected_connection_id)
-            .map_err(ApiError::internal)?
-            .ok_or_else(|| {
-                ApiError::bad_request(format!(
-                    "Send Email node `{}` references connection `{selected_connection_id}`, but no active Gmail integration with that ID exists in workspace `{workspace_id}`.",
-                    node.node_id
-                ))
-            })?;
+        };
 
         let runtime_delivery =
             resolve_gmail_runtime_delivery_context(state.google_auth.as_ref(), &connection).await?;
@@ -1082,6 +1076,52 @@ async fn hydrate_send_email_runtime_delivery(
     }
 
     Ok(())
+}
+
+async fn resolve_send_email_workspace_connection(
+    state: &AppState,
+    user_id: &str,
+    workspace_id: &str,
+    selected_connection_id: &str,
+) -> Result<Option<platform::WorkspaceGmailConnection>, ApiError> {
+    if selected_connection_id == "default_mailer" {
+        let connections = state
+            .platform
+            .list_workspace_connections(user_id, workspace_id)
+            .map_err(ApiError::internal)?;
+        let email_capable_connections: Vec<_> = connections
+            .connections
+            .into_iter()
+            .filter(|connection| {
+                connection.status == "active"
+                    && (connection.capabilities.get("send_email")
+                        == Some(&serde_json::Value::Bool(true))
+                        || connection.connection_kind == "gmail")
+            })
+            .collect();
+
+        if email_capable_connections.len() != 1 {
+            return Ok(None);
+        }
+
+        let connection_id = email_capable_connections[0].connection_id.clone();
+        return state
+            .platform
+            .get_workspace_gmail_connection(user_id, workspace_id, &connection_id)
+            .map_err(ApiError::internal);
+    }
+
+    let connection = state
+        .platform
+        .get_workspace_gmail_connection(user_id, workspace_id, selected_connection_id)
+        .map_err(ApiError::internal)?;
+
+    match connection {
+        Some(connection) => Ok(Some(connection)),
+        None => Err(ApiError::bad_request(format!(
+            "Send Email references connection `{selected_connection_id}`, but no active Gmail integration with that ID exists in workspace `{workspace_id}`."
+        ))),
+    }
 }
 
 async fn resolve_gmail_runtime_delivery_context(
@@ -1869,6 +1909,114 @@ mod tests {
                 .and_then(|value| value.get("send_as_email"))
                 .and_then(serde_json::Value::as_str),
             Some("ops@gmail.com")
+        );
+    }
+
+    #[tokio::test]
+    async fn default_workspace_mailer_uses_single_active_gmail_integration() {
+        let platform = PlatformStore::for_tests().expect("platform store");
+        let workspace = platform
+            .create_workspace("usr_builder", "Default Mailer Workspace")
+            .expect("workspace");
+        let connection = platform
+            .upsert_gmail_connection(
+                "usr_builder",
+                &workspace.workspace_id,
+                &GoogleIdentityProfile {
+                    subject: "google-default-mailer".to_string(),
+                    email: "default@gmail.com".to_string(),
+                    email_verified: true,
+                    display_name: "Default Sender".to_string(),
+                },
+                &GoogleConnectionTokens {
+                    access_token: "default-mailer-token".to_string(),
+                    refresh_token: None,
+                    token_type: Some("Bearer".to_string()),
+                    scopes: vec![
+                        "openid".to_string(),
+                        "email".to_string(),
+                        "profile".to_string(),
+                        "https://www.googleapis.com/auth/gmail.send".to_string(),
+                    ],
+                    expires_at: None,
+                },
+            )
+            .expect("gmail connection");
+        let state = AppState {
+            runtime: runtime_core::RuntimeService::default(),
+            platform: platform.clone(),
+            google_auth: None,
+        };
+        let mut workflow = WorkflowDefinition {
+            schema_version: workflow_schema::CURRENT_SCHEMA_VERSION,
+            workflow_id: "wf_default_mailer".to_string(),
+            version: 1,
+            name: "Default Mailer".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "input_text".to_string(),
+                    type_id: "text_input".to_string(),
+                    definition_version: 1,
+                    label: Some("Text Input".to_string()),
+                    config: json!({
+                        "text": "Test body"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "send_email_notification".to_string(),
+                    type_id: "send_email".to_string(),
+                    definition_version: 1,
+                    label: Some("Send Email".to_string()),
+                    config: json!({
+                        "to": "alerts@stitchly.dev",
+                        "subject": "Default workspace mailer test",
+                        "body_mode": "input",
+                        "connection_id": "default_mailer"
+                    }),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![WorkflowEdge {
+                edge_id: "edge_body".to_string(),
+                source_node_id: "input_text".to_string(),
+                source_port_id: "text".to_string(),
+                target_node_id: "send_email_notification".to_string(),
+                target_port_id: "body".to_string(),
+            }],
+            metadata: Default::default(),
+        };
+
+        hydrate_send_email_runtime_delivery(
+            &state,
+            "usr_builder",
+            &workspace.workspace_id,
+            &mut workflow,
+        )
+        .await
+        .expect("workflow hydrated");
+
+        let send_email = workflow
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "send_email_notification")
+            .expect("send email node");
+        assert_eq!(
+            send_email
+                .config
+                .get("runtime_delivery")
+                .and_then(|value| value.get("connection_id"))
+                .and_then(serde_json::Value::as_str),
+            Some(connection.connection_id.as_str())
+        );
+        assert_eq!(
+            send_email
+                .config
+                .get("runtime_delivery")
+                .and_then(|value| value.get("access_token"))
+                .and_then(serde_json::Value::as_str),
+            Some("default-mailer-token")
         );
     }
 

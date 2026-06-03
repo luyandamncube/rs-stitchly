@@ -13,6 +13,13 @@ Use this file to capture important product and technical decisions in a compact 
 
 ## Entries
 
+### 2026-05-27 - Venture evaluation should include sourcing and pre-scoring before full idea scoring
+
+- status: accepted
+- context: the new venture framework can already compare and rank ideas once they exist, but it still needed a repeatable method for finding new ideas and filtering them before full documentation.
+- decision: extend `docs/05_venture/` with an idea-generation loop, a source catalog, and a lightweight pre-score gate that sits before the full rubric.
+- consequence: future idea work should move through `signal -> variants -> pre-score -> full score` instead of jumping directly from brainstorm to full evaluation.
+
 ### 2026-05-27 - Venture evaluation is a first-class docs framework and future Stitchly workflow candidate
 
 - status: accepted

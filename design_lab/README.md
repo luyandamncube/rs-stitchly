@@ -28,6 +28,8 @@ Structure:
   Canvas popup run-history and logs-window studies.
 - `integrations/`
   Canvas popup connector and integration-management studies.
+- `data_sources/`
+  Canvas popup data catalog and DuckDB source/sink browsing studies.
 
 Current convention:
 
@@ -48,6 +50,9 @@ Current convention:
 
 - `integrations/v1/00_xxx/`
   Ordered connector and integration popup studies for the first canvas-integrations pass.
+
+- `data_sources/v1/00_xxx/`
+  Ordered data-source popup studies for the first canvas-data pass.
 
 How to use:
 

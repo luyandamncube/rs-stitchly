@@ -4,11 +4,13 @@ use api_contract::{
     AuthSessionResponse, ConnectionsResponse, CreateRunRequest, CreateWorkflowRequest,
     CreateWorkspaceRequest, DeleteWorkflowResponse, ErrorResponse, EventTarget, EventTargetKind,
     GoogleAuthCodeRequest, LogLevel, LoginRequest, NodeDefinitionsResponse, NodeRunStatus,
-    RunErrorCategory, RunErrorSummary, RunEvent, RunEventType, RunEventsResponse,
-    RunLogsResponse, RunSnapshot, RunStatus, UpdateWorkflowRequest, UpdateWorkflowStateRequest,
+    RunErrorCategory, RunErrorSummary, RunEvent, RunEventType, RunEventsResponse, RunLogsResponse,
+    RunSnapshot, RunStatus, UpdateWorkflowRequest, UpdateWorkflowStateRequest,
     ValidateWorkflowRequest, ValidateWorkflowResponse, WorkflowListResponse, WorkflowResponse,
-    WorkflowStateResponse, WorkspaceConnectionResponse, WorkspaceConnectionsResponse,
-    WorkspaceListResponse, WorkspaceResponse, WorkspaceRunResponse, WorkspaceRunsResponse,
+    WorkflowStateResponse, WorkspaceCatalogQueryRequest, WorkspaceCatalogQueryResponse,
+    WorkspaceCatalogResponse, WorkspaceCatalogSchemaResponse, WorkspaceCatalogTableResponse,
+    WorkspaceConnectionResponse, WorkspaceConnectionsResponse, WorkspaceListResponse,
+    WorkspaceResponse, WorkspaceRunResponse, WorkspaceRunsResponse,
 };
 use axum::{
     extract::{Path, State},
@@ -137,6 +139,22 @@ pub fn app(runtime: RuntimeService, platform: PlatformStore) -> Router {
         .route(
             "/api/workspaces/:workspace_id/workflow-state",
             get(get_workflow_state).put(update_workflow_state),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/catalog",
+            get(list_workspace_catalogs),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/catalog/:workflow_id/schemas/:schema_name",
+            get(get_workspace_catalog_schema),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/catalog/:workflow_id/schemas/:schema_name/tables/:table_name",
+            get(get_workspace_catalog_table),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/catalog/:workflow_id/query",
+            post(run_workspace_catalog_query),
         )
         .route(
             "/api/workspaces/:workspace_id/runs",
@@ -500,7 +518,9 @@ async fn connect_workspace_gmail(
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok())
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| ApiError::bad_request("Google integration origin is missing.".to_string()))?;
+        .ok_or_else(|| {
+            ApiError::bad_request("Google integration origin is missing.".to_string())
+        })?;
 
     let exchange = google_auth
         .exchange_code(origin, &request.code)
@@ -644,6 +664,95 @@ async fn update_workflow_state(
         )
         .map_err(map_workflow_persistence_error)?;
     Ok(Json(state_response))
+}
+
+async fn list_workspace_catalogs(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<String>,
+) -> Result<Json<WorkspaceCatalogResponse>, ApiError> {
+    let session = require_session(&state, &headers)?;
+    let catalog = state
+        .platform
+        .list_workspace_catalogs(&session.user_id, &workspace_id)
+        .map_err(map_workflow_persistence_error)?;
+    Ok(Json(catalog))
+}
+
+async fn get_workspace_catalog_schema(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((workspace_id, workflow_id, schema_name)): Path<(String, String, String)>,
+) -> Result<Json<WorkspaceCatalogSchemaResponse>, ApiError> {
+    let session = require_session(&state, &headers)?;
+    let schema = state
+        .platform
+        .get_workspace_catalog_schema(
+            &session.user_id,
+            &workspace_id,
+            &workflow_id,
+            &schema_name,
+        )
+        .map_err(map_workflow_persistence_error)?
+        .ok_or_else(|| {
+            ApiError::not_found(format!(
+                "Schema `{schema_name}` was not found in workflow `{workflow_id}` for workspace `{workspace_id}`."
+            ))
+        })?;
+    Ok(Json(schema))
+}
+
+async fn get_workspace_catalog_table(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((workspace_id, workflow_id, schema_name, table_name)): Path<(
+        String,
+        String,
+        String,
+        String,
+    )>,
+) -> Result<Json<WorkspaceCatalogTableResponse>, ApiError> {
+    let session = require_session(&state, &headers)?;
+    let table = state
+        .platform
+        .get_workspace_catalog_table(
+            &session.user_id,
+            &workspace_id,
+            &workflow_id,
+            &schema_name,
+            &table_name,
+        )
+        .map_err(map_workflow_persistence_error)?
+        .ok_or_else(|| {
+            ApiError::not_found(format!(
+                "Table `{schema_name}.{table_name}` was not found in workflow `{workflow_id}` for workspace `{workspace_id}`."
+            ))
+    })?;
+    Ok(Json(table))
+}
+
+async fn run_workspace_catalog_query(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((workspace_id, workflow_id)): Path<(String, String)>,
+    Json(request): Json<WorkspaceCatalogQueryRequest>,
+) -> Result<Json<WorkspaceCatalogQueryResponse>, ApiError> {
+    let session = require_session(&state, &headers)?;
+    let response = state
+        .platform
+        .run_workspace_catalog_query(
+            &session.user_id,
+            &workspace_id,
+            &workflow_id,
+            request.query.as_str(),
+        )
+        .map_err(map_catalog_query_error)?
+        .ok_or_else(|| {
+            ApiError::not_found(format!(
+                "Workflow `{workflow_id}` was not found for workspace `{workspace_id}`."
+            ))
+        })?;
+    Ok(Json(response))
 }
 
 async fn list_workspace_runs(
@@ -1050,7 +1159,8 @@ async fn hydrate_send_email_runtime_delivery(
             workspace_id,
             selected_connection_id,
         )
-        .await? else {
+        .await?
+        else {
             continue;
         };
 
@@ -1060,15 +1170,12 @@ async fn hydrate_send_email_runtime_delivery(
         if !node.config.is_object() {
             node.config = serde_json::Value::Object(Default::default());
         }
-        let config = node
-            .config
-            .as_object_mut()
-            .ok_or_else(|| {
-                ApiError::bad_request(format!(
-                    "Send Email node `{}` must use an object config.",
-                    node.node_id
-                ))
-            })?;
+        let config = node.config.as_object_mut().ok_or_else(|| {
+            ApiError::bad_request(format!(
+                "Send Email node `{}` must use an object config.",
+                node.node_id
+            ))
+        })?;
         config.insert(
             "runtime_delivery".to_string(),
             serde_json::to_value(&runtime_delivery).map_err(ApiError::internal)?,
@@ -1190,14 +1297,13 @@ async fn resolve_gmail_runtime_delivery_context(
     })
 }
 
-fn ensure_gmail_send_scope(connection: &platform::WorkspaceGmailConnection) -> Result<(), ApiError> {
+fn ensure_gmail_send_scope(
+    connection: &platform::WorkspaceGmailConnection,
+) -> Result<(), ApiError> {
     ensure_gmail_send_scope_values(&connection.connection_id, &connection.scopes)
 }
 
-fn ensure_gmail_send_scope_values(
-    connection_id: &str,
-    scopes: &[String],
-) -> Result<(), ApiError> {
+fn ensure_gmail_send_scope_values(connection_id: &str, scopes: &[String]) -> Result<(), ApiError> {
     if scopes
         .iter()
         .any(|scope| scope == "https://www.googleapis.com/auth/gmail.send")
@@ -1218,8 +1324,7 @@ fn google_access_token_is_usable(expires_at: Option<&str>) -> bool {
         return false;
     };
 
-    expires_at.with_timezone(&chrono::Utc)
-        > (chrono::Utc::now() + chrono::Duration::seconds(60))
+    expires_at.with_timezone(&chrono::Utc) > (chrono::Utc::now() + chrono::Duration::seconds(60))
 }
 
 fn map_google_gmail_refresh_error(error: GoogleAuthError) -> ApiError {
@@ -1574,6 +1679,19 @@ fn map_workflow_persistence_error(error: anyhow::Error) -> ApiError {
     }
 }
 
+fn map_catalog_query_error(error: anyhow::Error) -> ApiError {
+    let message = error.to_string();
+    if message.contains("Enter a SQL query")
+        || message.contains("Only a single read-only query")
+        || message.contains("Only read-only SELECT queries")
+        || message.contains("DuckDB query failed")
+    {
+        ApiError::bad_request(message)
+    } else {
+        map_workflow_persistence_error(error)
+    }
+}
+
 fn map_google_auth_error(error: GoogleAuthError) -> ApiError {
     match error {
         GoogleAuthError::InvalidCode => {
@@ -1582,9 +1700,9 @@ fn map_google_auth_error(error: GoogleAuthError) -> ApiError {
         GoogleAuthError::InvalidIdentity => {
             ApiError::bad_request("Google did not return a usable identity profile.".to_string())
         }
-        GoogleAuthError::TokenRefreshRejected => ApiError::conflict(
-            "Google rejected the stored token refresh request.".to_string(),
-        ),
+        GoogleAuthError::TokenRefreshRejected => {
+            ApiError::conflict("Google rejected the stored token refresh request.".to_string())
+        }
         GoogleAuthError::Transport(error) => ApiError::internal(error),
     }
 }
@@ -1608,9 +1726,7 @@ mod tests {
     use workflow_schema::{NodePosition, WorkflowDefinition, WorkflowEdge, WorkflowNode};
 
     use super::{app, hydrate_send_email_runtime_delivery, AppState};
-    use crate::platform::{
-        GoogleConnectionTokens, GoogleIdentityProfile, PlatformStore,
-    };
+    use crate::platform::{GoogleConnectionTokens, GoogleIdentityProfile, PlatformStore};
 
     #[tokio::test]
     async fn validate_endpoint_accepts_fixture_workflow() {
@@ -2191,6 +2307,193 @@ mod tests {
         assert_eq!(
             updated.definition.description.as_deref(),
             Some("Updated in round-trip test.")
+        );
+    }
+
+    #[tokio::test]
+    async fn workspace_catalog_routes_return_tree_and_table_grains() {
+        let platform = PlatformStore::for_tests().expect("platform store");
+        let router = app(runtime_core::RuntimeService::default(), platform);
+
+        let login_request = Request::builder()
+            .method("POST")
+            .uri("/api/auth/login")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&json!({
+                    "email": "builder@stitchly.dev",
+                    "password": "stitchly"
+                }))
+                .expect("login request body"),
+            ))
+            .expect("request builds");
+        let login_response = router
+            .clone()
+            .oneshot(login_request)
+            .await
+            .expect("login response");
+        let cookie = login_response
+            .headers()
+            .get("set-cookie")
+            .expect("set-cookie header")
+            .to_str()
+            .expect("header utf8")
+            .split(';')
+            .next()
+            .expect("cookie pair")
+            .to_string();
+
+        let create_workspace_request = Request::builder()
+            .method("POST")
+            .uri("/api/workspaces")
+            .header("content-type", "application/json")
+            .header("cookie", &cookie)
+            .body(Body::from(
+                serde_json::to_vec(&json!({ "name": "Catalog Routes" })).expect("workspace body"),
+            ))
+            .expect("request builds");
+        let create_workspace_response = router
+            .clone()
+            .oneshot(create_workspace_request)
+            .await
+            .expect("workspace response");
+        let workspace_payload = create_workspace_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let workspace: api_contract::WorkspaceResponse =
+            serde_json::from_slice(&workspace_payload).expect("workspace payload");
+
+        let mut workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+        workflow.name = "Catalog Route Workflow".to_string();
+
+        let create_workflow_request = Request::builder()
+            .method("POST")
+            .uri(format!(
+                "/api/workspaces/{}/workflows",
+                workspace.workspace.workspace_id
+            ))
+            .header("content-type", "application/json")
+            .header("cookie", &cookie)
+            .body(Body::from(
+                serde_json::to_vec(&json!({ "workflow": workflow })).expect("workflow body"),
+            ))
+            .expect("request builds");
+        let create_workflow_response = router
+            .clone()
+            .oneshot(create_workflow_request)
+            .await
+            .expect("workflow response");
+        let create_workflow_body = create_workflow_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let created: api_contract::WorkflowResponse =
+            serde_json::from_slice(&create_workflow_body).expect("workflow payload");
+
+        let catalog_request = Request::builder()
+            .method("GET")
+            .uri(format!(
+                "/api/workspaces/{}/catalog",
+                workspace.workspace.workspace_id
+            ))
+            .header("cookie", &cookie)
+            .body(Body::empty())
+            .expect("request builds");
+        let catalog_response = router
+            .clone()
+            .oneshot(catalog_request)
+            .await
+            .expect("catalog response");
+        assert_eq!(catalog_response.status(), StatusCode::OK);
+        let catalog_body = catalog_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let catalog: api_contract::WorkspaceCatalogResponse =
+            serde_json::from_slice(&catalog_body).expect("catalog payload");
+        assert_eq!(catalog.catalogs.len(), 1);
+        assert!(catalog.catalogs[0]
+            .schemas
+            .iter()
+            .any(|schema| schema.schema_name == "runs"));
+
+        let table_request = Request::builder()
+            .method("GET")
+            .uri(format!(
+                "/api/workspaces/{}/catalog/{}/schemas/runs/tables/workflow_runs",
+                workspace.workspace.workspace_id, created.workflow.workflow_id
+            ))
+            .header("cookie", &cookie)
+            .body(Body::empty())
+            .expect("request builds");
+        let table_response = router
+            .clone()
+            .oneshot(table_request)
+            .await
+            .expect("table response");
+        assert_eq!(table_response.status(), StatusCode::OK);
+        let table_body = table_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let table: api_contract::WorkspaceCatalogTableResponse =
+            serde_json::from_slice(&table_body).expect("table payload");
+        assert_eq!(table.schema_name, "runs");
+        assert_eq!(table.table_name, "workflow_runs");
+        assert!(table
+            .columns
+            .iter()
+            .any(|column| column.column_name == "run_id"));
+
+        let query_request = Request::builder()
+            .method("POST")
+            .uri(format!(
+                "/api/workspaces/{}/catalog/{}/query",
+                workspace.workspace.workspace_id, created.workflow.workflow_id
+            ))
+            .header("content-type", "application/json")
+            .header("cookie", &cookie)
+            .body(Body::from(
+                serde_json::to_vec(&json!({
+                    "query": "select run_id, workflow_id, status from runs.workflow_runs"
+                }))
+                .expect("query body"),
+            ))
+            .expect("request builds");
+        let query_response = router
+            .clone()
+            .oneshot(query_request)
+            .await
+            .expect("query response");
+        assert_eq!(query_response.status(), StatusCode::OK);
+        let query_body = query_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let query: api_contract::WorkspaceCatalogQueryResponse =
+            serde_json::from_slice(&query_body).expect("query payload");
+        assert_eq!(query.workflow_id, created.workflow.workflow_id);
+        assert_eq!(
+            query
+                .columns
+                .iter()
+                .map(|column| column.column_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["run_id", "workflow_id", "status"]
         );
     }
 

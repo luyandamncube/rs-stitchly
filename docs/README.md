@@ -84,6 +84,9 @@ The goal is to document:
 - `05_venture/02_scoring_rubric.md`: weighted scoring model, confidence rules, and scoring anchors
 - `05_venture/03_recommendation_rules.md`: deterministic recommendation thresholds, gating rules, and next-action mapping
 - `05_venture/04_portfolio_backlog.md`: portfolio tracker for scored ideas and current next actions
+- `05_venture/05_idea_generation_loop.md`: sourcing loop for turning recurring pain and market signals into candidate ideas
+- `05_venture/06_idea_source_catalog.md`: repeatable source map for discovering venture signals and capturing them consistently
+- `05_venture/07_pre_score_template.md`: lightweight filter used before a full rubric pass
 - `05_venture/20_idea_savr.md`: seeded example evaluation for Savr
 - `05_venture/21_idea_waterwatch.md`: seeded example evaluation for WaterWatch
 - `05_venture/22_idea_gridza.md`: seeded example evaluation for GridZA

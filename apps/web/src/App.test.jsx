@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { vi } from 'vitest';
 import App from './App';
 
@@ -26,6 +26,9 @@ const api = vi.hoisted(() => ({
   deleteWorkflow: vi.fn(),
   getSession: vi.fn(),
   getWorkflow: vi.fn(),
+  getWorkspaceCatalog: vi.fn(),
+  getWorkspaceCatalogSchema: vi.fn(),
+  getWorkspaceCatalogTable: vi.fn(),
   getWorkspaceConnections: vi.fn(),
   getWorkspaceRun: vi.fn(),
   getWorkspaceRunEvents: vi.fn(),
@@ -36,6 +39,7 @@ const api = vi.hoisted(() => ({
   login: vi.fn(),
   loginWithGoogleCode: vi.fn(),
   logout: vi.fn(),
+  runWorkspaceCatalogQuery: vi.fn(),
   updateWorkflow: vi.fn(),
   updateWorkflowState: vi.fn()
 }));
@@ -67,6 +71,188 @@ const AUTHENTICATED_SESSION = {
   ]
 };
 
+const AUTHENTICATED_MULTI_WORKSPACE_SESSION = {
+  ...AUTHENTICATED_SESSION,
+  workspaces: [
+    ...AUTHENTICATED_SESSION.workspaces,
+    {
+      workspace_id: 'ws_secondary',
+      slug: 'warehouse-workspace',
+      name: 'Warehouse Workspace',
+      role: 'owner'
+    }
+  ]
+};
+
+const WORKSPACE_CATALOG_RESPONSE = {
+  catalogs: [
+    {
+      workflow_id: 'wf_text_preview',
+      workflow_name: 'Text Preview',
+      database_name: 'workflow.duckdb',
+      schemas: [
+        {
+          schema_name: 'runs',
+          table_count: 2,
+          tables: [
+            {
+              table_name: 'workflow_runs',
+              table_type: 'BASE TABLE',
+              column_count: 3
+            },
+            {
+              table_name: 'node_runs',
+              table_type: 'BASE TABLE',
+              column_count: 2
+            }
+          ]
+        },
+        {
+          schema_name: 'staging',
+          table_count: 0,
+          tables: []
+        },
+        {
+          schema_name: 'tables',
+          table_count: 0,
+          tables: []
+        },
+        {
+          schema_name: 'outputs',
+          table_count: 1,
+          tables: [
+            {
+              table_name: 'node_outputs',
+              table_type: 'BASE TABLE',
+              column_count: 2
+            }
+          ]
+        }
+      ]
+    }
+  ]
+};
+
+const SECONDARY_WORKSPACE_CATALOG_RESPONSE = {
+  catalogs: [
+    {
+      workflow_id: 'wf_warehouse_ops',
+      workflow_name: 'Warehouse Ops',
+      database_name: 'workflow.duckdb',
+      schemas: [
+        {
+          schema_name: 'runs',
+          table_count: 1,
+          tables: [
+            {
+              table_name: 'workflow_runs',
+              table_type: 'BASE TABLE',
+              column_count: 3
+            }
+          ]
+        },
+        {
+          schema_name: 'outputs',
+          table_count: 1,
+          tables: [
+            {
+              table_name: 'node_outputs',
+              table_type: 'BASE TABLE',
+              column_count: 2
+            }
+          ]
+        }
+      ]
+    }
+  ]
+};
+
+const WORKSPACE_CATALOG_TABLE_RESPONSE = {
+  workflow_id: 'wf_text_preview',
+  workflow_name: 'Text Preview',
+  database_name: 'workflow.duckdb',
+  schema_name: 'runs',
+  table_name: 'workflow_runs',
+  columns: [
+    {
+      column_name: 'run_id',
+      data_type: 'VARCHAR',
+      nullable: false,
+      description: null
+    },
+    {
+      column_name: 'workflow_id',
+      data_type: 'VARCHAR',
+      nullable: false,
+      description: null
+    },
+    {
+      column_name: 'status',
+      data_type: 'VARCHAR',
+      nullable: false,
+      description: null
+    }
+  ],
+  sample_rows: [['run_1', 'wf_text_preview', 'succeeded']]
+};
+
+const WORKSPACE_CATALOG_NODE_RUNS_TABLE_RESPONSE = {
+  workflow_id: 'wf_text_preview',
+  workflow_name: 'Text Preview',
+  database_name: 'workflow.duckdb',
+  schema_name: 'runs',
+  table_name: 'node_runs',
+  columns: [
+    {
+      column_name: 'run_id',
+      data_type: 'VARCHAR',
+      nullable: false,
+      description: null
+    },
+    {
+      column_name: 'node_id',
+      data_type: 'VARCHAR',
+      nullable: false,
+      description: null
+    },
+    {
+      column_name: 'created_at',
+      data_type: 'VARCHAR',
+      nullable: false,
+      description: null
+    },
+    {
+      column_name: 'updated_at',
+      data_type: 'VARCHAR',
+      nullable: false,
+      description: null
+    }
+  ],
+  sample_rows: []
+};
+
+const WORKSPACE_CATALOG_QUERY_RESPONSE = {
+  workflow_id: 'wf_text_preview',
+  workflow_name: 'Text Preview',
+  database_name: 'workflow.duckdb',
+  query: 'SELECT run_id, workflow_id, status\nFROM runs.workflow_runs\nLIMIT 1000',
+  columns: [
+    {
+      column_name: 'run_id',
+      data_type: 'VARCHAR'
+    },
+    {
+      column_name: 'workflow_id',
+      data_type: 'VARCHAR'
+    },
+    {
+      column_name: 'status',
+      data_type: 'VARCHAR'
+    }
+  ],
+  rows: [['run_1', 'wf_text_preview', 'succeeded']]
+};
+
 describe('App platform shell', () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -79,6 +265,9 @@ describe('App platform shell', () => {
     api.deleteWorkflow.mockReset();
     api.getSession.mockReset();
     api.getWorkflow.mockReset();
+    api.getWorkspaceCatalog.mockReset();
+    api.getWorkspaceCatalogSchema.mockReset();
+    api.getWorkspaceCatalogTable.mockReset();
     api.getWorkspaceConnections.mockReset();
     api.getWorkspaceRun.mockReset();
     api.getWorkspaceRunEvents.mockReset();
@@ -89,10 +278,27 @@ describe('App platform shell', () => {
     api.login.mockReset();
     api.loginWithGoogleCode.mockReset();
     api.logout.mockReset();
+    api.runWorkspaceCatalogQuery.mockReset();
     api.updateWorkflow.mockReset();
     api.updateWorkflowState.mockReset();
     api.getSession.mockResolvedValue(UNAUTHENTICATED_SESSION);
     api.getWorkflowState.mockResolvedValue({ last_opened_workflow_id: null });
+    api.getWorkspaceCatalog.mockImplementation(async (workspaceId) => {
+      if (workspaceId === 'ws_secondary') {
+        return SECONDARY_WORKSPACE_CATALOG_RESPONSE;
+      }
+
+      return WORKSPACE_CATALOG_RESPONSE;
+    });
+    api.getWorkspaceCatalogSchema.mockResolvedValue({
+      workflow_id: 'wf_text_preview',
+      workflow_name: 'Text Preview',
+      database_name: 'workflow.duckdb',
+      schema_name: 'runs',
+      tables: WORKSPACE_CATALOG_RESPONSE.catalogs[0].schemas[0].tables
+    });
+    api.getWorkspaceCatalogTable.mockResolvedValue(WORKSPACE_CATALOG_TABLE_RESPONSE);
+    api.runWorkspaceCatalogQuery.mockResolvedValue(WORKSPACE_CATALOG_QUERY_RESPONSE);
     api.getWorkflows.mockResolvedValue({ workflows: [] });
     api.getWorkspaceConnections.mockResolvedValue({ connections: [] });
     api.getWorkspaceRuns.mockResolvedValue({ runs: [] });
@@ -309,6 +515,211 @@ describe('App platform shell', () => {
     expect(screen.getByLabelText('Integrations window')).toBeInTheDocument();
     expect(await screen.findByText('Gmail · ops@gmail.com')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'New integration' })).toBeEnabled();
+  });
+
+  it('opens the data sources popup on click from the collapsed rail', async () => {
+    api.login.mockResolvedValue(AUTHENTICATED_MULTI_WORKSPACE_SESSION);
+
+    const { container } = render(<App />);
+
+    await screen.findByRole('heading', { name: /log in/i });
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+
+    const dataButton = await screen.findByRole('button', { name: 'Data' });
+    expect(dataButton).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(dataButton);
+
+    expect(dataButton).toHaveAttribute('aria-expanded', 'true');
+    expect(container.querySelector('.canvas-menu.is-open')).not.toBeNull();
+    expect(screen.getByLabelText('Data sources window')).toBeInTheDocument();
+    expect(screen.getByText('Catalog Tree')).toBeInTheDocument();
+    expect(await screen.findByText('default-workspace · workflow.duckdb')).toBeInTheDocument();
+    expect(screen.getByText('warehouse-workspace · workflow.duckdb')).toBeInTheDocument();
+    expect(screen.getByText('runs')).toBeInTheDocument();
+    expect(screen.getByText('workflow_runs')).toBeInTheDocument();
+    expect(screen.getByText('SQL Editor')).toBeInTheDocument();
+    expect(screen.getByRole('separator', { name: 'Resize query editor' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Sample Data' })).toBeDisabled();
+    await waitFor(() => {
+      expect(api.getWorkspaceCatalog).toHaveBeenCalledWith('ws_default');
+      expect(api.getWorkspaceCatalog).toHaveBeenCalledWith('ws_secondary');
+      expect(api.getWorkspaceCatalogSchema).toHaveBeenCalledWith(
+        'ws_default',
+        'wf_text_preview',
+        'runs'
+      );
+    });
+    expect(api.getWorkspaceCatalogTable).not.toHaveBeenCalled();
+
+    const tree = screen.getByRole('tree', { name: 'Catalog hierarchy' });
+    const collapseSchemaButton = within(tree).getByRole('button', {
+      name: 'Collapse schema runs'
+    });
+    fireEvent.click(collapseSchemaButton);
+    expect(within(tree).queryByText('workflow_runs')).toBeNull();
+
+    const expandSchemaButton = within(tree).getByRole('button', {
+      name: 'Expand schema runs'
+    });
+    fireEvent.click(expandSchemaButton);
+    expect(within(tree).getByText('workflow_runs')).toBeInTheDocument();
+  });
+
+  it('updates the SQL editor for a selected table and runs edited preview queries', async () => {
+    api.login.mockResolvedValue(AUTHENTICATED_SESSION);
+    api.runWorkspaceCatalogQuery
+      .mockResolvedValueOnce(WORKSPACE_CATALOG_QUERY_RESPONSE)
+      .mockResolvedValueOnce({
+        workflow_id: 'wf_text_preview',
+        workflow_name: 'Text Preview',
+        database_name: 'workflow.duckdb',
+        query: 'SELECT status\nFROM runs.workflow_runs\nLIMIT 1000',
+        columns: [
+          {
+            column_name: 'status',
+            data_type: 'VARCHAR'
+          }
+        ],
+        rows: [['succeeded']]
+      });
+
+    render(<App />);
+
+    await screen.findByRole('heading', { name: /log in/i });
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Data' }));
+
+    const tree = await screen.findByRole('tree', { name: 'Catalog hierarchy' });
+    fireEvent.click(within(tree).getByRole('button', { name: 'workflow_runs' }));
+
+    await waitFor(() => {
+      expect(api.getWorkspaceCatalogTable).toHaveBeenCalledWith(
+        'ws_default',
+        'wf_text_preview',
+        'runs',
+        'workflow_runs'
+      );
+    });
+    await waitFor(() => {
+      expect(api.runWorkspaceCatalogQuery).toHaveBeenCalledWith(
+        'ws_default',
+        'wf_text_preview',
+        expect.stringContaining('FROM runs.workflow_runs')
+      );
+    });
+
+    const editor = await screen.findByLabelText('SQL query editor');
+    expect(editor.value).toContain('FROM runs.workflow_runs');
+
+    fireEvent.change(editor, {
+      target: {
+        value: 'SELECT status\nFROM runs.workflow_runs\nLIMIT 1000'
+      }
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Run query (1000)' }));
+
+    await waitFor(() => {
+      expect(api.runWorkspaceCatalogQuery).toHaveBeenLastCalledWith(
+        'ws_default',
+        'wf_text_preview',
+        'SELECT status\nFROM runs.workflow_runs\nLIMIT 1000'
+      );
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: 'Sample Data' })).toHaveAttribute(
+        'aria-selected',
+        'true'
+      );
+    });
+    expect(screen.getByText('succeeded')).toBeInTheDocument();
+  });
+
+  it('reseeds the default preview query when switching between tables', async () => {
+    api.login.mockResolvedValue(AUTHENTICATED_SESSION);
+    api.getWorkspaceCatalogTable.mockImplementation(
+      async (_workspaceId, _workflowId, _schemaName, tableName) => {
+        if (tableName === 'node_runs') {
+          return WORKSPACE_CATALOG_NODE_RUNS_TABLE_RESPONSE;
+        }
+
+        return WORKSPACE_CATALOG_TABLE_RESPONSE;
+      }
+    );
+    api.runWorkspaceCatalogQuery.mockResolvedValue(WORKSPACE_CATALOG_QUERY_RESPONSE);
+
+    render(<App />);
+
+    await screen.findByRole('heading', { name: /log in/i });
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Data' }));
+
+    const tree = await screen.findByRole('tree', { name: 'Catalog hierarchy' });
+    fireEvent.click(within(tree).getByRole('button', { name: 'node_runs' }));
+
+    await waitFor(() => {
+      expect(api.runWorkspaceCatalogQuery).toHaveBeenCalledWith(
+        'ws_default',
+        'wf_text_preview',
+        expect.stringContaining('FROM runs.node_runs')
+      );
+    });
+
+    fireEvent.click(within(tree).getByRole('button', { name: 'workflow_runs' }));
+
+    await waitFor(() => {
+      expect(api.runWorkspaceCatalogQuery).toHaveBeenLastCalledWith(
+        'ws_default',
+        'wf_text_preview',
+        expect.stringContaining('FROM runs.workflow_runs')
+      );
+    });
+
+    const seededQuery = api.runWorkspaceCatalogQuery.mock.calls.at(-1)?.[2] ?? '';
+    expect(seededQuery).toContain('FROM runs.workflow_runs');
+    expect(seededQuery).toContain('workflow_id');
+    expect(seededQuery).not.toContain('node_id');
+  });
+
+  it('skips unsafe timestamp mirror columns in the default node-runs preview query', async () => {
+    api.login.mockResolvedValue(AUTHENTICATED_SESSION);
+    api.getWorkspaceCatalogTable.mockResolvedValue(WORKSPACE_CATALOG_NODE_RUNS_TABLE_RESPONSE);
+    api.runWorkspaceCatalogQuery.mockResolvedValue({
+      workflow_id: 'wf_text_preview',
+      workflow_name: 'Text Preview',
+      database_name: 'workflow.duckdb',
+      query: 'SELECT run_id, node_id\nFROM runs.node_runs\nLIMIT 1000',
+      columns: [
+        {
+          column_name: 'run_id',
+          data_type: 'VARCHAR'
+        },
+        {
+          column_name: 'node_id',
+          data_type: 'VARCHAR'
+        }
+      ],
+      rows: [['run_1', 'node_a']]
+    });
+
+    render(<App />);
+
+    await screen.findByRole('heading', { name: /log in/i });
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Data' }));
+
+    const tree = await screen.findByRole('tree', { name: 'Catalog hierarchy' });
+    fireEvent.click(within(tree).getByRole('button', { name: 'node_runs' }));
+
+    await waitFor(() => {
+      expect(api.runWorkspaceCatalogQuery).toHaveBeenCalled();
+    });
+
+    const seededQuery = api.runWorkspaceCatalogQuery.mock.calls.at(-1)?.[2] ?? '';
+    expect(seededQuery).toContain('FROM runs.node_runs');
+    expect(seededQuery).not.toContain('"created_at"');
+    expect(seededQuery).not.toContain('"updated_at"');
   });
 
   it('opens the runs popup and shows workspace-scoped run history data', async () => {

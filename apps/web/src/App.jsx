@@ -18,6 +18,9 @@ import {
   deleteWorkflow,
   getSession,
   getWorkflow,
+  getWorkspaceCatalog,
+  getWorkspaceCatalogSchema,
+  getWorkspaceCatalogTable,
   getWorkspaceConnections,
   getWorkspaceRun,
   getWorkspaceRunEvents,
@@ -27,6 +30,7 @@ import {
   login,
   loginWithGoogleCode,
   logout,
+  runWorkspaceCatalogQuery,
   updateWorkflow,
   updateWorkflowState
 } from './lib/api';
@@ -219,6 +223,207 @@ const INTEGRATION_PLACEHOLDERS = [
     comment: 'Write workflow summaries and sync records into shared docs.'
   }
 ];
+
+function buildSchemaCatalogSelection(catalog, schema) {
+  return {
+    kind: 'schema',
+    workspaceId: catalog.workspace_id,
+    workflowId: catalog.workflow_id,
+    schemaName: schema.schema_name
+  };
+}
+
+function buildTableCatalogSelection(catalog, schema, table) {
+  return {
+    kind: 'table',
+    workspaceId: catalog.workspace_id,
+    workflowId: catalog.workflow_id,
+    schemaName: schema.schema_name,
+    tableName: table.table_name
+  };
+}
+
+function findCatalogSchemaEntry(catalogs, selection) {
+  if (!selection) {
+    return null;
+  }
+
+  const catalog = catalogs.find(
+    (entry) =>
+      entry.workspace_id === selection.workspaceId &&
+      entry.workflow_id === selection.workflowId
+  );
+  if (!catalog) {
+    return null;
+  }
+
+  const schema = catalog.schemas.find((entry) => entry.schema_name === selection.schemaName);
+  if (!schema) {
+    return null;
+  }
+
+  return { catalog, schema };
+}
+
+function findCatalogTableEntry(catalogs, selection) {
+  if (!selection || selection.kind !== 'table') {
+    return null;
+  }
+
+  const schemaEntry = findCatalogSchemaEntry(catalogs, selection);
+  if (!schemaEntry) {
+    return null;
+  }
+
+  const table = schemaEntry.schema.tables.find(
+    (entry) => entry.table_name === selection.tableName
+  );
+  if (!table) {
+    return null;
+  }
+
+  return {
+    catalog: schemaEntry.catalog,
+    schema: schemaEntry.schema,
+    table
+  };
+}
+
+function buildDefaultCatalogSelection(catalogs) {
+  let firstSchemaSelection = null;
+
+  for (const catalog of catalogs) {
+    for (const schema of catalog.schemas ?? []) {
+      if (!firstSchemaSelection) {
+        firstSchemaSelection = buildSchemaCatalogSelection(catalog, schema);
+      }
+    }
+  }
+
+  return firstSchemaSelection;
+}
+
+function resolveCatalogSelection(catalogs, selection) {
+  if (!selection) {
+    return buildDefaultCatalogSelection(catalogs);
+  }
+
+  if (selection.kind === 'table' && findCatalogTableEntry(catalogs, selection)) {
+    return selection;
+  }
+
+  if (selection.kind === 'schema' && findCatalogSchemaEntry(catalogs, selection)) {
+    return selection;
+  }
+
+  return buildDefaultCatalogSelection(catalogs);
+}
+
+function formatCatalogTableType(tableType) {
+  if (tableType === 'BASE TABLE') {
+    return 'Table';
+  }
+
+  if (tableType === 'VIEW') {
+    return 'View';
+  }
+
+  return tableType;
+}
+
+const DATA_PANEL_EDITOR_MIN_HEIGHT = 172;
+const DATA_PANEL_EDITOR_DEFAULT_HEIGHT = 224;
+const DATA_PANEL_BOTTOM_MIN_HEIGHT = 236;
+const DATA_PANEL_RESIZER_HEIGHT = 18;
+
+function escapeSqlIdentifier(identifier) {
+  const value = String(identifier);
+  if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
+    return value;
+  }
+
+  return `"${value.replaceAll('"', '""')}"`;
+}
+
+function shouldSkipDefaultPreviewColumn(columnName) {
+  const normalized = String(columnName).toLowerCase();
+  return (
+    normalized.includes('json') ||
+    normalized.includes('payload') ||
+    normalized.includes('snapshot') ||
+    normalized.includes('error_message') ||
+    normalized === 'error_category' ||
+    normalized === 'created_at' ||
+    normalized === 'updated_at'
+  );
+}
+
+function buildDefaultTablePreviewQuery(schemaName, tableName, columns = []) {
+  const previewColumns = columns.filter(
+    (column) => !shouldSkipDefaultPreviewColumn(column.column_name)
+  );
+  const selectedColumns = previewColumns.length ? previewColumns : columns;
+  const projection = selectedColumns.length
+    ? selectedColumns
+      .map((column) => `  ${escapeSqlIdentifier(column.column_name)}`)
+      .join(',\n')
+    : '  *';
+
+  return [
+    'SELECT',
+    projection,
+    `FROM ${escapeSqlIdentifier(schemaName)}.${escapeSqlIdentifier(tableName)}`,
+    'LIMIT 1000'
+  ].join('\n');
+}
+
+function buildCatalogTableSelectionKey(workspaceId, workflowId, schemaName, tableName) {
+  return [workspaceId, workflowId, schemaName, tableName].join(':');
+}
+
+function resolveCanvasDataEditorMaxHeight(containerHeight) {
+  if (!containerHeight) {
+    return DATA_PANEL_EDITOR_DEFAULT_HEIGHT;
+  }
+
+  return Math.max(
+    DATA_PANEL_EDITOR_MIN_HEIGHT,
+    containerHeight - DATA_PANEL_RESIZER_HEIGHT - DATA_PANEL_BOTTOM_MIN_HEIGHT
+  );
+}
+
+function clampCanvasDataEditorHeight(nextHeight, containerHeight) {
+  const maxHeight = resolveCanvasDataEditorMaxHeight(containerHeight);
+  return Math.min(Math.max(nextHeight, DATA_PANEL_EDITOR_MIN_HEIGHT), maxHeight);
+}
+
+function editorLineNumbers(value, minimum = 2) {
+  const lineCount = Math.max(minimum, String(value ?? '').split('\n').length);
+  return Array.from({ length: lineCount }, (_, index) => index + 1);
+}
+
+function decorateWorkspaceCatalog(workspace, catalog) {
+  return {
+    ...catalog,
+    workspace_id: workspace.workspace_id,
+    workspace_name: workspace.name,
+    workspace_slug: workspace.slug
+  };
+}
+
+function catalogWorkspaceLabel(catalog) {
+  return catalog.workspace_slug ?? catalog.workspace_name ?? catalog.workspace_id;
+}
+
+function catalogTreeKey(catalogOrSelection) {
+  return `${catalogOrSelection.workspace_id ?? catalogOrSelection.workspaceId}:${
+    catalogOrSelection.workflow_id ?? catalogOrSelection.workflowId
+  }`;
+}
+
+function schemaTreeKey(catalogOrSelection, schemaName) {
+  return `${catalogTreeKey(catalogOrSelection)}:${schemaName}`;
+}
 
 const VIEW_MODES = [
   { id: 'desktop', label: 'Desktop' },
@@ -607,6 +812,7 @@ function ProductShell({
   const isCanvasWorkspacePanelOpen = activeCanvasMenuId === 'workspace';
   const isCanvasWorkflowPanelOpen = activeCanvasMenuId === 'workflows';
   const isCanvasRunsPanelOpen = activeCanvasMenuId === 'runs';
+  const isCanvasDataPanelOpen = activeCanvasMenuId === 'data';
   const isCanvasIntegrationsPanelOpen = activeCanvasMenuId === 'integrations';
   const isSidebarCollapsedEffective = true;
 
@@ -712,6 +918,7 @@ function ProductShell({
             isBrandMenuOpen={isCanvasBrandMenuOpen}
             isWorkspacePanelOpen={isCanvasWorkspacePanelOpen}
             isWorkflowPanelOpen={isCanvasWorkflowPanelOpen}
+            isDataPanelOpen={isCanvasDataPanelOpen}
             isIntegrationsPanelOpen={isCanvasIntegrationsPanelOpen}
             onAddNode={handleCanvasNodeAdd}
             onBrandToggle={() => handleCanvasMenuToggle('brand')}
@@ -730,6 +937,7 @@ function ProductShell({
             onShelfToggle={handleCanvasMenuToggle}
             onSignOut={onLogout}
             onRunsToggle={() => handleCanvasMenuToggle('runs')}
+            onDataToggle={() => handleCanvasMenuToggle('data')}
             onIntegrationsToggle={() => handleCanvasMenuToggle('integrations')}
             onSelectedRunIdChange={setCanvasRunsSelectedRunId}
             onWorkspaceToggle={() => handleCanvasMenuToggle('workspace')}
@@ -972,6 +1180,7 @@ function CanvasMenuDock({
   groups,
   isCreatingWorkflow = false,
   isBrandMenuOpen = false,
+  isDataPanelOpen = false,
   isIntegrationsPanelOpen = false,
   isRunsPanelOpen = false,
   isWorkspacePanelOpen = false,
@@ -990,11 +1199,11 @@ function CanvasMenuDock({
   onSelectedRunIdChange,
   onShelfToggle,
   onSignOut,
+  onDataToggle,
   onIntegrationsToggle,
   onRunsToggle,
   onWorkspaceToggle,
-  onWorkflowToggle
-  ,
+  onWorkflowToggle,
   selectedRunId = '',
   workspaces = []
 }) {
@@ -1002,7 +1211,7 @@ function CanvasMenuDock({
     <aside
       className={`canvas-menu${
         activeGroup || isBrandMenuOpen || isWorkspacePanelOpen || isWorkflowPanelOpen
-          || isRunsPanelOpen || isIntegrationsPanelOpen
+          || isRunsPanelOpen || isDataPanelOpen || isIntegrationsPanelOpen
           ? ' is-open'
           : ''
       }`}
@@ -1049,6 +1258,14 @@ function CanvasMenuDock({
           isExpanded={isRunsPanelOpen}
           label="Runs"
           onClick={onRunsToggle}
+        />
+
+        <CanvasMenuButton
+          icon={<CanvasMenuIcon kind="data" />}
+          isActive={isDataPanelOpen}
+          isExpanded={isDataPanelOpen}
+          label="Data"
+          onClick={onDataToggle}
         />
 
         <CanvasMenuButton
@@ -1123,6 +1340,10 @@ function CanvasMenuDock({
         />
       ) : null}
 
+      {isDataPanelOpen ? (
+        <CanvasDataPanel activeWorkspace={activeWorkspace} workspaces={workspaces} />
+      ) : null}
+
       {isIntegrationsPanelOpen ? (
         <CanvasIntegrationsPanel activeWorkspace={activeWorkspace} />
       ) : null}
@@ -1131,6 +1352,7 @@ function CanvasMenuDock({
       !isWorkspacePanelOpen &&
       !isWorkflowPanelOpen &&
       !isRunsPanelOpen &&
+      !isDataPanelOpen &&
       !isIntegrationsPanelOpen ? (
         <CanvasNodeShelfDrawer
           group={activeGroup}
@@ -2143,6 +2365,1275 @@ function CanvasIntegrationsPanel({ activeWorkspace }) {
   );
 }
 
+function CanvasDataPanel({ activeWorkspace, workspaces = [] }) {
+  const [activeTab, setActiveTab] = useState('overview');
+  const [editorQuery, setEditorQuery] = useState('');
+  const [editorPaneHeight, setEditorPaneHeight] = useState(DATA_PANEL_EDITOR_DEFAULT_HEIGHT);
+  const [isEditorOverflowing, setIsEditorOverflowing] = useState(false);
+  const [isEditorResizing, setIsEditorResizing] = useState(false);
+  const [treeQuery, setTreeQuery] = useState('');
+  const [overviewQuery, setOverviewQuery] = useState('');
+  const [expandedCatalogKeys, setExpandedCatalogKeys] = useState([]);
+  const [expandedSchemaKeys, setExpandedSchemaKeys] = useState([]);
+  const [catalogState, setCatalogState] = useState({
+    error: '',
+    status: 'loading',
+    catalogs: []
+  });
+  const [selection, setSelection] = useState(null);
+  const [schemaDetailState, setSchemaDetailState] = useState({
+    error: '',
+    status: 'idle',
+    detail: null
+  });
+  const [tableDetailState, setTableDetailState] = useState({
+    error: '',
+    status: 'idle',
+    detail: null,
+    selectionKey: ''
+  });
+  const [queryState, setQueryState] = useState({
+    error: '',
+    result: null,
+    selectionKey: '',
+    status: 'idle'
+  });
+  const workspaceScopeKey = workspaces.map((workspace) => workspace.workspace_id).join(':');
+  const explorerMainRef = useRef(null);
+  const editorSurfaceRef = useRef(null);
+  const editorTextareaRef = useRef(null);
+  const latestQueryRequestId = useRef(0);
+  const lastSeededTableKeyRef = useRef('');
+  const editorResizeRef = useRef(null);
+
+  function measureExplorerMainHeight() {
+    return explorerMainRef.current?.getBoundingClientRect().height ?? 0;
+  }
+
+  function updateEditorPaneHeight(nextHeight) {
+    setEditorPaneHeight((current) => {
+      const measuredHeight = measureExplorerMainHeight();
+      const fallbackHeight = measuredHeight
+        || current + DATA_PANEL_RESIZER_HEIGHT + DATA_PANEL_BOTTOM_MIN_HEIGHT;
+      return clampCanvasDataEditorHeight(nextHeight, fallbackHeight);
+    });
+  }
+
+  function syncEditorOverflowState() {
+    const textarea = editorTextareaRef.current;
+    const surface = editorSurfaceRef.current;
+    if (!textarea || !surface) {
+      setIsEditorOverflowing(false);
+      return;
+    }
+
+    const availableHeight = surface.clientHeight;
+
+    textarea.style.height = 'auto';
+    textarea.style.overflowY = 'hidden';
+    const naturalHeight = textarea.scrollHeight;
+    const fits = naturalHeight <= availableHeight + 1;
+
+    if (fits) {
+      textarea.style.height = `${naturalHeight}px`;
+      textarea.style.overflowY = 'hidden';
+      textarea.scrollTop = 0;
+    } else {
+      textarea.style.height = '100%';
+      textarea.style.overflowY = 'auto';
+    }
+
+    setIsEditorOverflowing(!fits);
+  }
+
+  async function executeCatalogQuery(nextSelection, nextQuery, { activateSample = false } = {}) {
+    if (!nextSelection || nextSelection.kind !== 'table') {
+      return;
+    }
+
+    const selectionKey = buildCatalogTableSelectionKey(
+      nextSelection.workspaceId,
+      nextSelection.workflowId,
+      nextSelection.schemaName,
+      nextSelection.tableName
+    );
+    const requestId = latestQueryRequestId.current + 1;
+    latestQueryRequestId.current = requestId;
+    if (activateSample) {
+      setActiveTab('sample_data');
+    }
+    setQueryState({
+      error: '',
+      result: null,
+      selectionKey,
+      status: 'loading'
+    });
+
+    try {
+      const result = await runWorkspaceCatalogQuery(
+        nextSelection.workspaceId,
+        nextSelection.workflowId,
+        nextQuery
+      );
+      if (latestQueryRequestId.current !== requestId) {
+        return;
+      }
+
+      setQueryState({
+        error: '',
+        result,
+        selectionKey,
+        status: 'ready'
+      });
+    } catch (error) {
+      if (latestQueryRequestId.current !== requestId) {
+        return;
+      }
+
+      setQueryState({
+        error: error.message ?? 'Unable to run the preview query.',
+        result: null,
+        selectionKey,
+        status: 'error'
+      });
+    }
+  }
+
+  useEffect(() => {
+    setActiveTab('overview');
+    setEditorQuery('');
+    setEditorPaneHeight(DATA_PANEL_EDITOR_DEFAULT_HEIGHT);
+    setIsEditorOverflowing(false);
+    setIsEditorResizing(false);
+    setTreeQuery('');
+    setOverviewQuery('');
+    setExpandedCatalogKeys([]);
+    setExpandedSchemaKeys([]);
+    setSelection(null);
+    setSchemaDetailState({
+      error: '',
+      status: 'idle',
+      detail: null
+    });
+    setTableDetailState({
+      error: '',
+      status: 'idle',
+      detail: null,
+      selectionKey: ''
+    });
+    setQueryState({
+      error: '',
+      result: null,
+      selectionKey: '',
+      status: 'idle'
+    });
+    editorResizeRef.current = null;
+    latestQueryRequestId.current += 1;
+    lastSeededTableKeyRef.current = '';
+  }, [activeWorkspace.workspace_id]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+
+    function syncEditorPaneHeight() {
+      setEditorPaneHeight((current) =>
+        clampCanvasDataEditorHeight(
+          current,
+          measureExplorerMainHeight()
+            || current + DATA_PANEL_RESIZER_HEIGHT + DATA_PANEL_BOTTOM_MIN_HEIGHT
+        )
+      );
+    }
+
+    syncEditorPaneHeight();
+    window.addEventListener('resize', syncEditorPaneHeight);
+    return () => {
+      window.removeEventListener('resize', syncEditorPaneHeight);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+
+    let frameId = window.requestAnimationFrame(() => {
+      syncEditorOverflowState();
+    });
+
+    const surface = editorSurfaceRef.current;
+    const resizeObserver =
+      typeof ResizeObserver !== 'undefined' && surface
+        ? new ResizeObserver(() => {
+          window.cancelAnimationFrame(frameId);
+          frameId = window.requestAnimationFrame(() => {
+            syncEditorOverflowState();
+          });
+        })
+        : null;
+    resizeObserver?.observe(surface);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      resizeObserver?.disconnect();
+    };
+  }, [editorPaneHeight, editorQuery, queryState.error, selection?.kind]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function hydrate() {
+      const results = await Promise.allSettled(
+        workspaces.map(async (workspace) => {
+          const response = await getWorkspaceCatalog(workspace.workspace_id);
+          return (response.catalogs ?? []).map((catalog) =>
+            decorateWorkspaceCatalog(workspace, catalog)
+          );
+        })
+      );
+      if (cancelled) {
+        return;
+      }
+
+      const catalogs = results
+        .flatMap((result) => (result.status === 'fulfilled' ? result.value : []))
+        .sort((left, right) => {
+          const leftIsActive = left.workspace_id === activeWorkspace.workspace_id;
+          const rightIsActive = right.workspace_id === activeWorkspace.workspace_id;
+          if (leftIsActive !== rightIsActive) {
+            return leftIsActive ? -1 : 1;
+          }
+
+          const leftWorkspaceLabel = catalogWorkspaceLabel(left);
+          const rightWorkspaceLabel = catalogWorkspaceLabel(right);
+          if (leftWorkspaceLabel !== rightWorkspaceLabel) {
+            return leftWorkspaceLabel.localeCompare(rightWorkspaceLabel);
+          }
+
+          return left.workflow_name.localeCompare(right.workflow_name);
+        });
+
+      if (!catalogs.length && results.some((result) => result.status === 'rejected')) {
+        setCatalogState({
+          error: 'Unable to load workspace catalogs.',
+          status: 'error',
+          catalogs: []
+        });
+        setSelection(null);
+        return;
+      }
+
+      setCatalogState({
+        error: '',
+        status: 'ready',
+        catalogs
+      });
+      setSelection((current) => resolveCatalogSelection(catalogs, current));
+    }
+
+    setCatalogState((current) => ({
+      ...current,
+      error: '',
+      status: current.catalogs.length ? 'refreshing' : 'loading'
+    }));
+
+    hydrate().catch((error) => {
+      if (!cancelled) {
+        setCatalogState({
+          error: error.message ?? 'Unable to load workspace catalogs.',
+          status: 'error',
+          catalogs: []
+        });
+        setSelection(null);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspace.workspace_id, workspaceScopeKey, workspaces]);
+
+  useEffect(() => {
+    if (!selection) {
+      return;
+    }
+
+    const nextCatalogKey = catalogTreeKey(selection);
+    const nextSchemaKey = schemaTreeKey(selection, selection.schemaName);
+
+    setExpandedCatalogKeys((current) =>
+      current.includes(nextCatalogKey) ? current : [...current, nextCatalogKey]
+    );
+    setExpandedSchemaKeys((current) =>
+      current.includes(nextSchemaKey) ? current : [...current, nextSchemaKey]
+    );
+  }, [
+    selection?.kind,
+    selection?.schemaName,
+    selection?.tableName,
+    selection?.workspaceId,
+    selection?.workflowId
+  ]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    setOverviewQuery('');
+    setActiveTab((current) =>
+      selection?.kind === 'schema' && current === 'sample_data' ? 'overview' : current
+    );
+    latestQueryRequestId.current += 1;
+
+    if (!selection) {
+      setEditorQuery('');
+      setSchemaDetailState({
+        error: '',
+        status: 'idle',
+        detail: null
+      });
+      setTableDetailState({
+        error: '',
+        status: 'idle',
+        detail: null,
+        selectionKey: ''
+      });
+      setQueryState({
+        error: '',
+        result: null,
+        selectionKey: '',
+        status: 'idle'
+      });
+      lastSeededTableKeyRef.current = '';
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (selection.kind === 'schema') {
+      setEditorQuery('');
+      setTableDetailState({
+        error: '',
+        status: 'idle',
+        detail: null,
+        selectionKey: ''
+      });
+      setSchemaDetailState({
+        error: '',
+        status: 'loading',
+        detail: null
+      });
+      setQueryState({
+        error: '',
+        result: null,
+        selectionKey: '',
+        status: 'idle'
+      });
+      lastSeededTableKeyRef.current = '';
+
+      getWorkspaceCatalogSchema(
+        selection.workspaceId,
+        selection.workflowId,
+        selection.schemaName
+      )
+        .then((detail) => {
+          if (!cancelled) {
+            setSchemaDetailState({
+              error: '',
+              status: 'ready',
+              detail
+            });
+          }
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            setSchemaDetailState({
+              error: error.message ?? 'Unable to load schema details.',
+              status: 'error',
+              detail: null
+            });
+          }
+        });
+    } else {
+      const tableSelectionKey = buildCatalogTableSelectionKey(
+        selection.workspaceId,
+        selection.workflowId,
+        selection.schemaName,
+        selection.tableName
+      );
+      setEditorQuery(buildDefaultTablePreviewQuery(selection.schemaName, selection.tableName));
+      setSchemaDetailState({
+        error: '',
+        status: 'idle',
+        detail: null
+      });
+      setTableDetailState({
+        error: '',
+        status: 'loading',
+        detail: null,
+        selectionKey: tableSelectionKey
+      });
+      setQueryState({
+        error: '',
+        result: null,
+        selectionKey: '',
+        status: 'idle'
+      });
+      lastSeededTableKeyRef.current = '';
+
+      getWorkspaceCatalogTable(
+        selection.workspaceId,
+        selection.workflowId,
+        selection.schemaName,
+        selection.tableName
+      )
+        .then((detail) => {
+          if (!cancelled) {
+            setTableDetailState({
+              error: '',
+              status: 'ready',
+              detail,
+              selectionKey: tableSelectionKey
+            });
+          }
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            setTableDetailState({
+              error: error.message ?? 'Unable to load table details.',
+              status: 'error',
+              detail: null,
+              selectionKey: tableSelectionKey
+            });
+          }
+        });
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    selection?.kind,
+    selection?.workspaceId,
+    selection?.schemaName,
+    selection?.tableName,
+    selection?.workflowId
+  ]);
+
+  const selectedTableKey =
+    selection?.kind === 'table'
+      ? buildCatalogTableSelectionKey(
+        selection.workspaceId,
+        selection.workflowId,
+        selection.schemaName,
+        selection.tableName
+      )
+      : '';
+
+  const isSelectedTableDetailCurrent =
+    selection?.kind === 'table' &&
+    tableDetailState.status === 'ready' &&
+    tableDetailState.selectionKey === selectedTableKey;
+
+  useEffect(() => {
+    if (
+      !selectedTableKey ||
+      selection?.kind !== 'table' ||
+      !isSelectedTableDetailCurrent ||
+      !tableDetailState.detail
+    ) {
+      return;
+    }
+
+    if (lastSeededTableKeyRef.current === selectedTableKey) {
+      return;
+    }
+
+    const nextQuery = buildDefaultTablePreviewQuery(
+      selection.schemaName,
+      selection.tableName,
+      tableDetailState.detail.columns ?? []
+    );
+    lastSeededTableKeyRef.current = selectedTableKey;
+    setEditorQuery(nextQuery);
+    void executeCatalogQuery(selection, nextQuery);
+  }, [
+    activeWorkspace.workspace_id,
+    isSelectedTableDetailCurrent,
+    selectedTableKey,
+    selection?.kind,
+    selection?.schemaName,
+    selection?.tableName,
+    tableDetailState.detail,
+    tableDetailState.status
+  ]);
+
+  const normalizedTreeQuery = treeQuery.trim().toLowerCase();
+  const normalizedOverviewQuery = overviewQuery.trim().toLowerCase();
+  const selectedSchemaEntry = selection
+    ? findCatalogSchemaEntry(catalogState.catalogs, selection)
+    : null;
+  const selectedTableEntry =
+    selection?.kind === 'table'
+      ? findCatalogTableEntry(catalogState.catalogs, selection)
+      : null;
+  const selectedCatalog = selectedTableEntry?.catalog ?? selectedSchemaEntry?.catalog ?? null;
+  const selectedSchema = selectedTableEntry?.schema ?? selectedSchemaEntry?.schema ?? null;
+  const selectedTableSummary = selectedTableEntry?.table ?? null;
+  const schemaTables =
+    selection?.kind === 'schema'
+      ? schemaDetailState.detail?.tables ?? selectedSchema?.tables ?? []
+      : [];
+  const tableColumns =
+    selection?.kind === 'table' && isSelectedTableDetailCurrent
+      ? tableDetailState.detail?.columns ?? []
+      : [];
+  const queryColumns =
+    selection?.kind === 'table' && queryState.selectionKey === selectedTableKey
+      ? queryState.result?.columns ?? []
+      : [];
+  const sampleRows =
+    selection?.kind === 'table' && queryState.selectionKey === selectedTableKey
+      ? queryState.result?.rows ?? []
+      : [];
+  const filteredColumns = tableColumns.filter((column) => {
+    if (!normalizedOverviewQuery) {
+      return true;
+    }
+
+    return [
+      column.column_name,
+      column.data_type,
+      column.description ?? '',
+      column.nullable ? 'nullable' : 'required'
+    ]
+      .join(' ')
+      .toLowerCase()
+      .includes(normalizedOverviewQuery);
+  });
+  const filteredSchemaTables = schemaTables.filter((table) => {
+    if (!normalizedOverviewQuery) {
+      return true;
+    }
+
+    return [table.table_name, table.table_type, String(table.column_count)]
+      .join(' ')
+      .toLowerCase()
+      .includes(normalizedOverviewQuery);
+  });
+  const visibleCatalogs = catalogState.catalogs
+    .map((catalog) => {
+      const catalogMatches = [
+        catalogWorkspaceLabel(catalog),
+        catalog.workspace_name ?? '',
+        catalog.workflow_name,
+        catalog.database_name
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(normalizedTreeQuery);
+      const visibleSchemas = (catalog.schemas ?? [])
+        .map((schema) => {
+          const schemaMatches = schema.schema_name
+            .toLowerCase()
+            .includes(normalizedTreeQuery);
+          const matchedTables = (schema.tables ?? []).filter((table) =>
+            [table.table_name, table.table_type, String(table.column_count)]
+              .join(' ')
+              .toLowerCase()
+              .includes(normalizedTreeQuery)
+          );
+
+          return {
+            ...schema,
+            isVisible:
+              !normalizedTreeQuery ||
+              catalogMatches ||
+              schemaMatches ||
+              matchedTables.length > 0,
+            visibleTables:
+              !normalizedTreeQuery || catalogMatches || schemaMatches
+                ? schema.tables ?? []
+                : matchedTables
+          };
+        })
+        .filter((schema) => schema.isVisible);
+
+      return {
+        ...catalog,
+        isVisible:
+          !normalizedTreeQuery || catalogMatches || visibleSchemas.length > 0,
+        visibleSchemas
+      };
+    })
+    .filter((catalog) => catalog.isVisible);
+  const editorScopeLabel = selectedCatalog
+    ? `${catalogWorkspaceLabel(selectedCatalog)} · ${selectedCatalog.workflow_name} · ${selectedCatalog.database_name}`
+    : 'Select a workflow catalog';
+  const isSampleDataEnabled = selection?.kind === 'table';
+  const isQueryRunning = queryState.status === 'loading';
+  const editorLines = editorLineNumbers(editorQuery);
+  const editorPaneMaxHeight = resolveCanvasDataEditorMaxHeight(
+    measureExplorerMainHeight()
+      || editorPaneHeight + DATA_PANEL_RESIZER_HEIGHT + DATA_PANEL_BOTTOM_MIN_HEIGHT
+  );
+  const editorMetaLabel =
+    selection?.kind === 'table'
+      ? queryState.status === 'ready'
+        ? `${sampleRows.length} row${sampleRows.length === 1 ? '' : 's'} · ${queryColumns.length} column${queryColumns.length === 1 ? '' : 's'}`
+        : isQueryRunning
+          ? 'Running preview query…'
+          : 'Read-only preview · capped at 1000 rows'
+      : 'Select a table to preview up to 1000 rows';
+  const editorPlaceholder =
+    selection?.kind === 'table'
+      ? 'Write a read-only SELECT query for this workflow DuckDB.'
+      : 'Select a table from the catalog tree to start previewing data.';
+
+  function handleRunQuery() {
+    if (!selection || selection.kind !== 'table' || !isSelectedTableDetailCurrent) {
+      return;
+    }
+
+    void executeCatalogQuery(selection, editorQuery, { activateSample: true });
+  }
+
+  function handleEditorResizerPointerDown(event) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    const measuredHeight = measureExplorerMainHeight();
+    const containerHeight = measuredHeight
+      || editorPaneHeight + DATA_PANEL_RESIZER_HEIGHT + DATA_PANEL_BOTTOM_MIN_HEIGHT;
+    const clampedHeight = clampCanvasDataEditorHeight(editorPaneHeight, containerHeight);
+
+    editorResizeRef.current = {
+      pointerId: event.pointerId,
+      startHeight: clampedHeight,
+      startY: event.clientY
+    };
+    setIsEditorResizing(true);
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
+  }
+
+  function handleEditorResizerPointerMove(event) {
+    const session = editorResizeRef.current;
+    if (!session || session.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const delta = event.clientY - session.startY;
+    updateEditorPaneHeight(session.startHeight + delta);
+  }
+
+  function finishEditorResize(event) {
+    const session = editorResizeRef.current;
+    if (event && session && session.pointerId !== event.pointerId) {
+      return;
+    }
+
+    editorResizeRef.current = null;
+    setIsEditorResizing(false);
+  }
+
+  function handleEditorResizerKeyDown(event) {
+    let nextHeight = editorPaneHeight;
+
+    if (event.key === 'ArrowUp') {
+      nextHeight -= 24;
+    } else if (event.key === 'ArrowDown') {
+      nextHeight += 24;
+    } else if (event.key === 'PageUp') {
+      nextHeight -= 88;
+    } else if (event.key === 'PageDown') {
+      nextHeight += 88;
+    } else if (event.key === 'Home') {
+      nextHeight = DATA_PANEL_EDITOR_MIN_HEIGHT;
+    } else if (event.key === 'End') {
+      nextHeight = editorPaneMaxHeight;
+    } else {
+      return;
+    }
+
+    event.preventDefault();
+    updateEditorPaneHeight(nextHeight);
+  }
+
+  function toggleCatalogOpen(catalog) {
+    const nextKey = catalogTreeKey(catalog);
+    setExpandedCatalogKeys((current) =>
+      current.includes(nextKey)
+        ? current.filter((key) => key !== nextKey)
+        : [...current, nextKey]
+    );
+  }
+
+  function toggleSchemaOpen(catalog, schema) {
+    const nextKey = schemaTreeKey(catalog, schema.schema_name);
+    setExpandedSchemaKeys((current) =>
+      current.includes(nextKey)
+        ? current.filter((key) => key !== nextKey)
+        : [...current, nextKey]
+    );
+  }
+
+  return (
+    <aside className="canvas-data-panel" aria-label="Data sources window">
+      <header className="canvas-data-panel__header">
+        <div className="canvas-data-panel__title-group">
+          <span className="canvas-data-panel__title-icon" aria-hidden="true">
+            <CanvasMenuIcon kind="data" />
+          </span>
+          <div className="canvas-data-panel__title-copy">
+            <strong>Catalog</strong>
+            <span>
+              {workspaces.length} workspace{workspaces.length === 1 ? '' : 's'} · local DuckDB browser
+            </span>
+          </div>
+        </div>
+
+        <div className="canvas-data-panel__header-actions">
+          <button className="canvas-data-panel__button" type="button">Attach DB</button>
+          <button className="canvas-data-panel__button canvas-data-panel__button--primary" type="button">
+            New Sink
+          </button>
+        </div>
+      </header>
+
+      <div className="canvas-data-panel__workbench">
+        <section className="canvas-data-panel__tree" aria-label="Catalog tree">
+          <div className="canvas-data-panel__tree-top">
+            <div className="canvas-data-panel__section-header">
+              <div>
+                <h3 className="canvas-data-panel__section-title">Catalog Tree</h3>
+                <p className="canvas-data-panel__section-meta">Databases, schemas, and objects</p>
+              </div>
+
+              <div className="canvas-data-panel__icon-group" aria-label="Tree actions">
+                <button className="canvas-data-panel__icon-button" type="button" aria-label="Settings">
+                  <CanvasDataToolbarIcon kind="settings" />
+                </button>
+                <button className="canvas-data-panel__icon-button" type="button" aria-label="Refresh">
+                  <CanvasDataToolbarIcon kind="refresh" />
+                </button>
+                <button className="canvas-data-panel__icon-button" type="button" aria-label="Add">
+                  <CanvasDataToolbarIcon kind="add" />
+                </button>
+              </div>
+            </div>
+
+            <label className="canvas-data-panel__search">
+              <input
+                aria-label="Search catalog objects"
+                onChange={(event) => setTreeQuery(event.target.value)}
+                placeholder="Type to search..."
+                type="search"
+                value={treeQuery}
+              />
+              <button className="canvas-data-panel__icon-button canvas-data-panel__icon-button--search" type="button" aria-label="Catalog filters">
+                <CanvasDataToolbarIcon kind="sliders" />
+              </button>
+            </label>
+
+            <div className="canvas-data-panel__chip-row">
+              <button className="canvas-data-panel__chip" type="button">For you</button>
+              <button className="canvas-data-panel__chip is-active" type="button">All</button>
+              <button className="canvas-data-panel__chip" type="button">Recent</button>
+            </div>
+          </div>
+
+          <div className="canvas-data-panel__tree-list" role="tree" aria-label="Catalog hierarchy">
+            {catalogState.status === 'loading' && !catalogState.catalogs.length ? (
+              <div className="canvas-data-panel__tree-empty">Loading workspace catalog…</div>
+            ) : null}
+
+            {catalogState.status === 'error' ? (
+              <div className="canvas-data-panel__tree-empty">{catalogState.error}</div>
+            ) : null}
+
+            {catalogState.status !== 'loading' && catalogState.status !== 'error' && visibleCatalogs.length
+              ? visibleCatalogs.map((catalog) => {
+                const catalogKey = catalogTreeKey(catalog);
+                const isCatalogOpen =
+                  normalizedTreeQuery.length > 0 || expandedCatalogKeys.includes(catalogKey);
+
+                return (
+                  <div key={`${catalog.workspace_id}:${catalog.workflow_id}`}>
+                    <div className="canvas-data-panel__tree-row canvas-data-panel__tree-row--level-0">
+                      <button
+                        aria-label={`${
+                          isCatalogOpen ? 'Collapse' : 'Expand'
+                        } catalog ${catalogWorkspaceLabel(catalog)} ${catalog.database_name}`}
+                        className="canvas-data-panel__tree-toggle"
+                        onClick={() => toggleCatalogOpen(catalog)}
+                        type="button"
+                      >
+                        <span className="canvas-data-panel__tree-caret" aria-hidden="true">
+                          {isCatalogOpen ? '▾' : '▸'}
+                        </span>
+                      </button>
+                      <button
+                        className="canvas-data-panel__tree-item"
+                        type="button"
+                        role="treeitem"
+                        aria-expanded={isCatalogOpen}
+                        onClick={() => {
+                          if (!catalog.schemas?.length) {
+                            return;
+                          }
+
+                          setSelection(buildSchemaCatalogSelection(catalog, catalog.schemas[0]));
+                          setActiveTab('overview');
+                        }}
+                      >
+                        <span className="canvas-data-panel__tree-glyph" aria-hidden="true">
+                          <CanvasDataTreeGlyph kind="database" />
+                        </span>
+                        <span className="canvas-data-panel__tree-label">
+                          {catalogWorkspaceLabel(catalog)} · {catalog.database_name}
+                        </span>
+                      </button>
+                    </div>
+
+                    {isCatalogOpen
+                      ? catalog.visibleSchemas.map((schema) => {
+                        const schemaKey = schemaTreeKey(catalog, schema.schema_name);
+                        const isSchemaSelected =
+                            selection?.kind === 'schema' &&
+                            selection.workspaceId === catalog.workspace_id &&
+                            selection.workflowId === catalog.workflow_id &&
+                            selection.schemaName === schema.schema_name;
+                        const isSchemaOpen =
+                            normalizedTreeQuery.length > 0 ||
+                            expandedSchemaKeys.includes(schemaKey);
+
+                        return (
+                          <div key={`${catalog.workspace_id}:${catalog.workflow_id}:${schema.schema_name}`}>
+                            <div className="canvas-data-panel__tree-row canvas-data-panel__tree-row--level-1">
+                              <button
+                                aria-label={`${isSchemaOpen ? 'Collapse' : 'Expand'} schema ${schema.schema_name}`}
+                                className="canvas-data-panel__tree-toggle"
+                                onClick={() => toggleSchemaOpen(catalog, schema)}
+                                type="button"
+                              >
+                                <span className="canvas-data-panel__tree-caret" aria-hidden="true">
+                                  {isSchemaOpen ? '▾' : '▸'}
+                                </span>
+                              </button>
+                              <button
+                                className={`canvas-data-panel__tree-item${
+                                  isSchemaSelected ? ' is-active' : ''
+                                }`}
+                                onClick={() => {
+                                  setSelection(buildSchemaCatalogSelection(catalog, schema));
+                                  setActiveTab('overview');
+                                }}
+                                type="button"
+                                role="treeitem"
+                                aria-expanded={isSchemaOpen}
+                              >
+                                <span className="canvas-data-panel__tree-glyph" aria-hidden="true">
+                                  <CanvasDataTreeGlyph kind="schema" />
+                                </span>
+                                <span className="canvas-data-panel__tree-label">
+                                  {schema.schema_name}
+                                </span>
+                              </button>
+                            </div>
+
+                            {isSchemaOpen
+                              ? schema.visibleTables.map((table) => {
+                                const isTableSelected =
+                                      selection?.kind === 'table' &&
+                                      selection.workspaceId === catalog.workspace_id &&
+                                      selection.workflowId === catalog.workflow_id &&
+                                      selection.schemaName === schema.schema_name &&
+                                      selection.tableName === table.table_name;
+
+                                return (
+                                  <button
+                                    key={`${catalog.workspace_id}:${catalog.workflow_id}:${schema.schema_name}:${table.table_name}`}
+                                    className={`canvas-data-panel__tree-item canvas-data-panel__tree-item--level-2${
+                                      isTableSelected ? ' is-active' : ''
+                                    }`}
+                                    onClick={() => {
+                                      setSelection(
+                                        buildTableCatalogSelection(catalog, schema, table)
+                                      );
+                                    }}
+                                    role="treeitem"
+                                    type="button"
+                                  >
+                                    <span className="canvas-data-panel__tree-glyph" aria-hidden="true">
+                                      <CanvasDataTreeGlyph kind="table" />
+                                    </span>
+                                    <span className="canvas-data-panel__tree-label">
+                                      {table.table_name}
+                                    </span>
+                                  </button>
+                                );
+                              })
+                              : null}
+                          </div>
+                        );
+                      })
+                      : null}
+                  </div>
+                );
+              })
+              : null}
+
+            {catalogState.status !== 'loading' &&
+            catalogState.status !== 'error' &&
+            !visibleCatalogs.length ? (
+              <div className="canvas-data-panel__tree-empty">
+                {normalizedTreeQuery
+                  ? 'No matching objects in this workspace catalog.'
+                  : 'No workflow DuckDB catalogs are available yet.'}
+              </div>
+            ) : null}
+          </div>
+        </section>
+
+        <section className="canvas-data-panel__explorer" aria-label="Catalog explorer">
+          <div className="canvas-data-panel__eyebrow">SQL Editor</div>
+          <div className="canvas-data-panel__explorer-main" ref={explorerMainRef}>
+            <section
+              className="canvas-data-panel__editor"
+              aria-label="SQL editor"
+              style={{ flexBasis: `${editorPaneHeight}px` }}
+            >
+              <div className="canvas-data-panel__editor-toolbar">
+                <button
+                  className="canvas-data-panel__run"
+                  disabled={
+                    !isSampleDataEnabled ||
+                    !isSelectedTableDetailCurrent ||
+                    isQueryRunning ||
+                    !editorQuery.trim()
+                  }
+                  onClick={handleRunQuery}
+                  type="button"
+                >
+                  {isQueryRunning ? 'Running…' : 'Run query (1000)'}
+                </button>
+                <span className="canvas-data-panel__editor-meta">{editorMetaLabel}</span>
+                <span className="canvas-data-panel__editor-meta">{editorScopeLabel}</span>
+              </div>
+
+              <div className="canvas-data-panel__editor-surface" ref={editorSurfaceRef}>
+                <div className="canvas-data-panel__editor-gutter" aria-hidden="true">
+                  {editorLines.map((lineNumber) => (
+                    <span key={lineNumber}>{lineNumber}</span>
+                  ))}
+                </div>
+                <div className="canvas-data-panel__editor-code">
+                  <textarea
+                    aria-label="SQL query editor"
+                    className={`canvas-data-panel__editor-textarea${
+                      isEditorOverflowing ? ' is-scrollable' : ' is-fit'
+                    }`}
+                    onChange={(event) => setEditorQuery(event.target.value)}
+                    placeholder={editorPlaceholder}
+                    ref={editorTextareaRef}
+                    spellCheck={false}
+                    value={editorQuery}
+                  />
+                </div>
+              </div>
+
+              {queryState.status === 'error' ? (
+                <div
+                  className="canvas-data-panel__editor-feedback canvas-data-panel__editor-feedback--error"
+                  role="status"
+                >
+                  {queryState.error}
+                </div>
+              ) : null}
+            </section>
+
+            <div
+              aria-label="Resize query editor"
+              aria-orientation="horizontal"
+              aria-valuemax={Math.round(editorPaneMaxHeight)}
+              aria-valuemin={DATA_PANEL_EDITOR_MIN_HEIGHT}
+              aria-valuenow={Math.round(editorPaneHeight)}
+              className={`canvas-data-panel__splitter${isEditorResizing ? ' is-active' : ''}`}
+              onKeyDown={handleEditorResizerKeyDown}
+              onLostPointerCapture={finishEditorResize}
+              onPointerCancel={finishEditorResize}
+              onPointerDown={handleEditorResizerPointerDown}
+              onPointerMove={handleEditorResizerPointerMove}
+              onPointerUp={finishEditorResize}
+              role="separator"
+              tabIndex={0}
+            >
+              <span className="canvas-data-panel__splitter-line" aria-hidden="true" />
+            </div>
+
+            <div className="canvas-data-panel__explorer-body">
+              <div className="canvas-data-panel__tabs" role="tablist" aria-label="Data explorer tabs">
+                <button
+                  className={`canvas-data-panel__tab${activeTab === 'overview' ? ' is-active' : ''}`}
+                  onClick={() => setActiveTab('overview')}
+                  role="tab"
+                  aria-selected={activeTab === 'overview'}
+                  type="button"
+                >
+                  Overview
+                </button>
+                <button
+                  className={`canvas-data-panel__tab${activeTab === 'sample_data' ? ' is-active' : ''}`}
+                  disabled={!isSampleDataEnabled}
+                  onClick={() => setActiveTab('sample_data')}
+                  role="tab"
+                  aria-selected={activeTab === 'sample_data'}
+                  type="button"
+                >
+                  Sample Data
+                </button>
+              </div>
+
+              {activeTab === 'overview' ? (
+                <section className="canvas-data-panel__overview" aria-label="Table overview">
+                  <div className="canvas-data-panel__overview-toolbar">
+                    <label className="canvas-data-panel__overview-search">
+                      <span className="canvas-data-panel__overview-search-icon" aria-hidden="true">
+                        <CanvasDataToolbarIcon kind="search" />
+                      </span>
+                      <input
+                        aria-label="Filter columns"
+                        onChange={(event) => setOverviewQuery(event.target.value)}
+                        placeholder={
+                          selection?.kind === 'schema' ? 'Filter tables...' : 'Filter columns...'
+                        }
+                        type="search"
+                        value={overviewQuery}
+                      />
+                    </label>
+                    <span className="canvas-data-panel__overview-count">
+                      {selection?.kind === 'schema'
+                        ? `${filteredSchemaTables.length} tables`
+                        : `${filteredColumns.length} columns`}
+                    </span>
+                  </div>
+
+                  {!selection ? (
+                    <div className="canvas-data-panel__tree-empty">
+                      Select a schema or table from the catalog tree.
+                    </div>
+                  ) : null}
+
+                  {selection?.kind === 'schema' &&
+                  schemaDetailState.status === 'loading' &&
+                  !schemaDetailState.detail ? (
+                    <div className="canvas-data-panel__tree-empty">Loading schema details…</div>
+                  ) : null}
+
+                  {selection?.kind === 'schema' && schemaDetailState.status === 'error' ? (
+                    <div className="canvas-data-panel__tree-empty">{schemaDetailState.error}</div>
+                  ) : null}
+
+                  {selection?.kind === 'schema' &&
+                  schemaDetailState.status !== 'error' &&
+                  selection ? (
+                    <div className="canvas-data-panel__overview-table">
+                      <div className="canvas-data-panel__overview-header">
+                        <span>Table</span>
+                        <span>Type</span>
+                        <span>Columns</span>
+                      </div>
+
+                      <div className="canvas-data-panel__overview-body">
+                        {filteredSchemaTables.length ? (
+                          filteredSchemaTables.map((table) => (
+                            <button
+                              className="canvas-data-panel__overview-row"
+                              key={table.table_name}
+                              onClick={() => {
+                                if (!selectedCatalog || !selectedSchema) {
+                                  return;
+                                }
+
+                                setSelection(
+                                  buildTableCatalogSelection(selectedCatalog, selectedSchema, table)
+                                );
+                                setActiveTab('overview');
+                              }}
+                              type="button"
+                            >
+                              <span className="canvas-data-panel__overview-cell canvas-data-panel__overview-cell--primary">
+                                {table.table_name}
+                              </span>
+                              <span className="canvas-data-panel__overview-cell">
+                                {formatCatalogTableType(table.table_type)}
+                              </span>
+                              <span className="canvas-data-panel__overview-cell canvas-data-panel__overview-cell--muted">
+                                {table.column_count}
+                              </span>
+                            </button>
+                          ))
+                        ) : (
+                          <div className="canvas-data-panel__tree-empty">
+                            No tables found for this schema.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {selection?.kind === 'table' &&
+                  tableDetailState.status === 'loading' &&
+                  !tableDetailState.detail ? (
+                    <div className="canvas-data-panel__tree-empty">Loading table details…</div>
+                  ) : null}
+
+                  {selection?.kind === 'table' && tableDetailState.status === 'error' ? (
+                    <div className="canvas-data-panel__tree-empty">{tableDetailState.error}</div>
+                  ) : null}
+
+                  {selection?.kind === 'table' && tableDetailState.status !== 'error' ? (
+                    <div className="canvas-data-panel__overview-table">
+                      <div className="canvas-data-panel__overview-header">
+                        <span>Column</span>
+                        <span>Type</span>
+                        <span>Description</span>
+                      </div>
+
+                      <div className="canvas-data-panel__overview-body">
+                        {filteredColumns.length ? (
+                          filteredColumns.map((column) => (
+                            <div className="canvas-data-panel__overview-row" key={column.column_name}>
+                              <span className="canvas-data-panel__overview-cell canvas-data-panel__overview-cell--primary">
+                                {column.column_name}
+                              </span>
+                              <span className="canvas-data-panel__overview-cell">
+                                {column.data_type}
+                              </span>
+                              <span className="canvas-data-panel__overview-cell canvas-data-panel__overview-cell--muted">
+                                {column.description ?? (column.nullable ? 'Nullable column' : 'Required column')}
+                              </span>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="canvas-data-panel__tree-empty">
+                            No columns found for this table.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+                </section>
+              ) : (
+                <section className="canvas-data-panel__sample" aria-label="Sample data preview">
+                  <div className="canvas-data-panel__sample-header">
+                    <strong>Sample</strong>
+                    <div className="canvas-data-panel__sample-actions">
+                      <button className="canvas-data-panel__sample-icon" type="button" aria-label="Search sample data">
+                        <CanvasDataToolbarIcon kind="search" />
+                      </button>
+                      <button className="canvas-data-panel__sample-icon" type="button" aria-label="Filter sample data">
+                        <CanvasDataToolbarIcon kind="filter" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="canvas-data-panel__sample-shell">
+                    {!isSampleDataEnabled ? (
+                      <div className="canvas-data-panel__tree-empty">
+                        Sample data is available once you select a table.
+                      </div>
+                    ) : null}
+
+                    {isSampleDataEnabled && tableDetailState.status === 'loading' ? (
+                      <div className="canvas-data-panel__tree-empty">Loading sample data…</div>
+                    ) : null}
+
+                    {isSampleDataEnabled && tableDetailState.status === 'error' ? (
+                      <div className="canvas-data-panel__tree-empty">{tableDetailState.error}</div>
+                    ) : null}
+
+                    {isSampleDataEnabled && queryState.status === 'loading' ? (
+                      <div className="canvas-data-panel__tree-empty">Running preview query…</div>
+                    ) : null}
+
+                    {isSampleDataEnabled && queryState.status === 'error' ? (
+                      <div className="canvas-data-panel__tree-empty">{queryState.error}</div>
+                    ) : null}
+
+                    {isSampleDataEnabled &&
+                    queryState.status === 'ready' &&
+                    queryColumns.length ? (
+                      <div
+                        className="canvas-data-panel__sample-grid"
+                        style={{
+                          gridTemplateColumns: `56px repeat(${queryColumns.length}, minmax(120px, 1fr))`
+                        }}
+                      >
+                        <span className="canvas-data-panel__sample-header-cell canvas-data-panel__sample-header-cell--index" />
+                        {queryColumns.map((column) => (
+                          <span
+                            className="canvas-data-panel__sample-header-cell"
+                            key={column.column_name}
+                          >
+                            <span className="canvas-data-panel__sample-type">
+                              {dataColumnTypeBadge(column.data_type)}
+                            </span>
+                            {column.column_name}
+                          </span>
+                        ))}
+
+                        {sampleRows.length
+                          ? sampleRows.flatMap((row, index) => [
+                            (
+                              <span
+                                className="canvas-data-panel__sample-index-cell"
+                                key={`${selectedTableSummary?.table_name ?? 'sample'}-${index}-index`}
+                              >
+                                {index + 1}
+                              </span>
+                            ),
+                            ...row.map((value, valueIndex) => (
+                              <span
+                                className="canvas-data-panel__sample-cell"
+                                key={`${selectedTableSummary?.table_name ?? 'sample'}-${index}-${valueIndex}`}
+                              >
+                                {value ?? 'null'}
+                              </span>
+                            ))
+                          ])
+                          : (
+                            <div
+                              className="canvas-data-panel__tree-empty"
+                              style={{ gridColumn: '1 / -1' }}
+                            >
+                              Query returned no rows for this table.
+                            </div>
+                          )}
+                      </div>
+                    ) : null}
+
+                    {isSampleDataEnabled &&
+                    queryState.status === 'ready' &&
+                    !queryColumns.length ? (
+                      <div className="canvas-data-panel__tree-empty">
+                        Query completed without a tabular result set.
+                      </div>
+                    ) : null}
+                  </div>
+                </section>
+              )}
+            </div>
+          </div>
+        </section>
+      </div>
+    </aside>
+  );
+}
+
 function CanvasRunsHistoryPanel({
   activeWorkflowId = null,
   activeWorkspace,
@@ -2912,6 +4403,14 @@ function CanvasMenuIcon({ kind }) {
           />
         </svg>
       );
+    case 'data':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <ellipse cx="10" cy="5.95" rx="4.85" ry="1.8" stroke="currentColor" strokeWidth="1.3" />
+          <path d="M5.15 5.95V12.25C5.15 13.24 7.32 14.05 10 14.05C12.68 14.05 14.85 13.24 14.85 12.25V5.95" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="miter" />
+          <path d="M5.15 9.1C5.15 10.09 7.32 10.9 10 10.9C12.68 10.9 14.85 10.09 14.85 9.1" stroke="currentColor" strokeWidth="1.15" strokeLinecap="square" opacity="0.82" />
+        </svg>
+      );
     case 'connections':
       return (
         <svg viewBox="0 0 20 20" fill="none">
@@ -3013,6 +4512,109 @@ function CanvasMenuIcon({ kind }) {
     default:
       return null;
   }
+}
+
+function CanvasDataTreeGlyph({ kind }) {
+  switch (kind) {
+    case 'database':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <ellipse cx="10" cy="5.65" rx="5" ry="1.9" stroke="currentColor" strokeWidth="1.25" />
+          <path d="M5 5.65V12.95C5 14 7.24 14.85 10 14.85C12.76 14.85 15 14 15 12.95V5.65" stroke="currentColor" strokeWidth="1.25" />
+          <path d="M5 9.3C5 10.35 7.24 11.2 10 11.2C12.76 11.2 15 10.35 15 9.3" stroke="currentColor" strokeWidth="1.25" />
+        </svg>
+      );
+    case 'schema':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <rect x="4.45" y="4.45" width="11.1" height="11.1" rx="1.7" stroke="currentColor" strokeWidth="1.25" />
+          <path d="M7.3 4.7V15.3M12.7 4.7V15.3M4.7 7.3H15.3M4.7 12.7H15.3" stroke="currentColor" strokeWidth="1.1" opacity="0.78" />
+        </svg>
+      );
+    case 'table':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <rect x="4.6" y="4.7" width="10.8" height="10.6" rx="1.5" stroke="currentColor" strokeWidth="1.25" />
+          <path d="M4.9 8.05H15.1M8 8.2V15M11.95 8.2V15" stroke="currentColor" strokeWidth="1.1" opacity="0.8" />
+        </svg>
+      );
+    default:
+      return null;
+  }
+}
+
+function CanvasDataToolbarIcon({ kind }) {
+  switch (kind) {
+    case 'settings':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <circle cx="10" cy="10" r="2.35" stroke="currentColor" strokeWidth="1.4" />
+          <path d="M10 3.6V5.1M10 14.9V16.4M16.4 10H14.9M5.1 10H3.6M14.52 5.48L13.46 6.54M6.54 13.46L5.48 14.52M14.52 14.52L13.46 13.46M6.54 6.54L5.48 5.48" stroke="currentColor" strokeWidth="1.4" strokeLinecap="square" strokeLinejoin="miter" />
+        </svg>
+      );
+    case 'refresh':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <path d="M15.15 8.2A5.55 5.55 0 1 0 16 11.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="square" strokeLinejoin="miter" />
+          <path d="M15.2 4.95V8.3H11.85" stroke="currentColor" strokeWidth="1.4" strokeLinecap="square" strokeLinejoin="miter" />
+        </svg>
+      );
+    case 'add':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <path d="M10 4.3V15.7M4.3 10H15.7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="square" strokeLinejoin="miter" />
+        </svg>
+      );
+    case 'sliders':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <path d="M5.2 4.35V15.65M10 4.35V15.65M14.8 4.35V15.65" stroke="currentColor" strokeWidth="1.45" strokeLinecap="square" strokeLinejoin="miter" />
+          <circle cx="5.2" cy="7.2" r="1.55" fill="currentColor" stroke="none" />
+          <circle cx="10" cy="11.1" r="1.55" fill="currentColor" stroke="none" />
+          <circle cx="14.8" cy="8.5" r="1.55" fill="currentColor" stroke="none" />
+        </svg>
+      );
+    case 'save':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <path d="M5.2 4.75H13.15L15.25 6.85V15.25H5.2V4.75Z" stroke="currentColor" strokeWidth="1.35" strokeLinejoin="miter" />
+          <path d="M7.15 4.95V8.25H12.75V4.95" stroke="currentColor" strokeWidth="1.2" strokeLinecap="square" />
+          <path d="M7.35 12.05H13.05" stroke="currentColor" strokeWidth="1.2" strokeLinecap="square" />
+        </svg>
+      );
+    case 'kebab':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <circle cx="10" cy="5.3" r="1.15" fill="currentColor" />
+          <circle cx="10" cy="10" r="1.15" fill="currentColor" />
+          <circle cx="10" cy="14.7" r="1.15" fill="currentColor" />
+        </svg>
+      );
+    case 'search':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <circle cx="8.6" cy="8.6" r="4.9" stroke="currentColor" strokeWidth="1.45" />
+          <path d="M12.2 12.2L16.2 16.2" stroke="currentColor" strokeWidth="1.45" strokeLinecap="square" strokeLinejoin="miter" />
+        </svg>
+      );
+    case 'filter':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <path d="M3.8 5.1H16.2L11.35 10.55V15.45L8.65 14.15V10.55L3.8 5.1Z" stroke="currentColor" strokeWidth="1.45" strokeLinecap="square" strokeLinejoin="miter" />
+        </svg>
+      );
+    default:
+      return null;
+  }
+}
+
+function dataColumnTypeBadge(type) {
+  const normalizedType = String(type).toLowerCase();
+  if (normalizedType.includes('char') || normalizedType.includes('text') || normalizedType.includes('varchar')) {
+    return 'ABC';
+  }
+
+  return '123';
 }
 
 function CanvasShelfItemIcon({ groupId, typeId }) {

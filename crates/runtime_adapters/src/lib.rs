@@ -347,31 +347,34 @@ fn execute_gmail_send(
     content_type: &str,
     body: &str,
 ) -> Result<NodeExecutionResult, AdapterError> {
-    let access_token =
-        runtime_delivery
-            .access_token
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| AdapterError::InvalidConfig {
-                node_id: node.node_id.clone(),
-                message: "gmail delivery requires a non-empty runtime access token.".to_string(),
-            })?;
-    let send_as_email =
-        runtime_delivery
-            .send_as_email
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| AdapterError::InvalidConfig {
-                node_id: node.node_id.clone(),
-                message: "gmail delivery requires a non-empty `send_as_email` value."
-                    .to_string(),
-            })?;
-
-    let mime_message = build_gmail_mime_message(send_as_email, &config.to, &config.subject, body, content_type)
-        .map_err(|error| AdapterError::InvalidConfig {
+    let access_token = runtime_delivery
+        .access_token
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| AdapterError::InvalidConfig {
             node_id: node.node_id.clone(),
-            message: error.to_string(),
+            message: "gmail delivery requires a non-empty runtime access token.".to_string(),
         })?;
+    let send_as_email = runtime_delivery
+        .send_as_email
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| AdapterError::InvalidConfig {
+            node_id: node.node_id.clone(),
+            message: "gmail delivery requires a non-empty `send_as_email` value.".to_string(),
+        })?;
+
+    let mime_message = build_gmail_mime_message(
+        send_as_email,
+        &config.to,
+        &config.subject,
+        body,
+        content_type,
+    )
+    .map_err(|error| AdapterError::InvalidConfig {
+        node_id: node.node_id.clone(),
+        message: error.to_string(),
+    })?;
     let raw = URL_SAFE_NO_PAD.encode(mime_message.as_bytes());
 
     let client = reqwest::blocking::Client::builder()

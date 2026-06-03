@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Catalog Tree</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../shared.css" />
+  </head>
+  <body>
+    <main class="data-sources-lab">
+      <section class="data-sources-lab__note">
+        <span class="data-sources-lab__eyebrow">Data Sources</span>
+        <h1 class="data-sources-lab__title">Catalog tree split with object explorer detail</h1>
+        <p class="data-sources-lab__caption">
+          A cleaner follow-on study that separates the left-side catalog tree from the right-side object explorer, using the Databricks browsing pattern as a structure reference while keeping Stitchly's darker canvas chrome.
+        </p>
+      </section>
+
+      <section class="data-sources-shell">
+        <div class="data-sources-control">
+          <div class="data-sources-control__dock" aria-label="Canvas menu">
+            <button class="data-sources-control__button data-sources-control__button--brand" type="button" aria-label="Stitchly">
+              <img
+                class="data-sources-control__brand-image"
+                src="../../../../apps/web/public/brand/symbol/stitchly-symbol-mark-white.svg"
+                alt=""
+              />
+            </button>
+
+            <button class="data-sources-control__button" type="button" aria-label="Workspaces">
+              <span class="data-sources-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                  <path d="M4 7.5h6l1.6 2H20v8.8H4z" />
+                </svg>
+              </span>
+            </button>
+
+            <button class="data-sources-control__button" type="button" aria-label="Workflows">
+              <span class="data-sources-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                  <path d="M5 6.5h14M5 12h14M5 17.5h14" />
+                </svg>
+              </span>
+            </button>
+
+            <button class="data-sources-control__button" type="button" aria-label="Runs">
+              <span class="data-sources-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                  <rect x="5" y="6.5" width="14" height="11" rx="1.5" />
+                  <path d="M8 10.5h8M8 13.5h5" />
+                </svg>
+              </span>
+            </button>
+
+            <button class="data-sources-control__button is-active" type="button" aria-label="Data">
+              <span class="data-sources-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                  <ellipse cx="12" cy="7.5" rx="6.5" ry="2.4" />
+                  <path d="M5.5 7.5v8c0 1.3 2.9 2.4 6.5 2.4s6.5-1.1 6.5-2.4v-8" />
+                  <path d="M5.5 11.5c0 1.3 2.9 2.4 6.5 2.4s6.5-1.1 6.5-2.4" />
+                </svg>
+              </span>
+            </button>
+
+            <button class="data-sources-control__button" type="button" aria-label="Integrations">
+              <span class="data-sources-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                  <path d="M8.5 7.5h-1a3 3 0 1 0 0 6h2" />
+                  <path d="M15.5 16.5h1a3 3 0 0 0 0-6h-2" />
+                  <path d="M9.5 12h5" />
+                </svg>
+              </span>
+            </button>
+
+            <div class="data-sources-control__divider" aria-hidden="true"></div>
+
+            <button class="data-sources-control__button" type="button" aria-label="Exit">
+              <span class="data-sources-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                  <path d="M9 7h9v10H9" />
+                  <path d="M6 12h8" />
+                  <path d="M10.5 8.5 14 12l-3.5 3.5" />
+                </svg>
+              </span>
+            </button>
+          </div>
+
+          <section class="data-sources-control__panel catalog-tree-panel" aria-label="Catalog tree popup">
+            <div class="data-sources-panel__top">
+              <div class="data-sources-panel__heading">
+                <span class="data-sources-panel__badge" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                    <ellipse cx="12" cy="7.5" rx="6.5" ry="2.4"></ellipse>
+                    <path d="M5.5 7.5v8c0 1.3 2.9 2.4 6.5 2.4s6.5-1.1 6.5-2.4v-8"></path>
+                    <path d="M5.5 11.5c0 1.3 2.9 2.4 6.5 2.4s6.5-1.1 6.5-2.4"></path>
+                  </svg>
+                </span>
+                <div>
+                  <h2>Catalog</h2>
+                  <p>workspace-6 / local DuckDB browser</p>
+                </div>
+              </div>
+
+              <div class="data-sources-panel__actions">
+                <button class="data-sources-button" type="button">Attach DB</button>
+                <button class="data-sources-button data-sources-button--primary" type="button">New Sink</button>
+              </div>
+            </div>
+
+            <div class="catalog-tree-workbench">
+              <section class="catalog-tree-pane" aria-label="Catalog tree">
+                <div class="catalog-tree-pane__top">
+                  <div class="catalog-tree-pane__header">
+                    <div>
+                      <h3 class="catalog-tree-pane__title">Catalog Tree</h3>
+                      <p class="catalog-tree-pane__meta">Databases, schemas, and objects</p>
+                    </div>
+
+                    <div class="catalog-tree-pane__actions" aria-label="Tree actions">
+                      <button class="catalog-tree-icon-button" type="button" aria-label="Settings">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="square" stroke-linejoin="miter">
+                          <circle cx="10" cy="10" r="2.35" />
+                          <path d="M10 3.6V5.1M10 14.9V16.4M16.4 10H14.9M5.1 10H3.6M14.52 5.48L13.46 6.54M6.54 13.46L5.48 14.52M14.52 14.52L13.46 13.46M6.54 6.54L5.48 5.48" />
+                        </svg>
+                      </button>
+                      <button class="catalog-tree-icon-button" type="button" aria-label="Refresh">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="square" stroke-linejoin="miter">
+                          <path d="M15.15 8.2A5.55 5.55 0 1 0 16 11.2" />
+                          <path d="M15.2 4.95V8.3H11.85" />
+                        </svg>
+                      </button>
+                      <button class="catalog-tree-icon-button" type="button" aria-label="Add">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter">
+                          <path d="M10 4.3V15.7M4.3 10H15.7" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="catalog-tree-pane__search">
+                    <span>Type to search...</span>
+                    <button class="catalog-tree-pane__filter" type="button" aria-label="Tree filters">
+                      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="square" stroke-linejoin="miter">
+                        <path d="M5.2 4.35V15.65" />
+                        <path d="M10 4.35V15.65" />
+                        <path d="M14.8 4.35V15.65" />
+                        <circle cx="5.2" cy="7.2" r="1.55" fill="currentColor" stroke="none" />
+                        <circle cx="10" cy="11.1" r="1.55" fill="currentColor" stroke="none" />
+                        <circle cx="14.8" cy="8.5" r="1.55" fill="currentColor" stroke="none" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  <div class="catalog-tree-pane__tabs">
+                    <button class="catalog-tree-tab" type="button">For you</button>
+                    <button class="catalog-tree-tab is-active" type="button">All</button>
+                    <button class="catalog-tree-tab" type="button">Recent</button>
+                  </div>
+                </div>
+
+                <div class="catalog-tree-list" role="tree" aria-label="Catalog hierarchy">
+                  <button class="catalog-tree-item catalog-tree-item--level-0" type="button" role="treeitem" aria-expanded="false">
+                    <span class="catalog-tree-item__caret">▸</span>
+                    <span class="catalog-tree-item__icon catalog-tree-item__icon--database" aria-hidden="true">
+                      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.25">
+                        <ellipse cx="10" cy="5.65" rx="5" ry="1.9" />
+                        <path d="M5 5.65V12.95C5 14 7.24 14.85 10 14.85C12.76 14.85 15 14 15 12.95V5.65" />
+                        <path d="M5 9.3C5 10.35 7.24 11.2 10 11.2C12.76 11.2 15 10.35 15 9.3" />
+                      </svg>
+                    </span>
+                    <span class="catalog-tree-item__label">warehouse.duckdb</span>
+                  </button>
+
+                  <button class="catalog-tree-item catalog-tree-item--level-0 is-open" type="button" role="treeitem" aria-expanded="true">
+                    <span class="catalog-tree-item__caret">▾</span>
+                    <span class="catalog-tree-item__icon catalog-tree-item__icon--database" aria-hidden="true">
+                      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.25">
+                        <ellipse cx="10" cy="5.65" rx="5" ry="1.9" />
+                        <path d="M5 5.65V12.95C5 14 7.24 14.85 10 14.85C12.76 14.85 15 14 15 12.95V5.65" />
+                        <path d="M5 9.3C5 10.35 7.24 11.2 10 11.2C12.76 11.2 15 10.35 15 9.3" />
+                      </svg>
+                    </span>
+                    <span class="catalog-tree-item__label">workflow.duckdb</span>
+                  </button>
+
+                  <button class="catalog-tree-item catalog-tree-item--level-1" type="button" role="treeitem" aria-expanded="false">
+                    <span class="catalog-tree-item__caret">▸</span>
+                    <span class="catalog-tree-item__icon catalog-tree-item__icon--schema" aria-hidden="true">
+                      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.25">
+                        <rect x="4.45" y="4.45" width="11.1" height="11.1" rx="1.7" />
+                        <path d="M7.3 4.7V15.3M12.7 4.7V15.3M4.7 7.3H15.3M4.7 12.7H15.3" opacity="0.78" />
+                      </svg>
+                    </span>
+                    <span class="catalog-tree-item__label">staging</span>
+                  </button>
+
+                  <button class="catalog-tree-item catalog-tree-item--level-1 is-open" type="button" role="treeitem" aria-expanded="true">
+                    <span class="catalog-tree-item__caret">▾</span>
+                    <span class="catalog-tree-item__icon catalog-tree-item__icon--schema" aria-hidden="true">
+                      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.25">
+                        <rect x="4.45" y="4.45" width="11.1" height="11.1" rx="1.7" />
+                        <path d="M7.3 4.7V15.3M12.7 4.7V15.3M4.7 7.3H15.3M4.7 12.7H15.3" opacity="0.78" />
+                      </svg>
+                    </span>
+                    <span class="catalog-tree-item__label">tables</span>
+                  </button>
+
+                  <button class="catalog-tree-item catalog-tree-item--level-2 is-active" type="button" role="treeitem" aria-selected="true">
+                    <span class="catalog-tree-item__caret"></span>
+                    <span class="catalog-tree-item__icon catalog-tree-item__icon--table" aria-hidden="true">
+                      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.25">
+                        <rect x="4.6" y="4.7" width="10.8" height="10.6" rx="1.5" />
+                        <path d="M4.9 8.05H15.1M8 8.2V15M11.95 8.2V15" opacity="0.8" />
+                      </svg>
+                    </span>
+                    <span class="catalog-tree-item__label">customer_orders</span>
+                  </button>
+
+                  <button class="catalog-tree-item catalog-tree-item--level-2" type="button" role="treeitem">
+                    <span class="catalog-tree-item__caret"></span>
+                    <span class="catalog-tree-item__icon catalog-tree-item__icon--table" aria-hidden="true">
+                      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.25">
+                        <rect x="4.6" y="4.7" width="10.8" height="10.6" rx="1.5" />
+                        <path d="M4.9 8.05H15.1M8 8.2V15M11.95 8.2V15" opacity="0.8" />
+                      </svg>
+                    </span>
+                    <span class="catalog-tree-item__label">dim_customer</span>
+                  </button>
+
+                  <button class="catalog-tree-item catalog-tree-item--level-2" type="button" role="treeitem">
+                    <span class="catalog-tree-item__caret"></span>
+                    <span class="catalog-tree-item__icon catalog-tree-item__icon--table" aria-hidden="true">
+                      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.25">
+                        <rect x="4.6" y="4.7" width="10.8" height="10.6" rx="1.5" />
+                        <path d="M4.9 8.05H15.1M8 8.2V15M11.95 8.2V15" opacity="0.8" />
+                      </svg>
+                    </span>
+                    <span class="catalog-tree-item__label">dim_country</span>
+                  </button>
+
+                  <button class="catalog-tree-item catalog-tree-item--level-2" type="button" role="treeitem">
+                    <span class="catalog-tree-item__caret"></span>
+                    <span class="catalog-tree-item__icon catalog-tree-item__icon--table" aria-hidden="true">
+                      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.25">
+                        <rect x="4.6" y="4.7" width="10.8" height="10.6" rx="1.5" />
+                        <path d="M4.9 8.05H15.1M8 8.2V15M11.95 8.2V15" opacity="0.8" />
+                      </svg>
+                    </span>
+                    <span class="catalog-tree-item__label">fact_margin_daily</span>
+                  </button>
+
+                  <button class="catalog-tree-item catalog-tree-item--level-1" type="button" role="treeitem" aria-expanded="false">
+                    <span class="catalog-tree-item__caret">▸</span>
+                    <span class="catalog-tree-item__icon catalog-tree-item__icon--schema" aria-hidden="true">
+                      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.25">
+                        <rect x="4.45" y="4.45" width="11.1" height="11.1" rx="1.7" />
+                        <path d="M7.3 4.7V15.3M12.7 4.7V15.3M4.7 7.3H15.3M4.7 12.7H15.3" opacity="0.78" />
+                      </svg>
+                    </span>
+                    <span class="catalog-tree-item__label">outputs</span>
+                  </button>
+
+                  <button class="catalog-tree-item catalog-tree-item--level-0" type="button" role="treeitem" aria-expanded="false">
+                    <span class="catalog-tree-item__caret">▸</span>
+                    <span class="catalog-tree-item__icon catalog-tree-item__icon--database" aria-hidden="true">
+                      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.25">
+                        <ellipse cx="10" cy="5.65" rx="5" ry="1.9" />
+                        <path d="M5 5.65V12.95C5 14 7.24 14.85 10 14.85C12.76 14.85 15 14 15 12.95V5.65" />
+                        <path d="M5 9.3C5 10.35 7.24 11.2 10 11.2C12.76 11.2 15 10.35 15 9.3" />
+                      </svg>
+                    </span>
+                    <span class="catalog-tree-item__label">files.duckdb</span>
+                  </button>
+                </div>
+              </section>
+
+              <section class="catalog-explorer-pane" aria-label="Catalog explorer">
+                <div class="catalog-explorer-pane__header">
+                  <div class="catalog-explorer-pane__title-group">
+                    <span class="catalog-explorer-pane__eyebrow">Catalog Explorer</span>
+                    <h3 class="catalog-explorer-pane__title">tables.customer_orders</h3>
+                    <p class="catalog-explorer-pane__path">workflow.duckdb / tables / customer_orders</p>
+                  </div>
+
+                  <div class="catalog-explorer-pane__tags">
+                    <span>table</span>
+                    <span>source ready</span>
+                    <span>sink ready</span>
+                  </div>
+                </div>
+
+                <div class="catalog-explorer-pane__summary">
+                  <article class="catalog-explorer-card">
+                    <span class="catalog-explorer-card__label">Grain</span>
+                    <strong>1 row per order_id</strong>
+                    <span>Refunds already normalized at the order level.</span>
+                  </article>
+
+                  <article class="catalog-explorer-card">
+                    <span class="catalog-explorer-card__label">Freshness</span>
+                    <strong>Updated 11m ago</strong>
+                    <span>Refreshed by Orders Cleanse after each ingest batch.</span>
+                  </article>
+
+                  <article class="catalog-explorer-card">
+                    <span class="catalog-explorer-card__label">Bindings</span>
+                    <strong>2 active nodes</strong>
+                    <span>Used as an input by transforms and as a sink for curated rewrites.</span>
+                  </article>
+                </div>
+
+                <div class="catalog-explorer-grid">
+                  <section class="catalog-explorer-section">
+                    <div class="catalog-explorer-section__header">
+                      <h4>Object Detail</h4>
+                      <span>Grain and semantic shape</span>
+                    </div>
+
+                    <dl class="catalog-explorer-detail-list">
+                      <div class="catalog-explorer-detail-list__row">
+                        <dt>Primary key</dt>
+                        <dd>order_id</dd>
+                      </div>
+                      <div class="catalog-explorer-detail-list__row">
+                        <dt>Partitioning</dt>
+                        <dd>loaded_at by day</dd>
+                      </div>
+                      <div class="catalog-explorer-detail-list__row">
+                        <dt>Lineage</dt>
+                        <dd>staging.shopify_orders + staging.raw_payments</dd>
+                      </div>
+                      <div class="catalog-explorer-detail-list__row">
+                        <dt>Null policy</dt>
+                        <dd>customer_id and status enforced, refund_total defaults to 0.0</dd>
+                      </div>
+                    </dl>
+
+                    <div class="catalog-explorer-pill-row">
+                      <span>dimensions: customer, geography</span>
+                      <span>metrics: revenue, refund_total</span>
+                      <span>audit: loaded_at, batch_id</span>
+                    </div>
+                  </section>
+
+                  <section class="catalog-explorer-section">
+                    <div class="catalog-explorer-section__header">
+                      <h4>Column Groups</h4>
+                      <span>Explorer entry points</span>
+                    </div>
+
+                    <div class="catalog-explorer-groups">
+                      <article class="catalog-explorer-group">
+                        <strong>Business keys</strong>
+                        <span>order_id, customer_id, order_status</span>
+                      </article>
+                      <article class="catalog-explorer-group">
+                        <strong>Commercial metrics</strong>
+                        <span>gross_revenue, discount_total, refund_total</span>
+                      </article>
+                      <article class="catalog-explorer-group">
+                        <strong>Load tracking</strong>
+                        <span>loaded_at, source_file, workflow_run_id</span>
+                      </article>
+                    </div>
+                  </section>
+                </div>
+
+                <section class="catalog-explorer-section catalog-explorer-section--table">
+                  <div class="catalog-explorer-section__header">
+                    <h4>Column Preview</h4>
+                    <span>Top-level object grain and types</span>
+                  </div>
+
+                  <div class="catalog-explorer-columns">
+                    <div class="catalog-explorer-columns__header">
+                      <span>Column</span>
+                      <span>Type</span>
+                      <span>Role</span>
+                    </div>
+                    <div class="catalog-explorer-columns__row">
+                      <span>order_id</span>
+                      <span>bigint</span>
+                      <span>grain key</span>
+                    </div>
+                    <div class="catalog-explorer-columns__row">
+                      <span>customer_id</span>
+                      <span>text</span>
+                      <span>dimension</span>
+                    </div>
+                    <div class="catalog-explorer-columns__row">
+                      <span>gross_revenue</span>
+                      <span>decimal(18,2)</span>
+                      <span>metric</span>
+                    </div>
+                    <div class="catalog-explorer-columns__row">
+                      <span>refund_total</span>
+                      <span>decimal(18,2)</span>
+                      <span>metric</span>
+                    </div>
+                    <div class="catalog-explorer-columns__row">
+                      <span>loaded_at</span>
+                      <span>timestamp</span>
+                      <span>audit</span>
+                    </div>
+                  </div>
+                </section>
+              </section>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

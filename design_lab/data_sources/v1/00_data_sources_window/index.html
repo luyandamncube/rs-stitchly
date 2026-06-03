@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Data Sources Window</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../shared.css" />
+  </head>
+  <body>
+    <main class="data-sources-lab">
+      <section class="data-sources-lab__note">
+        <span class="data-sources-lab__eyebrow">Data Sources</span>
+        <h1 class="data-sources-lab__title">Canvas popup for local DuckDB source and sink browsing</h1>
+        <p class="data-sources-lab__caption">
+          First pass at a workspace data browser that can open from the rail, inspect local catalogs, and add objects to the canvas as Table Input or Table Output nodes.
+        </p>
+      </section>
+
+      <section class="data-sources-shell">
+        <div class="data-sources-control">
+          <div class="data-sources-control__dock" aria-label="Canvas menu">
+            <button class="data-sources-control__button data-sources-control__button--brand" type="button" aria-label="Stitchly">
+              <img
+                class="data-sources-control__brand-image"
+                src="../../../../apps/web/public/brand/symbol/stitchly-symbol-mark-white.svg"
+                alt=""
+              />
+            </button>
+
+            <button class="data-sources-control__button" type="button" aria-label="Workspaces">
+              <span class="data-sources-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                  <path d="M4 7.5h6l1.6 2H20v8.8H4z" />
+                </svg>
+              </span>
+            </button>
+
+            <button class="data-sources-control__button" type="button" aria-label="Workflows">
+              <span class="data-sources-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                  <path d="M5 6.5h14M5 12h14M5 17.5h14" />
+                </svg>
+              </span>
+            </button>
+
+            <button class="data-sources-control__button" type="button" aria-label="Runs">
+              <span class="data-sources-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                  <rect x="5" y="6.5" width="14" height="11" rx="1.5" />
+                  <path d="M8 10.5h8M8 13.5h5" />
+                </svg>
+              </span>
+            </button>
+
+            <button class="data-sources-control__button is-active" type="button" aria-label="Data">
+              <span class="data-sources-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                  <ellipse cx="12" cy="7.5" rx="6.5" ry="2.4" />
+                  <path d="M5.5 7.5v8c0 1.3 2.9 2.4 6.5 2.4s6.5-1.1 6.5-2.4v-8" />
+                  <path d="M5.5 11.5c0 1.3 2.9 2.4 6.5 2.4s6.5-1.1 6.5-2.4" />
+                </svg>
+              </span>
+            </button>
+
+            <button class="data-sources-control__button" type="button" aria-label="Integrations">
+              <span class="data-sources-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                  <path d="M8.5 7.5h-1a3 3 0 1 0 0 6h2" />
+                  <path d="M15.5 16.5h1a3 3 0 0 0 0-6h-2" />
+                  <path d="M9.5 12h5" />
+                </svg>
+              </span>
+            </button>
+
+            <div class="data-sources-control__divider" aria-hidden="true"></div>
+
+            <button class="data-sources-control__button" type="button" aria-label="Exit">
+              <span class="data-sources-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                  <path d="M9 7h9v10H9" />
+                  <path d="M6 12h8" />
+                  <path d="M10.5 8.5 14 12l-3.5 3.5" />
+                </svg>
+              </span>
+            </button>
+          </div>
+
+          <section class="data-sources-control__panel" aria-label="Data sources popup">
+            <div class="data-sources-panel__top">
+              <div class="data-sources-panel__heading">
+                <span class="data-sources-panel__badge" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                    <ellipse cx="12" cy="7.5" rx="6.5" ry="2.4"></ellipse>
+                    <path d="M5.5 7.5v8c0 1.3 2.9 2.4 6.5 2.4s6.5-1.1 6.5-2.4v-8"></path>
+                    <path d="M5.5 11.5c0 1.3 2.9 2.4 6.5 2.4s6.5-1.1 6.5-2.4"></path>
+                  </svg>
+                </span>
+                <div>
+                  <h2>Data Sources</h2>
+                  <p>workspace-6 / workflow.duckdb</p>
+                </div>
+              </div>
+
+              <div class="data-sources-panel__actions">
+                <button class="data-sources-button" type="button">Attach DB</button>
+                <button class="data-sources-button data-sources-button--primary" type="button">Create Sink</button>
+              </div>
+            </div>
+
+            <div class="data-sources-panel__toolbar">
+              <div class="data-sources-panel__filter-group" aria-label="Source and sink filters">
+                <button class="data-sources-chip is-selected" type="button">Use as source</button>
+                <button class="data-sources-chip" type="button">Use as sink</button>
+                <button class="data-sources-chip" type="button">Tables</button>
+                <button class="data-sources-chip" type="button">Views</button>
+                <button class="data-sources-chip" type="button">Recent</button>
+                <button class="data-sources-chip" type="button">Writable only</button>
+              </div>
+
+              <div class="data-sources-search" role="search">
+                <span>Search db, schema, or table</span>
+                <span aria-hidden="true">/</span>
+              </div>
+            </div>
+
+            <div class="data-sources-panel__context">
+              <article class="data-sources-context-card">
+                <span class="data-sources-context-card__label">Canvas target</span>
+                <strong>Orders Cleanse</strong>
+                <span>Selected node is waiting for a table_ref source.</span>
+              </article>
+
+              <article class="data-sources-context-card">
+                <span class="data-sources-context-card__label">Workspace catalog</span>
+                <strong>workflow.duckdb</strong>
+                <span>Local-first catalog for staging, tables, outputs, and run snapshots.</span>
+              </article>
+
+              <article class="data-sources-context-card">
+                <span class="data-sources-context-card__label">Bindable objects</span>
+                <strong>32 ready objects</strong>
+                <span>24 source-ready, 12 writable sinks, 8 dual-mode tables.</span>
+              </article>
+
+              <article class="data-sources-context-card">
+                <span class="data-sources-context-card__label">Last attached DB</span>
+                <strong>warehouse.duckdb</strong>
+                <span>Read-only finance mart mounted for cross-workflow lookups.</span>
+              </article>
+            </div>
+
+            <div class="data-sources-panel__body">
+              <section class="data-sources-column" aria-label="Catalog browser">
+                <div class="data-sources-column__header">
+                  <h3 class="data-sources-column__title">Catalogs</h3>
+                  <p class="data-sources-column__meta">Choose the local database or attached catalog to browse.</p>
+                </div>
+
+                <article class="data-sources-catalog__card is-active">
+                  <div class="data-sources-catalog__title-row">
+                    <strong>workflow.duckdb</strong>
+                    <span class="data-sources-catalog__path">.stitchly/workspaces/workspace-6/db/workflow.duckdb</span>
+                  </div>
+                  <div class="data-sources-catalog__badges">
+                    <span class="data-sources-catalog__pill data-sources-catalog__pill--current">current</span>
+                    <span class="data-sources-catalog__pill">local</span>
+                    <span class="data-sources-catalog__pill">read / write</span>
+                  </div>
+                  <div class="data-sources-catalog__tree">
+                    <span><strong>staging</strong> / 9 landing tables</span>
+                    <span><strong>tables</strong> / 14 modeled tables</span>
+                    <span><strong>outputs</strong> / 6 materialized sinks</span>
+                    <span><strong>runs</strong> / workflow and node run mirrors</span>
+                  </div>
+                </article>
+
+                <article class="data-sources-catalog__card">
+                  <div class="data-sources-catalog__title-row">
+                    <strong>warehouse.duckdb</strong>
+                    <span class="data-sources-catalog__path">/mnt/studio/catalogs/warehouse.duckdb</span>
+                  </div>
+                  <div class="data-sources-catalog__badges">
+                    <span class="data-sources-catalog__pill">attached</span>
+                    <span class="data-sources-catalog__pill">read only</span>
+                  </div>
+                  <div class="data-sources-catalog__tree">
+                    <span><strong>mart</strong> / revenue and customer models</span>
+                    <span><strong>core</strong> / shared dimensions</span>
+                  </div>
+                </article>
+
+                <article class="data-sources-catalog__card">
+                  <div class="data-sources-catalog__title-row">
+                    <strong>files.duckdb</strong>
+                    <span class="data-sources-catalog__path">/mnt/studio/catalogs/files.duckdb</span>
+                  </div>
+                  <div class="data-sources-catalog__badges">
+                    <span class="data-sources-catalog__pill">attached</span>
+                    <span class="data-sources-catalog__pill">read / write</span>
+                  </div>
+                  <div class="data-sources-catalog__tree">
+                    <span><strong>imports</strong> / CSV and parquet landings</span>
+                    <span><strong>archive</strong> / historical snapshots</span>
+                  </div>
+                </article>
+              </section>
+
+              <section class="data-sources-column" aria-label="Object browser">
+                <div class="data-sources-column__header">
+                  <h3 class="data-sources-column__title">Objects</h3>
+                  <p class="data-sources-column__meta">Showing source-ready objects in workflow.duckdb.</p>
+                </div>
+
+                <div class="data-sources-object__table">
+                  <header class="data-sources-object__header">
+                    <span>Object</span>
+                    <span>Kind</span>
+                    <span>Rows</span>
+                    <span>Updated</span>
+                    <span>Bindings</span>
+                  </header>
+
+                  <div class="data-sources-object__row">
+                    <div class="data-sources-object__copy">
+                      <strong>staging.shopify_orders</strong>
+                      <span>Landing table for raw commerce ingestion</span>
+                    </div>
+                    <span class="data-sources-object__cell--kind">
+                      <span class="data-sources-object__tag">source</span>
+                    </span>
+                    <span class="data-sources-object__cell--rows">1.2M</span>
+                    <span class="data-sources-object__cell--updated">2m ago</span>
+                    <span class="data-sources-object__cell--bindings">3</span>
+                  </div>
+
+                  <div class="data-sources-object__row is-active">
+                    <div class="data-sources-object__copy">
+                      <strong>tables.customer_orders</strong>
+                      <span>Current modeled order table for downstream transforms</span>
+                    </div>
+                    <span class="data-sources-object__cell--kind">
+                      <span class="data-sources-object__tag is-strong">source + sink</span>
+                    </span>
+                    <span class="data-sources-object__cell--rows">84k</span>
+                    <span class="data-sources-object__cell--updated">11m ago</span>
+                    <span class="data-sources-object__cell--bindings">2</span>
+                  </div>
+
+                  <div class="data-sources-object__row">
+                    <div class="data-sources-object__copy">
+                      <strong>tables.dim_customer</strong>
+                      <span>Shared customer dimension with deduped identities</span>
+                    </div>
+                    <span class="data-sources-object__cell--kind">
+                      <span class="data-sources-object__tag">source</span>
+                    </span>
+                    <span class="data-sources-object__cell--rows">12k</span>
+                    <span class="data-sources-object__cell--updated">19m ago</span>
+                    <span class="data-sources-object__cell--bindings">1</span>
+                  </div>
+
+                  <div class="data-sources-object__row">
+                    <div class="data-sources-object__copy">
+                      <strong>outputs.daily_margin</strong>
+                      <span>Materialized reporting sink written by finance workflow</span>
+                    </div>
+                    <span class="data-sources-object__cell--kind">
+                      <span class="data-sources-object__tag">sink</span>
+                    </span>
+                    <span class="data-sources-object__cell--rows">365</span>
+                    <span class="data-sources-object__cell--updated">34m ago</span>
+                    <span class="data-sources-object__cell--bindings">1</span>
+                  </div>
+
+                  <div class="data-sources-object__row">
+                    <div class="data-sources-object__copy">
+                      <strong>outputs.failed_refunds</strong>
+                      <span>Audit sink for refund retries and exception review</span>
+                    </div>
+                    <span class="data-sources-object__cell--kind">
+                      <span class="data-sources-object__tag">sink</span>
+                    </span>
+                    <span class="data-sources-object__cell--rows">493</span>
+                    <span class="data-sources-object__cell--updated">1h ago</span>
+                    <span class="data-sources-object__cell--bindings">2</span>
+                  </div>
+
+                  <div class="data-sources-object__row">
+                    <div class="data-sources-object__copy">
+                      <strong>mart.monthly_revenue</strong>
+                      <span>Attached warehouse view from the finance mart</span>
+                    </div>
+                    <span class="data-sources-object__cell--kind">
+                      <span class="data-sources-object__tag">source</span>
+                    </span>
+                    <span class="data-sources-object__cell--rows">24</span>
+                    <span class="data-sources-object__cell--updated">3h ago</span>
+                    <span class="data-sources-object__cell--bindings">0</span>
+                  </div>
+                </div>
+              </section>
+
+              <aside class="data-sources-inspector" aria-label="Selected object inspector">
+                <section class="data-sources-inspector__section">
+                  <span class="data-sources-section__eyebrow">Selected object</span>
+                  <div class="data-sources-inspector__hero">
+                    <strong>tables.customer_orders</strong>
+                    <span class="data-sources-inspector__meta">Modeled DuckDB table, updated from staging.shopify_orders and staging.raw_payments.</span>
+                  </div>
+                  <div class="data-sources-pills">
+                    <span class="is-strong">source ready</span>
+                    <span class="is-strong">sink ready</span>
+                    <span>primary key: order_id</span>
+                  </div>
+                  <dl class="data-sources-detail-list">
+                    <div class="data-sources-detail-list__row">
+                      <dt>Catalog</dt>
+                      <dd>workflow.duckdb / tables</dd>
+                    </div>
+                    <div class="data-sources-detail-list__row">
+                      <dt>Shape</dt>
+                      <dd>84,219 rows / 18 columns / clustered by loaded_at</dd>
+                    </div>
+                    <div class="data-sources-detail-list__row">
+                      <dt>Used by</dt>
+                      <dd>Orders Cleanse, Margin Snapshot</dd>
+                    </div>
+                  </dl>
+                </section>
+
+                <section class="data-sources-inspector__section">
+                  <span class="data-sources-section__eyebrow">Columns</span>
+                  <div class="data-sources-columns">
+                    <span class="data-sources-columns__tag">order_id bigint</span>
+                    <span class="data-sources-columns__tag">customer_id text</span>
+                    <span class="data-sources-columns__tag">gross_revenue decimal</span>
+                    <span class="data-sources-columns__tag">refund_total decimal</span>
+                    <span class="data-sources-columns__tag">status text</span>
+                    <span class="data-sources-columns__tag">loaded_at timestamp</span>
+                  </div>
+                </section>
+
+                <section class="data-sources-inspector__section">
+                  <span class="data-sources-section__eyebrow">Preview</span>
+                  <div class="data-sources-preview">
+                    <header class="data-sources-preview__header">
+                      <span>id</span>
+                      <span>customer</span>
+                      <span>gross</span>
+                      <span>refund</span>
+                      <span>status</span>
+                    </header>
+                    <div class="data-sources-preview__row">
+                      <span>82014</span>
+                      <span>cust_2198</span>
+                      <span>128.20</span>
+                      <span>0.00</span>
+                      <span>paid</span>
+                    </div>
+                    <div class="data-sources-preview__row">
+                      <span>82013</span>
+                      <span>cust_1044</span>
+                      <span>49.90</span>
+                      <span>12.45</span>
+                      <span>partial</span>
+                    </div>
+                    <div class="data-sources-preview__row">
+                      <span>82012</span>
+                      <span>cust_8821</span>
+                      <span>72.00</span>
+                      <span>0.00</span>
+                      <span>paid</span>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="data-sources-inspector__section">
+                  <span class="data-sources-section__eyebrow">Bind to canvas</span>
+                  <div class="data-sources-binding__row is-strong">
+                    <div class="data-sources-binding__stack">
+                      <span class="data-sources-binding__title">Add Table Input</span>
+                      <span class="data-sources-binding__hint">Create a source node prebound to tables.customer_orders.</span>
+                    </div>
+                    <div class="data-sources-binding__actions">
+                      <button class="data-sources-button data-sources-button--primary" type="button">Add source node</button>
+                    </div>
+                  </div>
+
+                  <div class="data-sources-binding__row">
+                    <div class="data-sources-binding__stack">
+                      <span class="data-sources-binding__title">Use as Table Output</span>
+                      <span class="data-sources-binding__hint">Write back into this object with append, replace, or upsert.</span>
+                    </div>
+                    <div class="data-sources-binding__actions">
+                      <button class="data-sources-button data-sources-button--ghost" type="button">Configure sink</button>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="data-sources-inspector__section">
+                  <span class="data-sources-section__eyebrow">Recent bindings</span>
+                  <div class="data-sources-bindings">
+                    <span class="data-sources-bindings__item is-active">orders_cleanse</span>
+                    <span class="data-sources-bindings__item">margin_snapshot</span>
+                    <span class="data-sources-bindings__item">refund_retry_sink</span>
+                  </div>
+                </section>
+              </aside>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

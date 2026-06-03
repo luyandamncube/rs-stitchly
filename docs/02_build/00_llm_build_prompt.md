@@ -127,6 +127,15 @@ Use these docs for these responsibilities:
 - `docs/05_venture/02_scoring_rubric.md`
   Weighted scoring system, confidence model, and decision criteria for comparing candidate ideas.
 
+- `docs/05_venture/05_idea_generation_loop.md`
+  Sourcing loop for turning recurring pain, market signals, and workflow friction into candidate ideas before full scoring.
+
+- `docs/05_venture/06_idea_source_catalog.md`
+  Repeatable source map for discovering idea signals across local pain, data feeds, app complaints, and internal ops friction.
+
+- `docs/05_venture/07_pre_score_template.md`
+  Lightweight pre-score gate for filtering idea variants before a full rubric pass.
+
 - `docs/04_execution/01_node_io_and_execution_contracts.md`
   Shared node input/output rules, v1 fan-out behavior, and the running per-node execution contract table.
 

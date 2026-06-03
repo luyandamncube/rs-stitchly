@@ -33,6 +33,15 @@ This framework is intentionally biased toward:
 - `04_portfolio_backlog.md`
   Tracks the current scored portfolio and next actions.
 
+- `05_idea_generation_loop.md`
+  Defines the repeatable loop for sourcing signals, generating candidate ideas, and promoting the best ones to full scoring.
+
+- `06_idea_source_catalog.md`
+  Defines where to look for idea signals and how to capture them consistently.
+
+- `07_pre_score_template.md`
+  Defines the fast filter used before a full rubric pass.
+
 - `20_idea_savr.md`
   Seeded evaluation for Savr.
 
@@ -46,9 +55,11 @@ This framework is intentionally biased toward:
 
 Every new idea should:
 
-1. start as a record using `01_idea_record_template.md`
-2. be scored using `02_scoring_rubric.md`
-3. receive a deterministic recommendation from `03_recommendation_rules.md`
-4. be added or updated in `04_portfolio_backlog.md`
+1. start from a source signal using `05_idea_generation_loop.md`
+2. be pre-scored using `07_pre_score_template.md`
+3. be promoted into a record using `01_idea_record_template.md`
+4. be scored using `02_scoring_rubric.md`
+5. receive a deterministic recommendation from `03_recommendation_rules.md`
+6. be added or updated in `04_portfolio_backlog.md`
 
 This keeps the framework useful as an operating system rather than a loose brainstorming folder.

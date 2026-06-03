@@ -109,6 +109,36 @@ export function updateWorkflowState(workspaceId, lastOpenedWorkflowId) {
   });
 }
 
+export function getWorkspaceCatalog(workspaceId) {
+  return request(`/api/workspaces/${workspaceId}/catalog`);
+}
+
+export function getWorkspaceCatalogSchema(workspaceId, workflowId, schemaName) {
+  return request(
+    `/api/workspaces/${workspaceId}/catalog/${encodeURIComponent(
+      workflowId
+    )}/schemas/${encodeURIComponent(schemaName)}`
+  );
+}
+
+export function getWorkspaceCatalogTable(workspaceId, workflowId, schemaName, tableName) {
+  return request(
+    `/api/workspaces/${workspaceId}/catalog/${encodeURIComponent(
+      workflowId
+    )}/schemas/${encodeURIComponent(schemaName)}/tables/${encodeURIComponent(tableName)}`
+  );
+}
+
+export function runWorkspaceCatalogQuery(workspaceId, workflowId, query) {
+  return request(
+    `/api/workspaces/${workspaceId}/catalog/${encodeURIComponent(workflowId)}/query`,
+    {
+      body: JSON.stringify({ query }),
+      method: 'POST'
+    }
+  );
+}
+
 export function getWorkspaceRuns(workspaceId) {
   return request(`/api/workspaces/${workspaceId}/runs`);
 }

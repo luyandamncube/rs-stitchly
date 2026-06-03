@@ -353,6 +353,91 @@ pub struct WorkflowStateResponse {
     pub last_opened_workflow_id: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceCatalogTableSummary {
+    pub table_name: String,
+    pub table_type: String,
+    pub column_count: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceCatalogSchemaSummary {
+    pub schema_name: String,
+    pub table_count: u32,
+    #[serde(default)]
+    pub tables: Vec<WorkspaceCatalogTableSummary>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceCatalogDatabaseSummary {
+    pub workflow_id: String,
+    pub workflow_name: String,
+    pub database_name: String,
+    #[serde(default)]
+    pub schemas: Vec<WorkspaceCatalogSchemaSummary>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceCatalogResponse {
+    #[serde(default)]
+    pub catalogs: Vec<WorkspaceCatalogDatabaseSummary>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceCatalogSchemaResponse {
+    pub workflow_id: String,
+    pub workflow_name: String,
+    pub database_name: String,
+    pub schema_name: String,
+    #[serde(default)]
+    pub tables: Vec<WorkspaceCatalogTableSummary>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceCatalogColumnSummary {
+    pub column_name: String,
+    pub data_type: String,
+    pub nullable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceCatalogTableResponse {
+    pub workflow_id: String,
+    pub workflow_name: String,
+    pub database_name: String,
+    pub schema_name: String,
+    pub table_name: String,
+    #[serde(default)]
+    pub columns: Vec<WorkspaceCatalogColumnSummary>,
+    #[serde(default)]
+    pub sample_rows: Vec<Vec<Option<String>>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceCatalogQueryRequest {
+    pub query: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceCatalogQueryColumn {
+    pub column_name: String,
+    pub data_type: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceCatalogQueryResponse {
+    pub workflow_id: String,
+    pub workflow_name: String,
+    pub database_name: String,
+    pub query: String,
+    #[serde(default)]
+    pub columns: Vec<WorkspaceCatalogQueryColumn>,
+    #[serde(default)]
+    pub rows: Vec<Vec<Option<String>>>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct CreateWorkflowRequest {
     pub workflow: WorkflowDefinition,

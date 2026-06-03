@@ -81,6 +81,21 @@ Every idea in the portfolio backlog must use one of:
 
 ## Operating Loop
 
+### 0. Source
+
+Start with a real signal rather than a blank-page brainstorm.
+
+Common sources:
+
+- recurring public pain
+- messy business workflows
+- public data feeds
+- outages, schedules, and reporting gaps
+- complaint-heavy products
+- internal operator pain already experienced directly
+
+Use `05_idea_generation_loop.md` and `06_idea_source_catalog.md` to drive this step.
+
 ### 1. Capture
 
 Record the idea in plain language before trying to optimize it.
@@ -92,6 +107,8 @@ The goal at this stage is not polish. The goal is to preserve the opportunity wh
 Convert the idea into the fixed schema from `01_idea_record_template.md`.
 
 This prevents one idea from being well-documented and another from being vague but still compared side by side.
+
+Before doing a full normalization pass, use `07_pre_score_template.md` if the idea is still early or if multiple variants are competing.
 
 ### 3. Score
 
@@ -195,8 +212,9 @@ These may be positives, but they do not replace:
 
 Recommended founder loop:
 
-- capture ideas anytime
-- normalize and score during a weekly review block
+- source and capture ideas anytime
+- run sourcing and pre-score sessions during a weekly review block
+- normalize and full-score only the strongest candidates
 - revisit `Validate First` and `Incubate / Park` ideas monthly
 - revisit `Build Now` ideas immediately after the current build slot opens
 
@@ -206,6 +224,9 @@ This docs framework is expected to become a future Stitchly artifact.
 
 Likely later forms:
 
+- signal intake workflow
+- idea generation workflow
+- pre-score workflow
 - idea intake workflow
 - scorecard workflow
 - portfolio tracker workflow

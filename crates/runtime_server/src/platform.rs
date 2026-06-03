@@ -1,6 +1,7 @@
 use std::{
     env, fs,
     path::{Path, PathBuf},
+    process::Command,
     sync::{Arc, Mutex},
 };
 
@@ -9,6 +10,9 @@ use api_contract::{
     AuthSessionResponse, DeleteWorkflowResponse, EventTargetKind, LogLevel, RunErrorCategory,
     RunEvent, RunEventType, RunLogEntry, RunSnapshot, SessionUserSummary, TriggerKind,
     WorkflowListResponse, WorkflowResponse, WorkflowStateResponse, WorkflowSummary,
+    WorkspaceCatalogColumnSummary, WorkspaceCatalogDatabaseSummary, WorkspaceCatalogQueryColumn,
+    WorkspaceCatalogQueryResponse, WorkspaceCatalogResponse, WorkspaceCatalogSchemaResponse,
+    WorkspaceCatalogSchemaSummary, WorkspaceCatalogTableResponse, WorkspaceCatalogTableSummary,
     WorkspaceConnectionSummary, WorkspaceConnectionsResponse, WorkspaceListResponse,
     WorkspaceMembershipRole, WorkspaceSummary,
 };
@@ -17,7 +21,7 @@ use argon2::{
     Argon2,
 };
 use chrono::{Duration, Utc};
-use duckdb::Connection as DuckDbConnection;
+use duckdb::{Connection as DuckDbConnection, OptionalExt};
 use rand_core::OsRng;
 use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
@@ -664,8 +668,9 @@ impl PlatformStore {
             ],
         )?;
 
-        let summary = workspace_connection_summary_by_id(&tx, workspace_id, connection_id.as_str())?
-            .ok_or_else(|| anyhow!("workspace connection `{connection_id}` was not found"))?;
+        let summary =
+            workspace_connection_summary_by_id(&tx, workspace_id, connection_id.as_str())?
+                .ok_or_else(|| anyhow!("workspace connection `{connection_id}` was not found"))?;
         tx.commit()?;
 
         Ok(summary)
@@ -783,6 +788,164 @@ impl PlatformStore {
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(WorkflowListResponse { workflows })
+    }
+
+    pub fn list_workspace_catalogs(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+    ) -> anyhow::Result<WorkspaceCatalogResponse> {
+        let connection = self.connection();
+        ensure_workspace_access(&connection, user_id, workspace_id)?;
+
+        let workflows = list_catalog_workflows(&connection, workspace_id)?;
+        let mut catalogs = Vec::with_capacity(workflows.len());
+
+        for workflow in workflows {
+            let storage_owner_user_id =
+                resolve_catalog_workflow_owner_user_id(&connection, workspace_id, &workflow)?;
+            let duckdb_path = self
+                .workflow_root_path(
+                    storage_owner_user_id.as_str(),
+                    workspace_id,
+                    workflow.workflow_id.as_str(),
+                )
+                .join("db")
+                .join("workflow.duckdb");
+            let duckdb = open_catalog_duckdb(&duckdb_path)?;
+            let schemas = load_workspace_catalog_summaries(&duckdb)?;
+
+            catalogs.push(WorkspaceCatalogDatabaseSummary {
+                workflow_id: workflow.workflow_id,
+                workflow_name: workflow.workflow_name,
+                database_name: "workflow.duckdb".to_string(),
+                schemas,
+            });
+        }
+
+        Ok(WorkspaceCatalogResponse { catalogs })
+    }
+
+    pub fn get_workspace_catalog_schema(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        workflow_id: &str,
+        schema_name: &str,
+    ) -> anyhow::Result<Option<WorkspaceCatalogSchemaResponse>> {
+        let connection = self.connection();
+        ensure_workspace_access(&connection, user_id, workspace_id)?;
+
+        let Some(workflow) = find_catalog_workflow(&connection, workspace_id, workflow_id)? else {
+            return Ok(None);
+        };
+        let storage_owner_user_id =
+            resolve_catalog_workflow_owner_user_id(&connection, workspace_id, &workflow)?;
+        let duckdb_path = self
+            .workflow_root_path(
+                storage_owner_user_id.as_str(),
+                workspace_id,
+                workflow.workflow_id.as_str(),
+            )
+            .join("db")
+            .join("workflow.duckdb");
+        let duckdb = open_catalog_duckdb(&duckdb_path)?;
+        if !workspace_catalog_schema_exists(&duckdb, schema_name)? {
+            return Ok(None);
+        }
+
+        let tables = load_workspace_catalog_table_summaries(&duckdb, schema_name)?;
+        Ok(Some(WorkspaceCatalogSchemaResponse {
+            workflow_id: workflow.workflow_id,
+            workflow_name: workflow.workflow_name,
+            database_name: "workflow.duckdb".to_string(),
+            schema_name: schema_name.to_string(),
+            tables,
+        }))
+    }
+
+    pub fn get_workspace_catalog_table(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        workflow_id: &str,
+        schema_name: &str,
+        table_name: &str,
+    ) -> anyhow::Result<Option<WorkspaceCatalogTableResponse>> {
+        let connection = self.connection();
+        ensure_workspace_access(&connection, user_id, workspace_id)?;
+
+        let Some(workflow) = find_catalog_workflow(&connection, workspace_id, workflow_id)? else {
+            return Ok(None);
+        };
+        let storage_owner_user_id =
+            resolve_catalog_workflow_owner_user_id(&connection, workspace_id, &workflow)?;
+        let duckdb_path = self
+            .workflow_root_path(
+                storage_owner_user_id.as_str(),
+                workspace_id,
+                workflow.workflow_id.as_str(),
+            )
+            .join("db")
+            .join("workflow.duckdb");
+        let duckdb = open_catalog_duckdb(&duckdb_path)?;
+        if !workspace_catalog_table_exists(&duckdb, schema_name, table_name)? {
+            return Ok(None);
+        }
+
+        let columns = load_workspace_catalog_columns(&duckdb, schema_name, table_name)?;
+        // Sample row materialization currently trips a native DuckDB assertion on some
+        // live workspace files, so keep table exploration metadata-only for now.
+        let sample_rows = Vec::new();
+
+        Ok(Some(WorkspaceCatalogTableResponse {
+            workflow_id: workflow.workflow_id,
+            workflow_name: workflow.workflow_name,
+            database_name: "workflow.duckdb".to_string(),
+            schema_name: schema_name.to_string(),
+            table_name: table_name.to_string(),
+            columns,
+            sample_rows,
+        }))
+    }
+
+    pub fn run_workspace_catalog_query(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        workflow_id: &str,
+        query: &str,
+    ) -> anyhow::Result<Option<WorkspaceCatalogQueryResponse>> {
+        let connection = self.connection();
+        ensure_workspace_access(&connection, user_id, workspace_id)?;
+
+        let Some(workflow) = find_catalog_workflow(&connection, workspace_id, workflow_id)? else {
+            return Ok(None);
+        };
+        let storage_owner_user_id =
+            resolve_catalog_workflow_owner_user_id(&connection, workspace_id, &workflow)?;
+        let duckdb_path = self
+            .workflow_root_path(
+                storage_owner_user_id.as_str(),
+                workspace_id,
+                workflow.workflow_id.as_str(),
+            )
+            .join("db")
+            .join("workflow.duckdb");
+        initialize_workflow_duckdb(&duckdb_path)?;
+
+        let normalized_query = normalize_workspace_catalog_query(query)?;
+        let columns = describe_workspace_catalog_query(&duckdb_path, &normalized_query)?;
+        let rows = execute_workspace_catalog_query_rows(&duckdb_path, &normalized_query, &columns)?;
+
+        Ok(Some(WorkspaceCatalogQueryResponse {
+            workflow_id: workflow.workflow_id,
+            workflow_name: workflow.workflow_name,
+            database_name: "workflow.duckdb".to_string(),
+            query: normalized_query,
+            columns,
+            rows,
+        }))
     }
 
     pub fn get_workflow(
@@ -1635,6 +1798,372 @@ struct SessionRecord {
 pub struct StoredRunRecord {
     pub run_id: String,
     pub snapshot_json: String,
+}
+
+#[derive(Debug)]
+struct StoredCatalogWorkflow {
+    workflow_id: String,
+    workflow_name: String,
+    storage_owner_user_id: Option<String>,
+}
+
+fn list_catalog_workflows(
+    connection: &Connection,
+    workspace_id: &str,
+) -> anyhow::Result<Vec<StoredCatalogWorkflow>> {
+    let mut stmt = connection.prepare(
+        "select workflow_id, name, storage_owner_user_id
+         from workflows
+         where workspace_id = ?1
+           and archived_at is null
+         order by updated_at desc, name asc",
+    )?;
+    let workflows = stmt
+        .query_map(params![workspace_id], |row| {
+            Ok(StoredCatalogWorkflow {
+                workflow_id: row.get(0)?,
+                workflow_name: row.get(1)?,
+                storage_owner_user_id: row.get(2)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(workflows)
+}
+
+fn find_catalog_workflow(
+    connection: &Connection,
+    workspace_id: &str,
+    workflow_id: &str,
+) -> anyhow::Result<Option<StoredCatalogWorkflow>> {
+    connection
+        .query_row(
+            "select workflow_id, name, storage_owner_user_id
+             from workflows
+             where workspace_id = ?1 and workflow_id = ?2
+               and archived_at is null",
+            params![workspace_id, workflow_id],
+            |row| {
+                Ok(StoredCatalogWorkflow {
+                    workflow_id: row.get(0)?,
+                    workflow_name: row.get(1)?,
+                    storage_owner_user_id: row.get(2)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(Into::into)
+}
+
+fn resolve_catalog_workflow_owner_user_id(
+    connection: &Connection,
+    workspace_id: &str,
+    workflow: &StoredCatalogWorkflow,
+) -> anyhow::Result<String> {
+    if let Some(user_id) = workflow
+        .storage_owner_user_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Ok(user_id.to_string());
+    }
+
+    lookup_workflow_storage_owner_user_id(connection, workspace_id, workflow.workflow_id.as_str())
+}
+
+fn open_catalog_duckdb(database_path: &Path) -> anyhow::Result<DuckDbConnection> {
+    initialize_workflow_duckdb(database_path)?;
+    DuckDbConnection::open(database_path).with_context(|| {
+        format!(
+            "failed to open workflow duckdb catalog at `{}`",
+            database_path.display()
+        )
+    })
+}
+
+fn load_workspace_catalog_summaries(
+    duckdb: &DuckDbConnection,
+) -> anyhow::Result<Vec<WorkspaceCatalogSchemaSummary>> {
+    let mut stmt = duckdb.prepare(
+        "select schema_name
+         from information_schema.schemata
+         where schema_name not in ('information_schema', 'pg_catalog')
+           and (
+             schema_name in ('runs', 'staging', 'tables', 'outputs')
+             or exists (
+               select 1
+               from information_schema.tables
+               where table_schema = schema_name
+                 and table_type in ('BASE TABLE', 'VIEW')
+             )
+           )
+         order by case schema_name
+             when 'runs' then 0
+             when 'staging' then 1
+             when 'tables' then 2
+             when 'outputs' then 3
+             else 9
+           end,
+           schema_name asc",
+    )?;
+    let schema_names = stmt
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut schemas = Vec::with_capacity(schema_names.len());
+    for schema_name in schema_names {
+        let tables = load_workspace_catalog_table_summaries(duckdb, schema_name.as_str())?;
+        schemas.push(WorkspaceCatalogSchemaSummary {
+            schema_name,
+            table_count: tables.len() as u32,
+            tables,
+        });
+    }
+
+    Ok(schemas)
+}
+
+fn load_workspace_catalog_table_summaries(
+    duckdb: &DuckDbConnection,
+    schema_name: &str,
+) -> anyhow::Result<Vec<WorkspaceCatalogTableSummary>> {
+    let mut stmt = duckdb.prepare(
+        "select t.table_name,
+                t.table_type,
+                coalesce(count(c.column_name), 0) as column_count
+         from information_schema.tables t
+         left join information_schema.columns c
+           on c.table_schema = t.table_schema
+          and c.table_name = t.table_name
+         where t.table_schema = ?1
+           and t.table_type in ('BASE TABLE', 'VIEW')
+         group by t.table_name, t.table_type
+         order by case t.table_type
+             when 'BASE TABLE' then 0
+             when 'VIEW' then 1
+             else 9
+           end,
+           t.table_name asc",
+    )?;
+    let tables = stmt
+        .query_map([schema_name], |row| {
+            Ok(WorkspaceCatalogTableSummary {
+                table_name: row.get(0)?,
+                table_type: row.get(1)?,
+                column_count: row.get::<_, u32>(2)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(tables)
+}
+
+fn workspace_catalog_schema_exists(
+    duckdb: &DuckDbConnection,
+    schema_name: &str,
+) -> anyhow::Result<bool> {
+    let exists: Option<i64> = duckdb
+        .query_row(
+            "select 1
+             from information_schema.schemata
+             where schema_name = ?1
+               and schema_name not in ('information_schema', 'pg_catalog')",
+            [schema_name],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    Ok(exists.is_some())
+}
+
+fn workspace_catalog_table_exists(
+    duckdb: &DuckDbConnection,
+    schema_name: &str,
+    table_name: &str,
+) -> anyhow::Result<bool> {
+    let exists: Option<i64> = duckdb
+        .query_row(
+            "select 1
+             from information_schema.tables
+             where table_schema = ?1
+               and table_name = ?2
+               and table_type in ('BASE TABLE', 'VIEW')",
+            [schema_name, table_name],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    Ok(exists.is_some())
+}
+
+fn load_workspace_catalog_columns(
+    duckdb: &DuckDbConnection,
+    schema_name: &str,
+    table_name: &str,
+) -> anyhow::Result<Vec<WorkspaceCatalogColumnSummary>> {
+    let mut stmt = duckdb.prepare(
+        "select column_name,
+                data_type,
+                case when is_nullable = 'YES' then 1 else 0 end as nullable
+         from information_schema.columns
+         where table_schema = ?1 and table_name = ?2
+         order by ordinal_position asc",
+    )?;
+    let columns = stmt
+        .query_map([schema_name, table_name], |row| {
+            Ok(WorkspaceCatalogColumnSummary {
+                column_name: row.get(0)?,
+                data_type: row.get(1)?,
+                nullable: row.get::<_, i64>(2)? != 0,
+                description: None,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(columns)
+}
+
+fn normalize_workspace_catalog_query(query: &str) -> anyhow::Result<String> {
+    let trimmed = query.trim();
+    let without_trailing_semicolons = trimmed.trim_end_matches(';').trim();
+    if without_trailing_semicolons.is_empty() {
+        return Err(anyhow!("Enter a SQL query to preview sample data."));
+    }
+
+    if without_trailing_semicolons.contains(';') {
+        return Err(anyhow!(
+            "Only a single read-only query can be run in the catalog preview."
+        ));
+    }
+
+    let normalized_prefix = without_trailing_semicolons
+        .chars()
+        .take_while(|character| !character.is_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    if normalized_prefix != "select" && normalized_prefix != "with" {
+        return Err(anyhow!(
+            "Only read-only SELECT queries are supported in the catalog preview."
+        ));
+    }
+
+    Ok(without_trailing_semicolons.to_string())
+}
+
+fn resolve_duckdb_cli_path() -> PathBuf {
+    env::var("STITCHLY_DUCKDB_CLI_PATH")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| {
+            let snap_path = PathBuf::from("/snap/duckdb/current/duckdb");
+            if snap_path.is_file() {
+                snap_path
+            } else {
+                PathBuf::from("duckdb")
+            }
+        })
+}
+
+fn run_duckdb_cli_json(database_path: &Path, sql: &str) -> anyhow::Result<String> {
+    let cli_path = resolve_duckdb_cli_path();
+    let output = Command::new(&cli_path)
+        .arg("-readonly")
+        .arg("-json")
+        .arg(database_path)
+        .arg(sql)
+        .output()
+        .with_context(|| format!("failed to launch DuckDB CLI at `{}`", cli_path.display()))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            format!("process exited with status {:?}", output.status)
+        };
+
+        let detail = if detail.contains("Out of Memory Error") {
+            format!(
+                "{detail}. Try removing heavy preview columns like *_json, *_payload, error_message, created_at, or updated_at."
+            )
+        } else {
+            detail
+        };
+
+        return Err(anyhow!("DuckDB query failed: {detail}"));
+    }
+
+    String::from_utf8(output.stdout).context("DuckDB CLI returned non-UTF-8 output")
+}
+
+#[derive(serde::Deserialize)]
+struct DuckDbDescribeColumn {
+    column_name: String,
+    column_type: String,
+}
+
+fn describe_workspace_catalog_query(
+    database_path: &Path,
+    query: &str,
+) -> anyhow::Result<Vec<WorkspaceCatalogQueryColumn>> {
+    let output = run_duckdb_cli_json(database_path, &format!("describe {query}"))?;
+    let describe_rows: Vec<DuckDbDescribeColumn> =
+        serde_json::from_str(&output).context("failed to parse DuckDB query columns")?;
+
+    Ok(describe_rows
+        .into_iter()
+        .map(|column| WorkspaceCatalogQueryColumn {
+            column_name: column.column_name,
+            data_type: column.column_type,
+        })
+        .collect())
+}
+
+fn execute_workspace_catalog_query_rows(
+    database_path: &Path,
+    query: &str,
+    columns: &[WorkspaceCatalogQueryColumn],
+) -> anyhow::Result<Vec<Vec<Option<String>>>> {
+    let capped_query = format!("select * from ({query}) as stitchly_query limit 1000");
+    let output = run_duckdb_cli_json(database_path, &capped_query)?;
+    if output.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let json_rows: Vec<serde_json::Value> =
+        serde_json::from_str(&output).context("failed to parse DuckDB query rows")?;
+    let mut rows = Vec::with_capacity(json_rows.len());
+
+    for row in json_rows {
+        let Some(object) = row.as_object() else {
+            return Err(anyhow!(
+                "DuckDB returned a non-object row in query results."
+            ));
+        };
+
+        rows.push(
+            columns
+                .iter()
+                .map(|column| stringify_catalog_query_cell(object.get(&column.column_name)))
+                .collect(),
+        );
+    }
+
+    Ok(rows)
+}
+
+fn stringify_catalog_query_cell(value: Option<&serde_json::Value>) -> Option<String> {
+    match value {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::Bool(boolean)) => Some(boolean.to_string()),
+        Some(serde_json::Value::Number(number)) => Some(number.to_string()),
+        Some(serde_json::Value::String(string)) => Some(string.clone()),
+        Some(other) => Some(other.to_string()),
+    }
 }
 
 fn persist_run_snapshot_row(
@@ -2588,17 +3117,20 @@ fn hash_password(password: &str) -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, process::Command};
 
     use api_contract::{
-        NodeRunSnapshot, NodeRunStatus, RunErrorCategory, RunErrorSummary, RunSnapshot,
-        RunStatus, RunTrigger, TriggerKind,
+        NodeRunSnapshot, NodeRunStatus, RunErrorCategory, RunErrorSummary, RunSnapshot, RunStatus,
+        RunTrigger, TriggerKind, WorkspaceCatalogQueryColumn,
     };
     use chrono::{Duration, TimeZone, Utc};
     use duckdb::Connection as DuckDbConnection;
     use rusqlite::params;
 
-    use super::{GoogleConnectionTokens, GoogleIdentityProfile, PlatformStore};
+    use super::{
+        normalize_workspace_catalog_query, resolve_duckdb_cli_path, GoogleConnectionTokens,
+        GoogleIdentityProfile, PlatformStore,
+    };
     use workflow_schema::{TypedValue, WorkflowDefinition};
 
     #[test]
@@ -2765,6 +3297,293 @@ mod tests {
             )
             .expect("node_outputs table query");
         assert_eq!(node_outputs_table_exists.as_deref(), Some("node_outputs"));
+    }
+
+    #[test]
+    fn workspace_catalog_lists_workflow_duckdbs_across_workflows() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Catalog Workspace")
+            .expect("workspace");
+
+        let mut first_workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+        first_workflow.workflow_id = "wf_catalog_alpha".to_string();
+        first_workflow.name = "Catalog Alpha".to_string();
+        let created_first = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &first_workflow)
+            .expect("first workflow creates");
+
+        let mut second_workflow = first_workflow.clone();
+        second_workflow.workflow_id = "wf_catalog_beta".to_string();
+        second_workflow.name = "Catalog Beta".to_string();
+        let created_second = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &second_workflow)
+            .expect("second workflow creates");
+
+        let second_workflow_root = store.workflow_root_path(
+            "usr_builder",
+            &workspace.workspace_id,
+            created_second.workflow.workflow_id.as_str(),
+        );
+        let second_duckdb_path = second_workflow_root.join("db").join("workflow.duckdb");
+        let second_duckdb = DuckDbConnection::open(&second_duckdb_path).expect("duckdb opens");
+        second_duckdb
+            .execute_batch(
+                "
+                create table if not exists tables.customer_orders (
+                    order_id integer,
+                    status varchar
+                );
+                ",
+            )
+            .expect("table bootstrap");
+
+        let catalog = store
+            .list_workspace_catalogs("usr_builder", &workspace.workspace_id)
+            .expect("workspace catalog");
+
+        assert_eq!(catalog.catalogs.len(), 2);
+
+        let first_catalog = catalog
+            .catalogs
+            .iter()
+            .find(|entry| entry.workflow_id == created_first.workflow.workflow_id)
+            .expect("first catalog present");
+        assert_eq!(first_catalog.database_name, "workflow.duckdb");
+        assert!(first_catalog
+            .schemas
+            .iter()
+            .any(|schema| schema.schema_name == "runs"));
+        assert!(first_catalog
+            .schemas
+            .iter()
+            .any(|schema| schema.schema_name == "outputs"));
+
+        let second_catalog = catalog
+            .catalogs
+            .iter()
+            .find(|entry| entry.workflow_id == created_second.workflow.workflow_id)
+            .expect("second catalog present");
+        let tables_schema = second_catalog
+            .schemas
+            .iter()
+            .find(|schema| schema.schema_name == "tables")
+            .expect("tables schema present");
+        assert!(tables_schema
+            .tables
+            .iter()
+            .any(|table| table.table_name == "customer_orders"));
+    }
+
+    #[test]
+    fn workspace_catalog_table_returns_columns() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Catalog Preview Workspace")
+            .expect("workspace");
+        let mut workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+        workflow.workflow_id = "wf_catalog_preview".to_string();
+        workflow.name = "Catalog Preview".to_string();
+
+        let created = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
+            .expect("workflow creates");
+
+        let workflow_root = store.workflow_root_path(
+            "usr_builder",
+            &workspace.workspace_id,
+            created.workflow.workflow_id.as_str(),
+        );
+        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb opens");
+        duckdb
+            .execute_batch(
+                "
+                create table if not exists tables.customer_orders (
+                    order_id integer,
+                    customer_name varchar,
+                    is_priority boolean
+                );
+                insert into tables.customer_orders values
+                    (1, 'Acme', true),
+                    (2, 'Globex', false);
+                ",
+            )
+            .expect("sample table persists");
+
+        let schema = store
+            .get_workspace_catalog_schema(
+                "usr_builder",
+                &workspace.workspace_id,
+                created.workflow.workflow_id.as_str(),
+                "tables",
+            )
+            .expect("schema lookup")
+            .expect("schema exists");
+        assert!(schema
+            .tables
+            .iter()
+            .any(|table| table.table_name == "customer_orders"));
+
+        let table = store
+            .get_workspace_catalog_table(
+                "usr_builder",
+                &workspace.workspace_id,
+                created.workflow.workflow_id.as_str(),
+                "tables",
+                "customer_orders",
+            )
+            .expect("table lookup")
+            .expect("table exists");
+        assert_eq!(table.columns.len(), 3);
+        assert_eq!(table.columns[0].column_name, "order_id");
+        assert_eq!(table.columns[0].data_type, "INTEGER");
+        assert!(table.sample_rows.is_empty());
+    }
+
+    #[test]
+    fn workspace_catalog_table_skips_sample_rows_for_safety() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Catalog JSON Preview Workspace")
+            .expect("workspace");
+        let mut workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+        workflow.workflow_id = "wf_catalog_json_preview".to_string();
+        workflow.name = "Catalog JSON Preview".to_string();
+
+        let created = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
+            .expect("workflow creates");
+
+        let workflow_root = store.workflow_root_path(
+            "usr_builder",
+            &workspace.workspace_id,
+            created.workflow.workflow_id.as_str(),
+        );
+        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb opens");
+        duckdb
+            .execute_batch(
+                "
+                create table if not exists outputs.preview_payloads (
+                    run_id varchar,
+                    output_json text
+                );
+                insert into outputs.preview_payloads values
+                    ('run_1', '{\"large\":true,\"payload\":\"hello\"}');
+                ",
+            )
+            .expect("sample table persists");
+
+        let table = store
+            .get_workspace_catalog_table(
+                "usr_builder",
+                &workspace.workspace_id,
+                created.workflow.workflow_id.as_str(),
+                "outputs",
+                "preview_payloads",
+            )
+            .expect("table lookup")
+            .expect("table exists");
+        assert!(table.sample_rows.is_empty());
+    }
+
+    #[test]
+    fn workspace_catalog_query_runs_against_table_preview_with_row_cap() {
+        if Command::new(resolve_duckdb_cli_path())
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("skipping catalog query test because the DuckDB CLI is unavailable");
+            return;
+        }
+
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Catalog Query Workspace")
+            .expect("workspace");
+        let mut workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+        workflow.workflow_id = "wf_catalog_query_preview".to_string();
+        workflow.name = "Catalog Query Preview".to_string();
+
+        let created = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
+            .expect("workflow creates");
+
+        let workflow_root = store.workflow_root_path(
+            "usr_builder",
+            &workspace.workspace_id,
+            created.workflow.workflow_id.as_str(),
+        );
+        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb opens");
+        duckdb
+            .execute_batch(
+                "
+                create table if not exists tables.customer_orders (
+                    order_id integer,
+                    customer_name varchar
+                );
+                insert into tables.customer_orders
+                select value as order_id, concat('Customer ', value::varchar)
+                from range(0, 1005) as generated(value);
+                ",
+            )
+            .expect("sample table persists");
+
+        let response = store
+            .run_workspace_catalog_query(
+                "usr_builder",
+                &workspace.workspace_id,
+                created.workflow.workflow_id.as_str(),
+                "select order_id, customer_name from tables.customer_orders order by order_id",
+            )
+            .expect("query succeeds")
+            .expect("workflow exists");
+
+        assert_eq!(
+            response.columns,
+            vec![
+                WorkspaceCatalogQueryColumn {
+                    column_name: "order_id".to_string(),
+                    data_type: "INTEGER".to_string(),
+                },
+                WorkspaceCatalogQueryColumn {
+                    column_name: "customer_name".to_string(),
+                    data_type: "VARCHAR".to_string(),
+                },
+            ]
+        );
+        assert_eq!(response.rows.len(), 1000);
+        assert_eq!(
+            response.rows.first(),
+            Some(&vec![Some("0".to_string()), Some("Customer 0".to_string())])
+        );
+    }
+
+    #[test]
+    fn workspace_catalog_query_rejects_non_select_sql() {
+        let error = normalize_workspace_catalog_query("delete from tables.customer_orders")
+            .expect_err("query should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("Only read-only SELECT queries are supported"),
+            "unexpected message: {error}"
+        );
     }
 
     #[test]
@@ -3172,13 +3991,14 @@ mod tests {
 
         assert_eq!(summary.connection_kind, "gmail");
         assert_eq!(summary.status, "active");
-        assert_eq!(summary.external_account_label.as_deref(), Some("ops@gmail.com"));
-        assert!(
-            summary
-                .scopes
-                .iter()
-                .any(|scope| scope == "https://www.googleapis.com/auth/gmail.send")
+        assert_eq!(
+            summary.external_account_label.as_deref(),
+            Some("ops@gmail.com")
         );
+        assert!(summary
+            .scopes
+            .iter()
+            .any(|scope| scope == "https://www.googleapis.com/auth/gmail.send"));
 
         let listed = store
             .list_workspace_connections("usr_builder", &workspace.workspace_id)

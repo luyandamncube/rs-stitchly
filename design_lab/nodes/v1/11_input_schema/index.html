@@ -1,0 +1,1035 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Design Lab · Table Schema</title>
+    <link rel="stylesheet" href="../shared.css" />
+    <style>
+      .lab-page--schema-studio {
+        place-items: stretch;
+        padding: 28px;
+      }
+
+      .lab-stage--schema-studio {
+        position: relative;
+        width: min(100%, 1580px);
+        min-height: 880px;
+        margin: 0 auto;
+        border-radius: 28px;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 16% 18%, rgba(245, 110, 15, 0.085), transparent 18%),
+          radial-gradient(circle at 84% 14%, rgba(88, 177, 164, 0.075), transparent 16%),
+          linear-gradient(180deg, rgba(13, 13, 16, 0.88), rgba(9, 9, 11, 0.98));
+        box-shadow:
+          0 32px 64px rgba(0, 0, 0, 0.28),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+      }
+
+      .lab-stage--schema-studio::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image: radial-gradient(circle, rgba(255, 255, 255, 0.12) 1px, transparent 1px);
+        background-size: 24px 24px;
+        pointer-events: none;
+      }
+
+      .flow-caption {
+        position: absolute;
+        left: 28px;
+        top: 28px;
+        z-index: 2;
+        display: grid;
+        gap: 6px;
+        max-width: 470px;
+      }
+
+      .flow-caption__eyebrow {
+        color: rgba(255, 255, 255, 0.54);
+        font-size: 0.76rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      .flow-caption h1 {
+        margin: 0;
+        font-size: 1.14rem;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+      }
+
+      .flow-caption p {
+        margin: 0;
+        color: rgba(255, 255, 255, 0.62);
+        font-size: 0.88rem;
+        line-height: 1.55;
+      }
+
+      .flow-connection {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        pointer-events: none;
+      }
+
+      .flow-connection path {
+        fill: none;
+        stroke: rgba(120, 195, 132, 0.76);
+        stroke-width: 2.2;
+        stroke-linecap: round;
+      }
+
+      .flow-connection circle {
+        fill: #0d0d10;
+        stroke: rgba(120, 195, 132, 0.82);
+        stroke-width: 2;
+      }
+
+      .flow-node {
+        position: absolute;
+        z-index: 2;
+      }
+
+      .flow-node--schema {
+        left: 128px;
+        top: 322px;
+        width: 294px;
+      }
+
+      .flow-node--table-output {
+        left: 498px;
+        top: 340px;
+        width: 282px;
+      }
+
+      .flow-node--selected {
+        background: rgba(39, 39, 44, 0.98);
+        box-shadow: 0 0 0 1px rgba(245, 110, 15, 0.82);
+      }
+
+      .flow-node--schema.node-card,
+      .flow-node--table-output.node-card {
+        min-height: 0;
+        padding: 8px 9px 8px;
+        border-radius: 10px;
+        background: rgba(34, 34, 39, 0.96);
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.07);
+      }
+
+      .flow-node--schema .node-card__header,
+      .flow-node--table-output .node-card__header {
+        min-height: 20px;
+      }
+
+      .flow-node--schema .node-card__heading strong,
+      .flow-node--table-output .node-card__heading strong {
+        color: rgba(255, 255, 255, 0.98);
+        font-size: 1rem;
+        font-weight: 600;
+        line-height: 1.2;
+        letter-spacing: -0.02em;
+      }
+
+      .flow-node--schema .node-card__menu,
+      .flow-node--table-output .node-card__menu {
+        color: rgba(255, 255, 255, 0.42);
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+      }
+
+      .flow-node--schema .node-card__body,
+      .flow-node--table-output .node-card__body {
+        display: grid;
+        gap: 4px;
+        margin-top: 4px;
+        margin-bottom: 3px;
+      }
+
+      .flow-node--schema .node-card__row--summary,
+      .flow-node--table-output .node-card__row--summary {
+        min-height: 56px;
+        padding: 6px 9px;
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.035);
+        display: grid;
+        align-items: stretch;
+        gap: 0;
+      }
+
+      .flow-node--schema .node-card__summary-head,
+      .flow-node--table-output .node-card__summary-head {
+        display: grid;
+        grid-template-columns: max-content minmax(0, 1fr);
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+      }
+
+      .flow-node--schema .node-card__summary-label,
+      .flow-node--schema .node-card__footer-meta,
+      .flow-node--table-output .node-card__summary-label,
+      .flow-node--table-output .node-card__footer-meta {
+        color: var(--text-muted);
+        font-size: 0.74rem;
+        line-height: 1.2;
+      }
+
+      .flow-node--schema .node-card__summary-target,
+      .flow-node--table-output .node-card__summary-target {
+        display: block;
+        min-width: 0;
+        width: 100%;
+        overflow: hidden;
+        color: rgba(255, 255, 255, 0.92);
+        font-size: 0.88rem;
+        font-weight: 300;
+        line-height: 1.2;
+        letter-spacing: -0.01em;
+        text-align: right;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .flow-node--schema .node-card__footer,
+      .flow-node--table-output .node-card__footer {
+        min-height: 32px;
+        padding: 0 8px;
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.035);
+      }
+
+      .flow-node--schema .node-card__footer strong,
+      .flow-node--table-output .node-card__footer strong {
+        color: rgba(255, 255, 255, 0.92);
+        font-size: 0.94rem;
+        font-weight: 300;
+        line-height: 1.25;
+        letter-spacing: 0;
+      }
+
+      .schema-studio {
+        position: absolute;
+        right: 28px;
+        top: 28px;
+        bottom: 28px;
+        z-index: 2;
+        width: min(920px, calc(100% - 860px));
+        min-width: 860px;
+        display: grid;
+        grid-template-rows: auto auto minmax(0, 1fr);
+        gap: 14px;
+        padding: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 12px;
+        background: rgba(34, 34, 39, 0.98);
+        box-shadow: 0 18px 36px rgba(0, 0, 0, 0.24);
+      }
+
+      .schema-studio__header,
+      .schema-studio__title-group,
+      .schema-studio__header-meta,
+      .json-surface__header,
+      .json-surface__toolbar,
+      .schema-config__field-head,
+      .schema-config__footer-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .schema-studio__title-group {
+        justify-content: flex-start;
+        align-items: flex-start;
+      }
+
+      .schema-studio__title-icon {
+        color: var(--accent-primary);
+        font-size: 0.88rem;
+        font-weight: 700;
+      }
+
+      .schema-studio__title-copy {
+        display: grid;
+        gap: 4px;
+      }
+
+      .schema-studio__title-copy strong {
+        font-size: 0.94rem;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+      }
+
+      .schema-studio__subtitle {
+        color: rgba(255, 255, 255, 0.56);
+        font-family: "Azeret Mono", "Space Grotesk", "Segoe UI", sans-serif;
+        font-size: 0.7rem;
+      }
+
+      .schema-studio__header-meta {
+        color: rgba(255, 255, 255, 0.62);
+        font-size: 0.74rem;
+      }
+
+      .schema-studio__meta-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 999px;
+        background: rgba(120, 195, 132, 0.92);
+      }
+
+      .schema-studio__sync-note {
+        padding: 10px 12px;
+        border: 1px solid rgba(75, 210, 195, 0.18);
+        border-radius: 10px;
+        background: rgba(75, 210, 195, 0.08);
+        color: rgba(212, 251, 246, 0.92);
+        font-size: 0.76rem;
+        line-height: 1.45;
+      }
+
+      .schema-studio__grid {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1.02fr) minmax(0, 1.08fr) 272px;
+        gap: 14px;
+      }
+
+      .json-surface,
+      .schema-config {
+        min-height: 0;
+        display: grid;
+        grid-template-rows: auto auto minmax(0, 1fr);
+        gap: 12px;
+        padding: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 10px;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.015);
+      }
+
+      .json-surface--text {
+        background:
+          linear-gradient(180deg, rgba(49, 27, 76, 0.94), rgba(37, 24, 54, 0.98)),
+          rgba(34, 34, 39, 0.98);
+      }
+
+      .json-surface--tree {
+        background:
+          linear-gradient(180deg, rgba(40, 40, 47, 0.94), rgba(30, 30, 35, 0.98)),
+          rgba(34, 34, 39, 0.98);
+      }
+
+      .schema-config {
+        background: rgba(30, 30, 35, 0.98);
+      }
+
+      .json-surface__title,
+      .schema-config__title {
+        font-size: 0.9rem;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+      }
+
+      .json-surface__badge {
+        display: inline-flex;
+        align-items: center;
+        height: 24px;
+        padding: 0 10px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        color: rgba(255, 255, 255, 0.72);
+        font-size: 0.7rem;
+      }
+
+      .json-surface__toolbar {
+        min-height: 36px;
+        padding: 0 10px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.04);
+        color: rgba(255, 255, 255, 0.72);
+        font-family: "Azeret Mono", "Space Grotesk", "Segoe UI", sans-serif;
+        font-size: 0.7rem;
+      }
+
+      .json-surface__actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: rgba(255, 255, 255, 0.42);
+      }
+
+      .json-surface__body {
+        min-height: 0;
+        overflow: auto;
+        border-radius: 10px;
+      }
+
+      .json-surface__body::-webkit-scrollbar,
+      .schema-config__body::-webkit-scrollbar {
+        width: 9px;
+        height: 9px;
+      }
+
+      .json-surface__body::-webkit-scrollbar-thumb,
+      .schema-config__body::-webkit-scrollbar-thumb {
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.12);
+      }
+
+      .json-code {
+        margin: 0;
+        padding: 14px 0;
+        font-family: "Azeret Mono", "Space Grotesk", "Segoe UI", sans-serif;
+        font-size: 0.78rem;
+        line-height: 1.7;
+      }
+
+      .json-code__line {
+        display: grid;
+        grid-template-columns: 36px minmax(0, 1fr);
+        gap: 14px;
+        padding: 0 16px;
+        white-space: pre;
+      }
+
+      .json-code__number {
+        color: rgba(255, 255, 255, 0.22);
+        text-align: right;
+      }
+
+      .json-code__text {
+        color: rgba(243, 240, 255, 0.95);
+      }
+
+      .json-code__key {
+        color: #f48ab7;
+      }
+
+      .json-code__string {
+        color: #7ae2d1;
+      }
+
+      .json-code__number-token {
+        color: #97b9ff;
+      }
+
+      .json-code__boolean {
+        color: #f2b06a;
+      }
+
+      .json-tree {
+        display: grid;
+        gap: 8px;
+      }
+
+      .json-tree__group,
+      .json-tree__leaf,
+      .json-tree__adder {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto auto;
+        align-items: center;
+        gap: 10px;
+        min-height: 40px;
+        padding: 0 12px;
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.045);
+      }
+
+      .json-tree__group {
+        font-weight: 500;
+      }
+
+      .json-tree__branch {
+        display: grid;
+        gap: 8px;
+        margin-left: 14px;
+        padding-left: 14px;
+        border-left: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .json-tree__name {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .json-tree__caret,
+      .json-tree__pill,
+      .json-tree__delete {
+        flex-shrink: 0;
+      }
+
+      .json-tree__caret {
+        color: rgba(255, 255, 255, 0.54);
+        font-size: 0.72rem;
+      }
+
+      .json-tree__type {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 20px;
+        height: 20px;
+        padding: 0 6px;
+        border-radius: 6px;
+        font-size: 0.68rem;
+        font-weight: 700;
+        line-height: 1;
+      }
+
+      .json-tree__type--string {
+        background: rgba(86, 208, 147, 0.16);
+        color: #73efb0;
+      }
+
+      .json-tree__type--number {
+        background: rgba(96, 153, 255, 0.16);
+        color: #8fbbff;
+      }
+
+      .json-tree__type--array {
+        background: rgba(177, 109, 245, 0.16);
+        color: #cba2ff;
+      }
+
+      .json-tree__type--boolean {
+        background: rgba(245, 172, 84, 0.16);
+        color: #ffc17c;
+      }
+
+      .json-tree__value {
+        color: rgba(255, 255, 255, 0.68);
+        font-size: 0.76rem;
+      }
+
+      .json-tree__pill {
+        color: rgba(255, 255, 255, 0.48);
+        font-size: 0.72rem;
+      }
+
+      .json-tree__delete {
+        color: rgba(255, 255, 255, 0.34);
+        font-size: 0.82rem;
+      }
+
+      .json-tree__adder {
+        grid-template-columns: max-content;
+        justify-content: flex-start;
+        color: rgba(255, 255, 255, 0.62);
+        font-size: 0.76rem;
+      }
+
+      .schema-config__body {
+        min-height: 0;
+        overflow: auto;
+        display: grid;
+        align-content: start;
+        gap: 14px;
+      }
+
+      .schema-config__section {
+        display: grid;
+        gap: 10px;
+      }
+
+      .schema-config__section-title {
+        color: rgba(255, 255, 255, 0.52);
+        font-size: 0.72rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .schema-config__field {
+        display: grid;
+        gap: 8px;
+      }
+
+      .schema-config__field-head label {
+        color: rgba(255, 255, 255, 0.9);
+        font-size: 0.8rem;
+      }
+
+      .schema-config__hint {
+        color: rgba(255, 255, 255, 0.38);
+        font-size: 0.74rem;
+      }
+
+      .schema-config__input,
+      .schema-config__select,
+      .schema-config__code {
+        width: 100%;
+        min-height: 38px;
+        padding: 0 12px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.04);
+        color: rgba(255, 255, 255, 0.94);
+        font: inherit;
+      }
+
+      .schema-config__code {
+        min-height: 88px;
+        padding: 10px 12px;
+        color: rgba(255, 255, 255, 0.72);
+        font-family: "Azeret Mono", "Space Grotesk", "Segoe UI", sans-serif;
+        font-size: 0.72rem;
+        line-height: 1.65;
+      }
+
+      .schema-config__checkbox {
+        display: grid;
+        grid-template-columns: 18px minmax(0, 1fr);
+        gap: 10px;
+        align-items: start;
+        min-height: 44px;
+        padding: 11px 12px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.04);
+        color: rgba(255, 255, 255, 0.88);
+        font-size: 0.8rem;
+      }
+
+      .schema-config__checkbox-mark {
+        width: 18px;
+        height: 18px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.02);
+      }
+
+      .schema-config__footer {
+        display: grid;
+        gap: 10px;
+        padding-top: 2px;
+      }
+
+      .schema-config__footer-eyebrow {
+        margin: 0;
+        color: rgba(255, 255, 255, 0.5);
+        font-size: 0.72rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .schema-config__footer-row span {
+        color: rgba(255, 255, 255, 0.62);
+        font-size: 0.76rem;
+      }
+
+      .schema-config__footer-row strong {
+        color: rgba(255, 255, 255, 0.92);
+        font-size: 0.82rem;
+        font-weight: 500;
+      }
+
+      .schema-config__action {
+        min-height: 42px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        border: none;
+        border-radius: 8px;
+        background: rgba(245, 110, 15, 0.2);
+        color: #ffd8c0;
+        font-size: 0.8rem;
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="lab-page lab-page--schema-studio">
+      <section class="lab-stage lab-stage--schema-studio">
+        <div class="flow-caption">
+          <span class="flow-caption__eyebrow">Nodes V1</span>
+          <h1>11 Table Schema</h1>
+          <p>
+            Revised study for a DuckDB-native table-definition node that can
+            pair with <code>table_output</code> to bootstrap an empty local
+            table before any rows exist.
+          </p>
+        </div>
+
+        <svg class="flow-connection" viewBox="0 0 1580 880" aria-hidden="true">
+          <path d="M 420 388 C 455 388, 468 388, 498 388" />
+          <circle cx="420" cy="388" r="5.5" />
+          <circle cx="498" cy="388" r="5.5" />
+        </svg>
+
+        <article class="node-card flow-node flow-node--schema flow-node--selected" aria-label="Selected table schema node">
+          <header class="node-card__header">
+            <div class="node-card__heading">
+              <span class="node-card__icon" aria-hidden="true">[]</span>
+              <strong>Table Schema</strong>
+            </div>
+            <span class="node-card__menu" aria-hidden="true">...</span>
+          </header>
+
+          <div class="node-card__body">
+            <div class="node-card__row--summary">
+              <div class="node-card__summary-head">
+                <span class="node-card__summary-label">Target</span>
+                <strong class="node-card__summary-target">tables.orders_fact</strong>
+              </div>
+              <div class="node-card__summary-head">
+                <span class="node-card__summary-label">Shape</span>
+                <strong class="node-card__summary-target">5 cols · pk order_id</strong>
+              </div>
+            </div>
+          </div>
+
+          <footer class="node-card__footer">
+            <span class="node-card__footer-meta">Last draft</span>
+            <strong>DuckDB ready</strong>
+          </footer>
+        </article>
+
+        <article class="node-card flow-node flow-node--table-output" aria-label="Downstream table output node">
+          <header class="node-card__header">
+            <div class="node-card__heading">
+              <span class="node-card__icon" aria-hidden="true">[]</span>
+              <strong>Table Output</strong>
+            </div>
+            <span class="node-card__menu" aria-hidden="true">...</span>
+          </header>
+
+          <div class="node-card__body">
+            <div class="node-card__row--summary">
+              <div class="node-card__summary-head">
+                <span class="node-card__summary-label">Target</span>
+                <strong class="node-card__summary-target">tables.orders_fact</strong>
+              </div>
+              <div class="node-card__summary-head">
+                <span class="node-card__summary-label">Shape</span>
+                <strong class="node-card__summary-target">Schema bootstrap</strong>
+              </div>
+            </div>
+          </div>
+
+          <footer class="node-card__footer">
+            <span class="node-card__footer-meta">Last write</span>
+            <strong>Idle</strong>
+          </footer>
+        </article>
+
+        <aside class="schema-studio" aria-label="Table schema management panel">
+          <header class="schema-studio__header">
+            <div class="schema-studio__title-group">
+              <span class="schema-studio__title-icon" aria-hidden="true">[]</span>
+              <div class="schema-studio__title-copy">
+                <strong>Table Schema</strong>
+                <span class="schema-studio__subtitle">schema_table_orders_fact</span>
+              </div>
+            </div>
+
+            <div class="schema-studio__header-meta">
+              <span class="schema-studio__meta-dot" aria-hidden="true"></span>
+              <span>DuckDB DDL studio</span>
+            </div>
+          </header>
+
+          <div class="schema-studio__sync-note">
+            Panel 1 and Panel 2 are linked in this concept: text edits reshape
+            the structured tree, and structured edits rewrite the JSON text.
+            The shared contract is intentionally DuckDB-native: columns,
+            defaults, primary key, and optional checks.
+          </div>
+
+          <div class="schema-studio__grid">
+            <section class="json-surface json-surface--text" aria-label="Edit JSON text">
+              <div class="json-surface__header">
+                <strong class="json-surface__title">Edit JSON text</strong>
+                <span class="json-surface__badge">Synced live</span>
+              </div>
+
+              <div class="json-surface__toolbar">
+                <span>table_schema.payload</span>
+                <span class="json-surface__actions">format | lint | save draft</span>
+              </div>
+
+              <div class="json-surface__body">
+                <pre class="json-code"><span class="json-code__line"><span class="json-code__number">1</span><span class="json-code__text">{</span></span><span class="json-code__line"><span class="json-code__number">2</span><span class="json-code__text">  <span class="json-code__key">"kind"</span>: <span class="json-code__string">"duckdb_table"</span>,</span></span><span class="json-code__line"><span class="json-code__number">3</span><span class="json-code__text">  <span class="json-code__key">"schema"</span>: <span class="json-code__string">"tables"</span>,</span></span><span class="json-code__line"><span class="json-code__number">4</span><span class="json-code__text">  <span class="json-code__key">"table"</span>: <span class="json-code__string">"orders_fact"</span>,</span></span><span class="json-code__line"><span class="json-code__number">5</span><span class="json-code__text">  <span class="json-code__key">"create_mode"</span>: <span class="json-code__string">"create_if_missing"</span>,</span></span><span class="json-code__line"><span class="json-code__number">6</span><span class="json-code__text">  <span class="json-code__key">"columns"</span>: [</span></span><span class="json-code__line"><span class="json-code__number">7</span><span class="json-code__text">    { <span class="json-code__key">"name"</span>: <span class="json-code__string">"order_id"</span>, <span class="json-code__key">"type"</span>: <span class="json-code__string">"bigint"</span>, <span class="json-code__key">"nullable"</span>: <span class="json-code__boolean">false</span> },</span></span><span class="json-code__line"><span class="json-code__number">8</span><span class="json-code__text">    { <span class="json-code__key">"name"</span>: <span class="json-code__string">"customer_id"</span>, <span class="json-code__key">"type"</span>: <span class="json-code__string">"varchar"</span>, <span class="json-code__key">"nullable"</span>: <span class="json-code__boolean">false</span> },</span></span><span class="json-code__line"><span class="json-code__number">9</span><span class="json-code__text">    { <span class="json-code__key">"name"</span>: <span class="json-code__string">"total_amount"</span>, <span class="json-code__key">"type"</span>: <span class="json-code__string">"decimal(18,2)"</span>, <span class="json-code__key">"nullable"</span>: <span class="json-code__boolean">false</span>, <span class="json-code__key">"default"</span>: <span class="json-code__string">"0.00"</span> },</span></span><span class="json-code__line"><span class="json-code__number">10</span><span class="json-code__text">    { <span class="json-code__key">"name"</span>: <span class="json-code__string">"currency_code"</span>, <span class="json-code__key">"type"</span>: <span class="json-code__string">"varchar"</span>, <span class="json-code__key">"nullable"</span>: <span class="json-code__boolean">false</span>, <span class="json-code__key">"default"</span>: <span class="json-code__string">"'USD'"</span> },</span></span><span class="json-code__line"><span class="json-code__number">11</span><span class="json-code__text">    { <span class="json-code__key">"name"</span>: <span class="json-code__string">"posted_at"</span>, <span class="json-code__key">"type"</span>: <span class="json-code__string">"timestamp"</span>, <span class="json-code__key">"nullable"</span>: <span class="json-code__boolean">true</span> }</span></span><span class="json-code__line"><span class="json-code__number">12</span><span class="json-code__text">  ],</span></span><span class="json-code__line"><span class="json-code__number">13</span><span class="json-code__text">  <span class="json-code__key">"primary_key"</span>: [<span class="json-code__string">"order_id"</span>],</span></span><span class="json-code__line"><span class="json-code__number">14</span><span class="json-code__text">  <span class="json-code__key">"checks"</span>: [</span></span><span class="json-code__line"><span class="json-code__number">15</span><span class="json-code__text">    <span class="json-code__string">"total_amount &gt;= 0"</span></span></span><span class="json-code__line"><span class="json-code__number">16</span><span class="json-code__text">  ]</span></span><span class="json-code__line"><span class="json-code__number">17</span><span class="json-code__text">}</span></span></pre>
+              </div>
+            </section>
+
+            <section class="json-surface json-surface--tree" aria-label="Edit JSON structure">
+              <div class="json-surface__header">
+                <strong class="json-surface__title">Edit JSON structure</strong>
+                <span class="json-surface__badge">Mirror editor</span>
+              </div>
+
+              <div class="json-surface__toolbar">
+                <span>tree view</span>
+                <span class="json-surface__actions">add field | change type | nest</span>
+              </div>
+
+              <div class="json-surface__body">
+                <div class="json-tree">
+                  <div class="json-tree__group">
+                    <span class="json-tree__name">
+                      <span class="json-tree__caret">▾</span>
+                      <span>schema</span>
+                    </span>
+                    <span class="json-tree__pill">string</span>
+                    <span class="json-tree__delete">x</span>
+                  </div>
+                  <div class="json-tree__leaf">
+                    <span class="json-tree__name">
+                      <span class="json-tree__type json-tree__type--string">S</span>
+                      <span>tables</span>
+                    </span>
+                    <span class="json-tree__value">target schema</span>
+                    <span class="json-tree__delete">x</span>
+                  </div>
+
+                  <div class="json-tree__group">
+                    <span class="json-tree__name">
+                      <span class="json-tree__caret">▾</span>
+                      <span>table</span>
+                    </span>
+                    <span class="json-tree__pill">string</span>
+                    <span class="json-tree__delete">x</span>
+                  </div>
+                  <div class="json-tree__leaf">
+                    <span class="json-tree__name">
+                      <span class="json-tree__type json-tree__type--string">S</span>
+                      <span>orders_fact</span>
+                    </span>
+                    <span class="json-tree__value">table name</span>
+                    <span class="json-tree__delete">x</span>
+                  </div>
+
+                  <div class="json-tree__group">
+                    <span class="json-tree__name">
+                      <span class="json-tree__caret">▾</span>
+                      <span>create_mode</span>
+                    </span>
+                    <span class="json-tree__pill">string</span>
+                    <span class="json-tree__delete">x</span>
+                  </div>
+                  <div class="json-tree__leaf">
+                    <span class="json-tree__name">
+                      <span class="json-tree__type json-tree__type--string">S</span>
+                      <span>create_if_missing</span>
+                    </span>
+                    <span class="json-tree__value">table bootstrap mode</span>
+                    <span class="json-tree__delete">x</span>
+                  </div>
+
+                  <div class="json-tree__group">
+                    <span class="json-tree__name">
+                      <span class="json-tree__caret">▾</span>
+                      <span>columns</span>
+                    </span>
+                    <span class="json-tree__pill">{5}</span>
+                    <span class="json-tree__delete">x</span>
+                  </div>
+
+                  <div class="json-tree__branch">
+                    <div class="json-tree__leaf">
+                      <span class="json-tree__name">
+                        <span class="json-tree__type json-tree__type--number">12</span>
+                        <span>order_id</span>
+                      </span>
+                      <span class="json-tree__value">bigint / required / primary key</span>
+                      <span class="json-tree__delete">x</span>
+                    </div>
+
+                    <div class="json-tree__leaf">
+                      <span class="json-tree__name">
+                        <span class="json-tree__type json-tree__type--string">S</span>
+                        <span>customer_id</span>
+                      </span>
+                      <span class="json-tree__value">varchar / required</span>
+                      <span class="json-tree__delete">x</span>
+                    </div>
+
+                    <div class="json-tree__leaf">
+                      <span class="json-tree__name">
+                        <span class="json-tree__type json-tree__type--number">12</span>
+                        <span>total_amount</span>
+                      </span>
+                      <span class="json-tree__value">decimal(18,2) / default 0.00</span>
+                      <span class="json-tree__delete">x</span>
+                    </div>
+
+                    <div class="json-tree__leaf">
+                      <span class="json-tree__name">
+                        <span class="json-tree__type json-tree__type--string">S</span>
+                        <span>currency_code</span>
+                      </span>
+                      <span class="json-tree__value">varchar / default 'USD'</span>
+                      <span class="json-tree__delete">x</span>
+                    </div>
+
+                    <div class="json-tree__leaf">
+                      <span class="json-tree__name">
+                        <span class="json-tree__type json-tree__type--string">S</span>
+                        <span>posted_at</span>
+                      </span>
+                      <span class="json-tree__value">timestamp / nullable</span>
+                      <span class="json-tree__delete">x</span>
+                    </div>
+
+                    <div class="json-tree__adder">+ add column</div>
+                  </div>
+
+                  <div class="json-tree__group">
+                    <span class="json-tree__name">
+                      <span class="json-tree__caret">▾</span>
+                      <span>primary_key</span>
+                    </span>
+                    <span class="json-tree__pill">[1]</span>
+                    <span class="json-tree__delete">x</span>
+                  </div>
+
+                  <div class="json-tree__leaf">
+                    <span class="json-tree__name">
+                      <span class="json-tree__type json-tree__type--array">[]</span>
+                      <span>order_id</span>
+                    </span>
+                    <span class="json-tree__value">key column</span>
+                    <span class="json-tree__delete">x</span>
+                  </div>
+
+                  <div class="json-tree__group">
+                    <span class="json-tree__name">
+                      <span class="json-tree__caret">▾</span>
+                      <span>checks</span>
+                    </span>
+                    <span class="json-tree__pill">[1]</span>
+                    <span class="json-tree__delete">x</span>
+                  </div>
+
+                  <div class="json-tree__leaf">
+                    <span class="json-tree__name">
+                      <span class="json-tree__type json-tree__type--array">[]</span>
+                      <span>total_amount &gt;= 0</span>
+                    </span>
+                    <span class="json-tree__value">check expression</span>
+                    <span class="json-tree__delete">x</span>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="schema-config" aria-label="Edit node config">
+              <div class="json-surface__header">
+                <strong class="schema-config__title">Edit config</strong>
+                <span class="json-surface__badge">Node settings</span>
+              </div>
+
+              <div class="schema-config__body">
+                <div class="schema-config__section">
+                  <span class="schema-config__section-title">Identity</span>
+
+                  <div class="schema-config__field">
+                    <div class="schema-config__field-head">
+                      <label>Label</label>
+                      <span class="schema-config__hint">node card</span>
+                    </div>
+                    <input class="schema-config__input" type="text" value="Table Schema" />
+                  </div>
+
+                  <div class="schema-config__field">
+                    <div class="schema-config__field-head">
+                      <label>Output alias</label>
+                      <span class="schema-config__hint">table ref</span>
+                    </div>
+                    <input class="schema-config__input" type="text" value="orders_fact_definition" />
+                  </div>
+                </div>
+
+                <div class="schema-config__section">
+                  <span class="schema-config__section-title">Behavior</span>
+
+                  <div class="schema-config__field">
+                    <div class="schema-config__field-head">
+                      <label>Object type</label>
+                    </div>
+                    <div class="schema-config__select">DuckDB table</div>
+                  </div>
+
+                  <div class="schema-config__field">
+                    <div class="schema-config__field-head">
+                      <label>Create mode</label>
+                    </div>
+                    <div class="schema-config__select">Create if missing</div>
+                  </div>
+
+                  <div class="schema-config__field">
+                    <div class="schema-config__field-head">
+                      <label>If target exists</label>
+                    </div>
+                    <div class="schema-config__select">Keep existing table</div>
+                  </div>
+
+                  <div class="schema-config__field">
+                    <div class="schema-config__field-head">
+                      <label>Constraint scope</label>
+                    </div>
+                    <div class="schema-config__select">Primary key + checks</div>
+                  </div>
+
+                  <div class="schema-config__field">
+                    <div class="schema-config__field-head">
+                      <label>Bootstrap SQL preview</label>
+                    </div>
+                    <div class="schema-config__code">CREATE TABLE IF NOT EXISTS tables.orders_fact (...)\nPRIMARY KEY (order_id)\nCHECK (total_amount &gt;= 0)</div>
+                  </div>
+                </div>
+
+                <div class="schema-config__section">
+                  <span class="schema-config__section-title">Execution timing</span>
+
+                  <div class="schema-config__checkbox">
+                    <span class="schema-config__checkbox-mark" aria-hidden="true"></span>
+                    <span>Wait before execution</span>
+                  </div>
+
+                  <div class="schema-config__checkbox">
+                    <span class="schema-config__checkbox-mark" aria-hidden="true"></span>
+                    <span>Wait after execution</span>
+                  </div>
+                </div>
+              </div>
+
+              <footer class="schema-config__footer">
+                <p class="schema-config__footer-eyebrow">Review focus</p>
+
+                <div class="schema-config__footer-row">
+                  <span>Sync model</span>
+                  <strong>Text <-> tree</strong>
+                </div>
+
+                <div class="schema-config__footer-row">
+                  <span>DuckDB scope</span>
+                  <strong>table DDL only</strong>
+                </div>
+
+                <div class="schema-config__footer-row">
+                  <span>Downstream use</span>
+                  <strong>table_output bootstrap</strong>
+                </div>
+
+                <button class="schema-config__action" type="button">
+                  <span aria-hidden="true">-&gt;</span>
+                  <span>Apply table draft</span>
+                </button>
+              </footer>
+            </section>
+          </div>
+        </aside>
+      </section>
+    </main>
+  </body>
+</html>

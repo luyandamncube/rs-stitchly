@@ -21,6 +21,12 @@ Preferred rule:
 - avoid per-node CSS files unless a sample genuinely needs a tiny local override
 - if a local override is ever needed later, keep it minimal and clearly justified
 
+Special-case allowance:
+
+- a study may include a small local stage/panel override when the review goal is
+  the relationship between a node card and its manager, not just the isolated
+  node shell
+
 Reason:
 
 - keeps the design language consistent

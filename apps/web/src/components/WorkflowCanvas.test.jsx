@@ -48,6 +48,92 @@ function getTextInputNode() {
   return node
 }
 
+function getTableOutputNode() {
+  const node = screen.getByText('Table Output').closest('.workflow-node-card')
+
+  expect(node).not.toBeNull()
+
+  return node
+}
+
+function getTableInputNode() {
+  const node = screen.getByText('Table Input').closest('.workflow-node-card')
+
+  expect(node).not.toBeNull()
+
+  return node
+}
+
+function buildTableOutputWorkflow() {
+  const workflow = cloneWorkflow(workflowFixture)
+
+  workflow.nodes.push({
+    node_id: 'table_output_news_brief',
+    type_id: 'table_output',
+    definition_version: 1,
+    label: 'Table Output',
+    config: {
+      execution: {
+        wait_after_seconds: 0,
+        wait_before_seconds: 0
+      },
+      include_run_id: true,
+      include_written_at: true,
+      input_shape: 'single_text_row',
+      open_in_catalog: false,
+      table_name: 'news_brief',
+      target_schema: 'outputs',
+      value_column: 'content',
+      write_mode: 'append'
+    },
+    position: {
+      x: 880,
+      y: 240
+    }
+  })
+  workflow.edges.push({
+    edge_id: 'edge_input_text_to_table_output_text',
+    source_node_id: 'input_text',
+    source_port_id: 'text',
+    target_node_id: 'table_output_news_brief',
+    target_port_id: 'text'
+  })
+
+  return workflow
+}
+
+function buildTableInputWorkflow() {
+  const workflow = cloneWorkflow(workflowFixture)
+
+  workflow.nodes.push({
+    node_id: 'table_input_runs',
+    type_id: 'table_input',
+    definition_version: 1,
+    label: 'Table Input',
+    config: {
+      catalog: 'workflow.duckdb',
+      execution: {
+        wait_after_seconds: 0,
+        wait_before_seconds: 0
+      },
+      open_in_catalog: false,
+      output_alias: 'workflow_runs',
+      refresh_schema: true,
+      row_filter: '',
+      row_limit: null,
+      schema_name: 'runs',
+      selected_columns: [],
+      table_name: 'workflow_runs'
+    },
+    position: {
+      x: 120,
+      y: 320
+    }
+  })
+
+  return workflow
+}
+
 describe('WorkflowCanvas', () => {
   it('renders the real text input and send email nodes from the persisted workflow', () => {
     render(<CanvasHarness />)
@@ -235,5 +321,27 @@ describe('WorkflowCanvas', () => {
     expect(delayIcon).not.toBeNull()
     expect(delayIcon).toHaveTextContent('←')
     expect(delayIcon).toHaveTextContent('→')
+  })
+
+  it('renders the table output node with destination and shape details', () => {
+    render(<CanvasHarness workflowOverride={buildTableOutputWorkflow()} />)
+
+    const tableOutputNode = getTableOutputNode()
+
+    expect(tableOutputNode).toHaveClass('workflow-node-card--table-output')
+    expect(within(tableOutputNode).getByText('outputs.news_brief')).toBeInTheDocument()
+    expect(within(tableOutputNode).getByText('Single text row')).toBeInTheDocument()
+    expect(within(tableOutputNode).getByText('Last write')).toBeInTheDocument()
+  })
+
+  it('renders the table input node with source and catalog details', () => {
+    render(<CanvasHarness workflowOverride={buildTableInputWorkflow()} />)
+
+    const tableInputNode = getTableInputNode()
+
+    expect(tableInputNode).toHaveClass('workflow-node-card--table-input')
+    expect(within(tableInputNode).getByText('runs.workflow_runs')).toBeInTheDocument()
+    expect(within(tableInputNode).getByText('All columns')).toBeInTheDocument()
+    expect(within(tableInputNode).getByText('workflow.duckdb')).toBeInTheDocument()
   })
 })

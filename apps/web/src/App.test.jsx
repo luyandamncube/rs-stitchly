@@ -23,6 +23,8 @@ const api = vi.hoisted(() => ({
   connectWorkspaceGmail: vi.fn(),
   createWorkflow: vi.fn(),
   createWorkspace: vi.fn(),
+  deleteWorkspaceCatalogTable: vi.fn(),
+  deleteWorkspace: vi.fn(),
   deleteWorkflow: vi.fn(),
   getSession: vi.fn(),
   getWorkflow: vi.fn(),
@@ -39,6 +41,7 @@ const api = vi.hoisted(() => ({
   login: vi.fn(),
   loginWithGoogleCode: vi.fn(),
   logout: vi.fn(),
+  previewWorkspaceCatalogTableDelete: vi.fn(),
   runWorkspaceCatalogQuery: vi.fn(),
   updateWorkflow: vi.fn(),
   updateWorkflowState: vi.fn()
@@ -262,6 +265,8 @@ describe('App platform shell', () => {
     api.connectWorkspaceGmail.mockReset();
     api.createWorkspace.mockReset();
     api.createWorkflow.mockReset();
+    api.deleteWorkspaceCatalogTable.mockReset();
+    api.deleteWorkspace.mockReset();
     api.deleteWorkflow.mockReset();
     api.getSession.mockReset();
     api.getWorkflow.mockReset();
@@ -278,6 +283,7 @@ describe('App platform shell', () => {
     api.login.mockReset();
     api.loginWithGoogleCode.mockReset();
     api.logout.mockReset();
+    api.previewWorkspaceCatalogTableDelete.mockReset();
     api.runWorkspaceCatalogQuery.mockReset();
     api.updateWorkflow.mockReset();
     api.updateWorkflowState.mockReset();
@@ -298,6 +304,16 @@ describe('App platform shell', () => {
       tables: WORKSPACE_CATALOG_RESPONSE.catalogs[0].schemas[0].tables
     });
     api.getWorkspaceCatalogTable.mockResolvedValue(WORKSPACE_CATALOG_TABLE_RESPONSE);
+    api.previewWorkspaceCatalogTableDelete.mockResolvedValue({
+      workflow_id: 'wf_text_preview',
+      workflow_name: 'Text Preview',
+      database_name: 'workflow.duckdb',
+      schema_name: 'runs',
+      table_name: 'workflow_runs',
+      is_deletable: false,
+      protected_reason: 'This is a system-managed table and cannot be deleted from the catalog tree.',
+      affected_workflows: []
+    });
     api.runWorkspaceCatalogQuery.mockResolvedValue(WORKSPACE_CATALOG_QUERY_RESPONSE);
     api.getWorkflows.mockResolvedValue({ workflows: [] });
     api.getWorkspaceConnections.mockResolvedValue({ connections: [] });
@@ -306,6 +322,16 @@ describe('App platform shell', () => {
     api.getWorkspaceRunEvents.mockResolvedValue({ events: [] });
     api.getWorkspaceRunLogs.mockResolvedValue({ logs: [] });
     api.updateWorkflowState.mockResolvedValue({ last_opened_workflow_id: null });
+    api.deleteWorkspaceCatalogTable.mockResolvedValue({
+      workflow_id: 'wf_text_preview',
+      workflow_name: 'Text Preview',
+      database_name: 'workflow.duckdb',
+      schema_name: 'tables',
+      table_name: 'daily_digest',
+      deleted: true,
+      invalidated_workflows: []
+    });
+    api.deleteWorkspace.mockResolvedValue({ workspace_id: 'ws_secondary', deleted: true });
   });
 
   it('shows the login route by default and enters the canvas after sign-in', async () => {
@@ -439,6 +465,7 @@ describe('App platform shell', () => {
     expect(outputButton).toHaveAttribute('aria-expanded', 'true');
     expect(container.querySelector('.canvas-menu.is-open')).not.toBeNull();
     expect(screen.getByText('Preview Output')).toBeInTheDocument();
+    expect(screen.getByText('Table Output')).toBeInTheDocument();
     expect(screen.getByText('Send Email')).toBeInTheDocument();
   });
 
@@ -534,8 +561,12 @@ describe('App platform shell', () => {
     expect(container.querySelector('.canvas-menu.is-open')).not.toBeNull();
     expect(screen.getByLabelText('Data sources window')).toBeInTheDocument();
     expect(screen.getByText('Catalog Tree')).toBeInTheDocument();
-    expect(await screen.findByText('default-workspace · workflow.duckdb')).toBeInTheDocument();
-    expect(screen.getByText('warehouse-workspace · workflow.duckdb')).toBeInTheDocument();
+    expect(
+      await screen.findByText('default-workspace · wf_text_preview · workflow.duckdb')
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('warehouse-workspace · wf_warehouse_ops · workflow.duckdb')
+    ).toBeInTheDocument();
     expect(screen.getByText('runs')).toBeInTheDocument();
     expect(screen.getByText('workflow_runs')).toBeInTheDocument();
     expect(screen.getByText('SQL Editor')).toBeInTheDocument();
@@ -565,6 +596,139 @@ describe('App platform shell', () => {
     });
     fireEvent.click(expandSchemaButton);
     expect(within(tree).getByText('workflow_runs')).toBeInTheDocument();
+  });
+
+  it('warns before deleting a user table and refreshes the catalog tree', async () => {
+    api.login.mockResolvedValue(AUTHENTICATED_SESSION);
+    api.getWorkspaceCatalog
+      .mockResolvedValueOnce({
+        catalogs: [
+          {
+            workflow_id: 'wf_text_preview',
+            workflow_name: 'Text Preview',
+            database_name: 'workflow.duckdb',
+            schemas: [
+              {
+                schema_name: 'tables',
+                table_count: 1,
+                tables: [
+                  {
+                    table_name: 'daily_digest',
+                    table_type: 'BASE TABLE',
+                    column_count: 4,
+                    is_deletable: true
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        catalogs: [
+          {
+            workflow_id: 'wf_text_preview',
+            workflow_name: 'Text Preview',
+            database_name: 'workflow.duckdb',
+            schemas: [
+              {
+                schema_name: 'tables',
+                table_count: 0,
+                tables: []
+              }
+            ]
+          }
+        ]
+      });
+    api.getWorkspaceCatalogSchema.mockResolvedValue({
+      workflow_id: 'wf_text_preview',
+      workflow_name: 'Text Preview',
+      database_name: 'workflow.duckdb',
+      schema_name: 'tables',
+      tables: [
+        {
+          table_name: 'daily_digest',
+          table_type: 'BASE TABLE',
+          column_count: 4,
+          is_deletable: true
+        }
+      ]
+    });
+    api.previewWorkspaceCatalogTableDelete.mockResolvedValue({
+      workflow_id: 'wf_text_preview',
+      workflow_name: 'Text Preview',
+      database_name: 'workflow.duckdb',
+      schema_name: 'tables',
+      table_name: 'daily_digest',
+      is_deletable: true,
+      protected_reason: null,
+      affected_workflows: [
+        {
+          workflow_id: 'wf_text_preview',
+          workflow_name: 'Text Preview',
+          nodes: [
+            {
+              node_id: 'table_input_digest',
+              node_type: 'table_input',
+              usage_kind: 'source',
+              node_label: 'Table Input'
+            }
+          ]
+        }
+      ]
+    });
+    api.deleteWorkspaceCatalogTable.mockResolvedValue({
+      workflow_id: 'wf_text_preview',
+      workflow_name: 'Text Preview',
+      database_name: 'workflow.duckdb',
+      schema_name: 'tables',
+      table_name: 'daily_digest',
+      deleted: true,
+      invalidated_workflows: [
+        {
+          workflow_id: 'wf_text_preview',
+          workflow_name: 'Text Preview',
+          nodes: []
+        }
+      ]
+    });
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(<App />);
+
+    await screen.findByRole('heading', { name: /log in/i });
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Data' }));
+
+    const deleteButton = await screen.findByRole('button', {
+      name: 'Delete table tables.daily_digest'
+    });
+    fireEvent.click(deleteButton);
+
+    await waitFor(() => {
+      expect(api.previewWorkspaceCatalogTableDelete).toHaveBeenCalledWith(
+        'ws_default',
+        'wf_text_preview',
+        'tables',
+        'daily_digest'
+      );
+    });
+    expect(confirmSpy).toHaveBeenCalledWith(
+      expect.stringContaining('The following workflows use this table:')
+    );
+    await waitFor(() => {
+      expect(api.deleteWorkspaceCatalogTable).toHaveBeenCalledWith(
+        'ws_default',
+        'wf_text_preview',
+        'tables',
+        'daily_digest'
+      );
+    });
+    await waitFor(() => {
+      expect(screen.queryByText('daily_digest')).toBeNull();
+    });
+
+    confirmSpy.mockRestore();
   });
 
   it('updates the SQL editor for a selected table and runs edited preview queries', async () => {
@@ -993,6 +1157,64 @@ describe('App platform shell', () => {
     expect(await screen.findByText('Ops Space')).toBeInTheDocument();
     expect(await screen.findByText('Text Preview')).toBeInTheDocument();
     expect(await screen.findByText('Ops Alerts')).toBeInTheDocument();
+  });
+
+  it('shows owner delete buttons in the workspace popup and removes a deleted workspace', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    api.login.mockResolvedValue(AUTHENTICATED_MULTI_WORKSPACE_SESSION);
+    api.getSession.mockResolvedValue({
+      ...AUTHENTICATED_SESSION,
+      workspaces: [...AUTHENTICATED_SESSION.workspaces]
+    });
+    api.getWorkflows.mockImplementation(async (workspaceId) => {
+      if (workspaceId === 'ws_secondary') {
+        return {
+          workflows: [
+            {
+              workflow_id: 'wf_warehouse_ops',
+              workspace_id: 'ws_secondary',
+              name: 'Warehouse Ops',
+              description: 'Secondary workflow.',
+              version: 1,
+              updated_at: '2026-05-24T11:00:00Z'
+            }
+          ]
+        };
+      }
+
+      return {
+        workflows: [
+          {
+            workflow_id: 'wf_text_preview',
+            workspace_id: 'ws_default',
+            name: 'Text Preview',
+            description: 'Primary workflow.',
+            version: 1,
+            updated_at: '2026-05-24T10:00:00Z'
+          }
+        ]
+      };
+    });
+
+    render(<App />);
+
+    await screen.findByRole('heading', { name: /log in/i });
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspaces' }));
+
+    const deleteButton = await screen.findByRole('button', {
+      name: 'Delete workspace Warehouse Workspace'
+    });
+    fireEvent.click(deleteButton);
+
+    await waitFor(() => {
+      expect(api.deleteWorkspace).toHaveBeenCalledWith('ws_secondary');
+    });
+    await waitFor(() => {
+      expect(screen.queryByText('Warehouse Workspace')).not.toBeInTheDocument();
+    });
+
+    confirmSpy.mockRestore();
   });
 
   it('keeps /workspaces/new accessible for authenticated users with existing workspaces', async () => {

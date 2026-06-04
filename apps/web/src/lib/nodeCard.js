@@ -189,6 +189,113 @@ const BUILTIN_NODE_CARD_FALLBACKS = {
       width: 332,
       density: 'comfortable'
     }
+  },
+  table_output: {
+    variant: 'output',
+    icon_key: 'table_output',
+    top_chip: {
+      visible: true,
+      text: 'Persist'
+    },
+    header: {
+      title_source: 'instance_label_or_display_name',
+      show_overflow_menu: true
+    },
+    rows: [
+      {
+        row_id: 'target_schema',
+        kind: 'kv',
+        label: 'Schema',
+        value: { source: 'config', path: 'target_schema' },
+        formatter: 'text',
+        icon_key: 'table_output',
+        truncate: false
+      },
+      {
+        row_id: 'table_name',
+        kind: 'kv',
+        label: 'Table',
+        value: { source: 'config', path: 'table_name' },
+        formatter: 'text',
+        icon_key: 'label',
+        truncate: false
+      },
+      {
+        row_id: 'write_mode',
+        kind: 'kv',
+        label: 'Mode',
+        value: { source: 'config', path: 'write_mode' },
+        formatter: 'text',
+        icon_key: 'logic',
+        truncate: false
+      }
+    ],
+    footer: {
+      kind: 'metric',
+      label: 'Last write',
+      value: { source: 'runtime', path: 'last_status' },
+      formatter: 'status',
+      icon_key: 'status'
+    },
+    handles: {
+      input_layout: 'single_left',
+      output_layout: 'none',
+      show_labels: 'never',
+      align_to_rows: true
+    },
+    size: {
+      width: 336,
+      density: 'comfortable'
+    }
+  },
+  table_input: {
+    variant: 'input',
+    icon_key: 'table_output',
+    top_chip: {
+      visible: false,
+      text: null
+    },
+    header: {
+      title_source: 'instance_label_or_display_name',
+      show_overflow_menu: true
+    },
+    rows: [
+      {
+        row_id: 'schema_name',
+        kind: 'kv',
+        label: 'Schema',
+        value: { source: 'config', path: 'schema_name' },
+        formatter: 'text',
+        icon_key: 'table_output',
+        truncate: false
+      },
+      {
+        row_id: 'table_name',
+        kind: 'kv',
+        label: 'Table',
+        value: { source: 'config', path: 'table_name' },
+        formatter: 'text',
+        icon_key: 'label',
+        truncate: false
+      }
+    ],
+    footer: {
+      kind: 'metric',
+      label: 'Catalog',
+      value: { source: 'config', path: 'catalog' },
+      formatter: 'text',
+      icon_key: 'status'
+    },
+    handles: {
+      input_layout: 'none',
+      output_layout: 'single_right',
+      show_labels: 'never',
+      align_to_rows: true
+    },
+    size: {
+      width: 336,
+      density: 'comfortable'
+    }
   }
 }
 
@@ -202,6 +309,8 @@ const ICON_LABELS = {
   send_email: '@',
   sparkles: 'O',
   status: 'S',
+  table_input: '[]',
+  table_output: '[]',
   text_input: 'T',
   text_transform: '</>',
   type: 'T',

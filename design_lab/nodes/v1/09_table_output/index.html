@@ -1,0 +1,804 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Design Lab · Table Output</title>
+    <link rel="stylesheet" href="../shared.css" />
+    <style>
+      .lab-page--flow-context {
+        place-items: stretch;
+        padding: 28px;
+      }
+
+      .lab-stage--flow-context {
+        position: relative;
+        width: min(100%, 1380px);
+        min-height: 820px;
+        margin: 0 auto;
+        border-radius: 28px;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 18% 20%, rgba(245, 110, 15, 0.07), transparent 18%),
+          radial-gradient(circle at 84% 14%, rgba(255, 255, 255, 0.025), transparent 18%),
+          linear-gradient(180deg, rgba(13, 13, 16, 0.86), rgba(9, 9, 11, 0.98));
+        box-shadow:
+          0 32px 64px rgba(0, 0, 0, 0.28),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+      }
+
+      .lab-stage--flow-context::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image: radial-gradient(circle, rgba(255, 255, 255, 0.12) 1px, transparent 1px);
+        background-size: 24px 24px;
+        pointer-events: none;
+      }
+
+      .flow-caption {
+        position: absolute;
+        left: 28px;
+        top: 28px;
+        z-index: 2;
+        display: grid;
+        gap: 6px;
+        max-width: 420px;
+      }
+
+      .flow-caption__eyebrow {
+        color: rgba(255, 255, 255, 0.54);
+        font-size: 0.76rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      .flow-caption h1 {
+        margin: 0;
+        font-size: 1.14rem;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+      }
+
+      .flow-caption p {
+        margin: 0;
+        color: rgba(255, 255, 255, 0.62);
+        font-size: 0.88rem;
+        line-height: 1.55;
+      }
+
+      .flow-connection {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        pointer-events: none;
+      }
+
+      .flow-connection path {
+        fill: none;
+        stroke: rgba(120, 195, 132, 0.76);
+        stroke-width: 2.2;
+        stroke-linecap: round;
+      }
+
+      .flow-connection circle {
+        fill: #0d0d10;
+        stroke: rgba(120, 195, 132, 0.82);
+        stroke-width: 2;
+      }
+
+      .flow-node {
+        position: absolute;
+        z-index: 2;
+      }
+
+      .flow-node--text {
+        left: 124px;
+        top: 334px;
+      }
+
+      .flow-node--table {
+        left: 474px;
+        top: 316px;
+        width: 280px;
+      }
+
+      .flow-node--selected {
+        background: rgba(39, 39, 44, 0.98);
+        box-shadow: 0 0 0 1px rgba(245, 110, 15, 0.82);
+      }
+
+      .flow-node--table.node-card {
+        min-height: 0;
+        padding: 8px 9px 8px;
+        border-radius: 10px;
+        background: rgba(34, 34, 39, 0.96);
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.07);
+      }
+
+      .flow-node--table .node-card__header {
+        min-height: 20px;
+      }
+
+      .flow-node--table .node-card__heading strong {
+        color: rgba(255, 255, 255, 0.98);
+        font-size: 1rem;
+        font-weight: 600;
+        line-height: 1.2;
+        letter-spacing: -0.02em;
+      }
+
+      .flow-node--table .node-card__menu {
+        color: rgba(255, 255, 255, 0.42);
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+      }
+
+      .flow-node--table .node-card__body {
+        display: grid;
+        gap: 4px;
+        margin-top: 4px;
+        margin-bottom: 3px;
+      }
+
+      .flow-node--table .node-card__row--summary {
+        min-height: 56px;
+        padding: 6px 9px;
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.035);
+        display: grid;
+        align-items: stretch;
+        gap: 0;
+      }
+
+      .flow-node--table .node-card__summary-head {
+        display: grid;
+        grid-template-columns: max-content minmax(0, 1fr);
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+      }
+
+      .flow-node--table .node-card__summary-label,
+      .flow-node--table .node-card__footer-meta {
+        color: var(--text-muted);
+        font-size: 0.74rem;
+        line-height: 1.2;
+      }
+
+      .flow-node--table .node-card__summary-target {
+        display: block;
+        min-width: 0;
+        width: 100%;
+        overflow: hidden;
+        color: rgba(255, 255, 255, 0.92);
+        font-size: 0.88rem;
+        font-weight: 300;
+        line-height: 1.2;
+        letter-spacing: -0.01em;
+        text-align: right;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .flow-node--table .node-card__footer {
+        min-height: 32px;
+        padding: 0 8px;
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.035);
+      }
+
+      .flow-node--table .node-card__footer strong {
+        color: rgba(255, 255, 255, 0.92);
+        font-size: 0.94rem;
+        font-weight: 300;
+        line-height: 1.25;
+        letter-spacing: 0;
+      }
+
+      .node-panel {
+        position: absolute;
+        right: 28px;
+        top: 28px;
+        z-index: 2;
+        width: 338px;
+        max-height: calc(100% - 56px);
+        overflow-y: auto;
+        padding: 14px 14px 16px;
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 10px;
+        background: rgba(34, 34, 39, 0.98);
+        box-shadow: 0 18px 36px rgba(0, 0, 0, 0.24);
+      }
+
+      .node-panel__header,
+      .node-panel__title-group,
+      .node-panel__header-meta,
+      .node-panel__field-head,
+      .node-panel__footer-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .node-panel__header {
+        margin-bottom: 14px;
+      }
+
+      .node-panel__title-group {
+        justify-content: flex-start;
+        align-items: flex-start;
+      }
+
+      .node-panel__title-icon {
+        color: var(--accent-primary);
+        font-size: 0.84rem;
+        font-weight: 700;
+      }
+
+      .node-panel__title-copy {
+        display: grid;
+        gap: 3px;
+      }
+
+      .node-panel__title-copy strong {
+        font-size: 0.92rem;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+      }
+
+      .node-panel__subtitle {
+        color: rgba(255, 255, 255, 0.56);
+        font-family: "Azeret Mono", "Space Grotesk", "Segoe UI", sans-serif;
+        font-size: 0.7rem;
+      }
+
+      .node-panel__header-meta {
+        color: rgba(255, 255, 255, 0.96);
+        font-size: 0.8rem;
+        font-weight: 600;
+      }
+
+      .node-panel__meta-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: rgba(245, 110, 15, 0.18);
+        box-shadow: inset 0 0 0 1px rgba(245, 110, 15, 0.2);
+      }
+
+      .node-panel__section {
+        display: grid;
+        gap: 12px;
+      }
+
+      .node-panel__field {
+        display: grid;
+        gap: 7px;
+      }
+
+      .node-panel__field-head label,
+      .node-panel__footer-row span,
+      .node-panel__checkbox span {
+        color: rgba(255, 255, 255, 0.82);
+        font-size: 0.84rem;
+        font-weight: 500;
+      }
+
+      .node-panel__hint {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 14px;
+        height: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 999px;
+        color: rgba(255, 255, 255, 0.56);
+        font-size: 0.58rem;
+        line-height: 1;
+      }
+
+      .node-panel__input,
+      .node-panel__select,
+      .node-panel__code {
+        width: 100%;
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.02);
+      }
+
+      .node-panel__input,
+      .node-panel__select {
+        min-height: 42px;
+        padding: 0 12px;
+        color: rgba(255, 255, 255, 0.92);
+        font: inherit;
+        font-size: 0.84rem;
+      }
+
+      .node-panel__input {
+        outline: none;
+        background: rgba(255, 255, 255, 0.02);
+      }
+
+      .node-panel__select-wrap {
+        position: relative;
+      }
+
+      .node-panel__select {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        text-align: left;
+        padding-right: 38px;
+        background: rgba(255, 255, 255, 0.035);
+        border-color: rgba(255, 255, 255, 0.12);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+      }
+
+      .node-panel__caret {
+        position: absolute;
+        right: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+        pointer-events: none;
+        color: rgba(255, 255, 255, 0.56);
+        font-size: 0.92rem;
+      }
+
+      .node-panel__code {
+        display: grid;
+        gap: 8px;
+        padding: 10px;
+      }
+
+      .node-panel__code-line {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        color: rgba(255, 255, 255, 0.78);
+        font-family: "Azeret Mono", "Space Grotesk", "Segoe UI", sans-serif;
+        font-size: 0.72rem;
+        line-height: 1.4;
+      }
+
+      .node-panel__code-line strong {
+        color: rgba(255, 255, 255, 0.94);
+        font-weight: 500;
+      }
+
+      .node-panel__toggle-row {
+        min-height: 24px;
+      }
+
+      .node-panel__subsection {
+        display: grid;
+        gap: 10px;
+        padding-top: 4px;
+      }
+
+      .node-panel__subsection-title {
+        margin: 0;
+        color: rgba(255, 255, 255, 0.7);
+        font-size: 0.82rem;
+        font-weight: 500;
+        line-height: 1.2;
+      }
+
+      .node-panel__checkbox {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .node-panel__checkbox input {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .node-panel__checkmark {
+        position: relative;
+        width: 20px;
+        height: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 3px;
+        background: rgba(255, 255, 255, 0.86);
+      }
+
+      .node-panel__checkmark::after {
+        content: "";
+        position: absolute;
+        left: 6px;
+        top: 3px;
+        width: 5px;
+        height: 10px;
+        border-right: 1.75px solid #17171c;
+        border-bottom: 1.75px solid #17171c;
+        transform: rotate(40deg);
+      }
+
+      .node-panel__checkbox--off .node-panel__checkmark {
+        background: rgba(255, 255, 255, 0.02);
+      }
+
+      .node-panel__checkbox--off .node-panel__checkmark::after {
+        display: none;
+      }
+
+      .node-panel__timing-card {
+        min-height: 52px;
+        display: flex;
+        align-items: center;
+        padding: 0 12px;
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.018);
+      }
+
+      .node-panel__footer {
+        margin-top: 16px;
+        padding-top: 12px;
+        border-top: 1px solid rgba(255, 255, 255, 0.18);
+        display: grid;
+        gap: 10px;
+      }
+
+      .node-panel__footer-eyebrow {
+        margin: 0;
+        color: rgba(255, 255, 255, 0.82);
+        font-size: 0.78rem;
+        font-family: "Azeret Mono", "Space Grotesk", "Segoe UI", sans-serif;
+      }
+
+      .node-panel__footer-row strong {
+        color: rgba(255, 255, 255, 0.96);
+        font-size: 0.82rem;
+        font-weight: 500;
+      }
+
+      .node-panel__action {
+        min-height: 38px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        border: none;
+        border-radius: 6px;
+        background: rgba(245, 110, 15, 0.18);
+        color: rgba(255, 247, 241, 0.96);
+        font: inherit;
+        font-size: 0.88rem;
+        font-weight: 600;
+      }
+
+      @media (max-width: 1180px) {
+        .lab-page--flow-context {
+          padding: 18px;
+        }
+
+        .lab-stage--flow-context {
+          min-height: auto;
+          padding: 112px 18px 24px;
+          display: grid;
+          gap: 24px;
+          align-content: start;
+          justify-items: center;
+        }
+
+        .flow-caption,
+        .flow-node,
+        .node-panel,
+        .flow-connection {
+          position: relative;
+          inset: auto;
+          left: auto;
+          right: auto;
+          top: auto;
+        }
+
+        .flow-connection {
+          width: min(100%, 820px);
+          height: 120px;
+          order: 2;
+        }
+
+        .flow-node--text {
+          order: 1;
+        }
+
+        .flow-node--table {
+          order: 3;
+        }
+
+        .node-panel {
+          width: min(100%, 338px);
+          max-height: none;
+          order: 4;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="lab-page lab-page--flow-context">
+      <section
+        class="lab-stage lab-stage--flow-context"
+        aria-label="Table output node and manager study"
+      >
+        <div class="flow-caption">
+          <span class="flow-caption__eyebrow">Nodes V1</span>
+          <h1>09 Table Output</h1>
+          <p>
+            Static study preserving the current in-app table sink shell and its
+            manager panel, using the simple
+            <code>text_input -&gt; table_output</code> test flow.
+          </p>
+        </div>
+
+        <svg
+          class="flow-connection"
+          viewBox="0 0 1380 820"
+          preserveAspectRatio="none"
+          aria-hidden="true"
+        >
+          <path d="M 404 379 C 458 379, 478 379, 522 379" />
+          <circle cx="404" cy="379" r="6"></circle>
+          <circle cx="522" cy="379" r="6"></circle>
+        </svg>
+
+        <article
+          class="node-card node-card--input-literal node-card--text-input flow-node flow-node--text"
+          aria-label="Text input node"
+          data-node-kind="input-literal"
+        >
+          <header class="node-card__header">
+            <div class="node-card__heading">
+              <span class="node-card__icon" aria-hidden="true">T</span>
+              <strong>Text input</strong>
+            </div>
+
+            <span class="node-card__menu" aria-hidden="true">...</span>
+          </header>
+
+          <section class="node-card__body">
+            <div class="node-card__row node-card__row--primary">
+              <span class="node-card__value node-card__value--multiline">
+                Market wrap for failed refund names and the related ticker watchlist.
+              </span>
+            </div>
+          </section>
+
+          <footer class="node-card__footer">
+            <span class="node-card__footer-meta">Text</span>
+            <strong>72 chars</strong>
+          </footer>
+
+          <span
+            class="node-card__handle node-card__handle--right"
+            aria-hidden="true"
+          ></span>
+        </article>
+
+        <article
+          class="node-card node-card--output-result node-card--table-output flow-node flow-node--table flow-node--selected"
+          aria-label="Table output node"
+          data-node-kind="output-result"
+        >
+          <span
+            class="node-card__handle node-card__handle--left"
+            aria-hidden="true"
+          ></span>
+
+          <header class="node-card__header">
+            <div class="node-card__heading">
+              <span class="node-card__icon" aria-hidden="true">[]</span>
+              <strong>Table Output</strong>
+            </div>
+
+            <span class="node-card__menu" aria-hidden="true">...</span>
+          </header>
+
+          <section class="node-card__body">
+            <div class="node-card__row node-card__row--summary">
+              <div class="node-card__summary-head">
+                <span class="node-card__summary-label">Target</span>
+                <span class="node-card__summary-target">outputs.news_brief</span>
+              </div>
+
+              <div class="node-card__summary-head">
+                <span class="node-card__summary-label">Shape</span>
+                <span class="node-card__summary-target">Single text row</span>
+              </div>
+            </div>
+          </section>
+
+          <footer class="node-card__footer">
+            <span class="node-card__footer-meta">Last write</span>
+            <strong>Idle</strong>
+          </footer>
+        </article>
+
+        <aside class="node-panel" aria-label="Table output node settings">
+          <header class="node-panel__header">
+            <div class="node-panel__title-group">
+              <span class="node-panel__title-icon" aria-hidden="true">[]</span>
+              <div class="node-panel__title-copy">
+                <strong>Table Output</strong>
+                <span class="node-panel__subtitle">table_output_news_brief</span>
+              </div>
+            </div>
+
+            <div class="node-panel__header-meta">
+              <span class="node-panel__meta-dot" aria-hidden="true"></span>
+              <span>1 input</span>
+            </div>
+          </header>
+
+          <section class="node-panel__section">
+            <div class="node-panel__field">
+              <div class="node-panel__field-head">
+                <label for="lab-table-output-label">Label</label>
+              </div>
+              <input
+                id="lab-table-output-label"
+                class="node-panel__input"
+                type="text"
+                value="Table Output"
+              />
+            </div>
+
+            <div class="node-panel__field">
+              <div class="node-panel__field-head">
+                <label for="lab-table-output-schema">Target schema</label>
+                <span class="node-panel__hint" aria-hidden="true">i</span>
+              </div>
+              <div class="node-panel__select-wrap">
+                <button id="lab-table-output-schema" class="node-panel__select" type="button">
+                  <span>tables</span>
+                </button>
+                <span class="node-panel__caret" aria-hidden="true">⌄</span>
+              </div>
+            </div>
+
+            <div class="node-panel__field">
+              <div class="node-panel__field-head">
+                <label for="lab-table-output-table">Target table</label>
+              </div>
+              <input
+                id="lab-table-output-table"
+                class="node-panel__input"
+                type="text"
+                value="daily_digest"
+              />
+            </div>
+
+            <div class="node-panel__field">
+              <div class="node-panel__field-head">
+                <label for="lab-table-output-mode">Write mode</label>
+                <span class="node-panel__hint" aria-hidden="true">i</span>
+              </div>
+              <div class="node-panel__select-wrap">
+                <button id="lab-table-output-mode" class="node-panel__select" type="button">
+                  <span>Replace table</span>
+                </button>
+                <span class="node-panel__caret" aria-hidden="true">⌄</span>
+              </div>
+            </div>
+
+            <div class="node-panel__field">
+              <div class="node-panel__field-head">
+                <label for="lab-table-output-shape">Input shape</label>
+              </div>
+              <div class="node-panel__select-wrap">
+                <button id="lab-table-output-shape" class="node-panel__select" type="button">
+                  <span>Single text row</span>
+                </button>
+                <span class="node-panel__caret" aria-hidden="true">⌄</span>
+              </div>
+            </div>
+
+            <div class="node-panel__field">
+              <div class="node-panel__field-head">
+                <label for="lab-table-output-column">Value column</label>
+              </div>
+              <input
+                id="lab-table-output-column"
+                class="node-panel__input"
+                type="text"
+                value="content"
+              />
+            </div>
+
+            <div class="node-panel__field">
+              <div class="node-panel__field-head">
+                <label>Result table shape</label>
+              </div>
+              <div class="node-panel__code">
+                <div class="node-panel__code-line">
+                  <span>content</span>
+                  <strong>text</strong>
+                </div>
+                <div class="node-panel__code-line">
+                  <span>run_id</span>
+                  <strong>varchar</strong>
+                </div>
+                <div class="node-panel__code-line">
+                  <span>written_at</span>
+                  <strong>timestamp</strong>
+                </div>
+              </div>
+            </div>
+
+            <div class="node-panel__toggle-row">
+              <label class="node-panel__checkbox">
+                <input type="checkbox" checked />
+                <span class="node-panel__checkmark" aria-hidden="true"></span>
+                <span>Include run id</span>
+              </label>
+            </div>
+
+            <div class="node-panel__toggle-row">
+              <label class="node-panel__checkbox">
+                <input type="checkbox" checked />
+                <span class="node-panel__checkmark" aria-hidden="true"></span>
+                <span>Include written timestamp</span>
+              </label>
+            </div>
+
+            <div class="node-panel__toggle-row">
+              <label class="node-panel__checkbox node-panel__checkbox--off">
+                <input type="checkbox" />
+                <span class="node-panel__checkmark" aria-hidden="true"></span>
+                <span>Open table in catalog after write</span>
+              </label>
+            </div>
+
+            <section class="node-panel__subsection" aria-label="Execution timing">
+              <p class="node-panel__subsection-title">Execution timing</p>
+
+              <div class="node-panel__timing-card">
+                <label class="node-panel__checkbox node-panel__checkbox--off">
+                  <input type="checkbox" />
+                  <span class="node-panel__checkmark" aria-hidden="true"></span>
+                  <span>Wait before execution</span>
+                </label>
+              </div>
+
+              <div class="node-panel__timing-card">
+                <label class="node-panel__checkbox node-panel__checkbox--off">
+                  <input type="checkbox" />
+                  <span class="node-panel__checkmark" aria-hidden="true"></span>
+                  <span>Wait after execution</span>
+                </label>
+              </div>
+            </section>
+          </section>
+
+          <footer class="node-panel__footer">
+            <p class="node-panel__footer-eyebrow">Current mapping</p>
+
+            <div class="node-panel__footer-row">
+              <span>Rows per run</span>
+              <strong>1 row</strong>
+            </div>
+
+            <div class="node-panel__footer-row">
+              <span>Destination</span>
+              <strong>tables.daily_digest</strong>
+            </div>
+
+            <button class="node-panel__action" type="button">
+              <span aria-hidden="true">-&gt;</span>
+              <span>Saved to workflow</span>
+            </button>
+          </footer>
+        </aside>
+      </section>
+    </main>
+  </body>
+</html>

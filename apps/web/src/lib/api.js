@@ -70,6 +70,12 @@ export function createWorkspace(name) {
   });
 }
 
+export function deleteWorkspace(workspaceId) {
+  return request(`/api/workspaces/${workspaceId}`, {
+    method: 'DELETE'
+  });
+}
+
 export function getWorkflows(workspaceId) {
   return request(`/api/workspaces/${workspaceId}/workflows`);
 }
@@ -126,6 +132,37 @@ export function getWorkspaceCatalogTable(workspaceId, workflowId, schemaName, ta
     `/api/workspaces/${workspaceId}/catalog/${encodeURIComponent(
       workflowId
     )}/schemas/${encodeURIComponent(schemaName)}/tables/${encodeURIComponent(tableName)}`
+  );
+}
+
+export function previewWorkspaceCatalogTableDelete(
+  workspaceId,
+  workflowId,
+  schemaName,
+  tableName
+) {
+  return request(
+    `/api/workspaces/${workspaceId}/catalog/${encodeURIComponent(
+      workflowId
+    )}/schemas/${encodeURIComponent(schemaName)}/tables/${encodeURIComponent(
+      tableName
+    )}/delete-preview`
+  );
+}
+
+export function deleteWorkspaceCatalogTable(
+  workspaceId,
+  workflowId,
+  schemaName,
+  tableName
+) {
+  return request(
+    `/api/workspaces/${workspaceId}/catalog/${encodeURIComponent(
+      workflowId
+    )}/schemas/${encodeURIComponent(schemaName)}/tables/${encodeURIComponent(tableName)}`,
+    {
+      method: 'DELETE'
+    }
   );
 }
 

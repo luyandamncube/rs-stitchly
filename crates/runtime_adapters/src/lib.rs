@@ -5,7 +5,7 @@ use node_registry::NodeDefinition;
 use serde::Deserialize;
 use serde_json::json;
 use thiserror::Error;
-use workflow_schema::{TypedValue, WorkflowNode};
+use workflow_schema::{DataType, TypedValue, WorkflowNode};
 
 pub type PortValues = BTreeMap<String, TypedValue>;
 
@@ -44,7 +44,9 @@ impl RuntimeAdapters {
         match definition.type_id.as_str() {
             "text_input" => execute_text_input(node),
             "text_transform" => execute_text_transform(node, inputs),
+            "table_input" => execute_table_input(node),
             "preview_output" => execute_preview_output(node, inputs),
+            "table_output" => execute_table_output(node, inputs),
             "send_email" => execute_send_email(node, inputs),
             _ => Err(AdapterError::UnsupportedNode(definition.type_id.clone())),
         }
@@ -88,6 +90,77 @@ struct TextTransformConfig {
 struct PreviewOutputConfig {
     #[serde(default)]
     title: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct TableInputConfig {
+    #[serde(default)]
+    catalog: Option<String>,
+    schema_name: String,
+    table_name: String,
+    #[serde(default)]
+    output_alias: Option<String>,
+    #[serde(default)]
+    selected_columns: Option<Vec<String>>,
+    #[serde(default)]
+    row_filter: Option<String>,
+    #[serde(default)]
+    row_limit: Option<u64>,
+    #[serde(default)]
+    refresh_schema: Option<bool>,
+    #[serde(default)]
+    open_in_catalog: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct TableOutputConfig {
+    target_schema: String,
+    table_name: String,
+    #[serde(default)]
+    write_mode: Option<TableWriteMode>,
+    #[serde(default)]
+    input_shape: Option<TableInputShape>,
+    #[serde(default)]
+    value_column: Option<String>,
+    #[serde(default)]
+    include_run_id: Option<bool>,
+    #[serde(default)]
+    include_written_at: Option<bool>,
+    #[serde(default)]
+    open_in_catalog: Option<bool>,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum TableWriteMode {
+    Append,
+    Replace,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum TableInputShape {
+    SingleTextRow,
+    SourceTable,
+}
+
+#[derive(Deserialize)]
+struct TableReferencePayload {
+    kind: String,
+    catalog: String,
+    schema_name: String,
+    table_name: String,
+    output_alias: String,
+    #[serde(default)]
+    selected_columns: Vec<String>,
+    #[serde(default)]
+    row_filter: Option<String>,
+    #[serde(default)]
+    row_limit: Option<u64>,
+    #[serde(default, rename = "refresh_schema")]
+    _refresh_schema: bool,
+    #[serde(default)]
+    open_in_catalog: bool,
 }
 
 #[derive(Deserialize)]
@@ -237,6 +310,291 @@ fn execute_preview_output(
         outputs: PortValues::new(),
         logs: vec![format!("{heading}: {input}")],
     })
+}
+
+fn execute_table_input(node: &WorkflowNode) -> Result<NodeExecutionResult, AdapterError> {
+    let config: TableInputConfig =
+        serde_json::from_value(node.config.clone()).map_err(|error| {
+            AdapterError::InvalidConfig {
+                node_id: node.node_id.clone(),
+                message: error.to_string(),
+            }
+        })?;
+
+    let catalog = config
+        .catalog
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("workflow.duckdb");
+    let schema_name = config.schema_name.trim();
+    if schema_name.is_empty() {
+        return Err(AdapterError::InvalidConfig {
+            node_id: node.node_id.clone(),
+            message: "`schema_name` must not be empty.".to_string(),
+        });
+    }
+
+    let table_name = config.table_name.trim();
+    if table_name.is_empty() {
+        return Err(AdapterError::InvalidConfig {
+            node_id: node.node_id.clone(),
+            message: "`table_name` must not be empty.".to_string(),
+        });
+    }
+
+    let output_alias = config
+        .output_alias
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(table_name);
+    let selected_columns = config
+        .selected_columns
+        .unwrap_or_default()
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    let row_filter = config
+        .row_filter
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let row_limit = config.row_limit.filter(|value| *value > 0);
+    let refresh_schema = config.refresh_schema.unwrap_or(true);
+    let open_in_catalog = config.open_in_catalog.unwrap_or(false);
+
+    let projection_summary = if selected_columns.is_empty() {
+        "all columns".to_string()
+    } else {
+        format!("{} columns", selected_columns.len())
+    };
+    let limit_summary = row_limit
+        .map(|value| format!("limit {value}"))
+        .unwrap_or_else(|| "no row limit".to_string());
+    let filter_summary = row_filter
+        .as_deref()
+        .map(|value| format!("filter `{value}`"))
+        .unwrap_or_else(|| "no filter".to_string());
+
+    let mut outputs = PortValues::new();
+    outputs.insert(
+        "table".to_string(),
+        TypedValue {
+            data_type: DataType::TableRef,
+            value: json!({
+                "kind": "table_reference",
+                "catalog": catalog,
+                "schema_name": schema_name,
+                "table_name": table_name,
+                "output_alias": output_alias,
+                "selected_columns": selected_columns,
+                "row_filter": row_filter,
+                "row_limit": row_limit,
+                "refresh_schema": refresh_schema,
+                "open_in_catalog": open_in_catalog
+            }),
+        },
+    );
+
+    Ok(NodeExecutionResult {
+        outputs,
+        logs: vec![format!(
+            "Prepared table reference `{schema_name}.{table_name}` from `{catalog}` ({projection_summary}; {filter_summary}; {limit_summary})."
+        )],
+    })
+}
+
+fn execute_table_output(
+    node: &WorkflowNode,
+    inputs: &PortValues,
+) -> Result<NodeExecutionResult, AdapterError> {
+    let config: TableOutputConfig =
+        serde_json::from_value(node.config.clone()).map_err(|error| {
+            AdapterError::InvalidConfig {
+                node_id: node.node_id.clone(),
+                message: error.to_string(),
+            }
+        })?;
+
+    let input = inputs
+        .get("text")
+        .ok_or_else(|| AdapterError::MissingInput {
+            node_id: node.node_id.clone(),
+            port: "text".to_string(),
+        })?;
+
+    let target_schema = config.target_schema.trim();
+    if target_schema.is_empty() {
+        return Err(AdapterError::InvalidConfig {
+            node_id: node.node_id.clone(),
+            message: "`target_schema` must not be empty.".to_string(),
+        });
+    }
+
+    let table_name = config.table_name.trim();
+    if table_name.is_empty() {
+        return Err(AdapterError::InvalidConfig {
+            node_id: node.node_id.clone(),
+            message: "`table_name` must not be empty.".to_string(),
+        });
+    }
+
+    let value_column = config
+        .value_column
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("content");
+    let write_mode = config.write_mode.unwrap_or(TableWriteMode::Append);
+    let configured_input_shape = config.input_shape.unwrap_or(TableInputShape::SingleTextRow);
+    let include_run_id = config.include_run_id.unwrap_or(true);
+    let include_written_at = config.include_written_at.unwrap_or(true);
+    let open_in_catalog = config.open_in_catalog.unwrap_or(false);
+
+    let write_mode_label = match write_mode {
+        TableWriteMode::Append => "append",
+        TableWriteMode::Replace => "replace",
+    };
+
+    let mut metadata_columns = Vec::new();
+    if include_run_id {
+        metadata_columns.push("run_id");
+    }
+    if include_written_at {
+        metadata_columns.push("written_at");
+    }
+
+    let metadata_summary = if metadata_columns.is_empty() {
+        "no metadata columns".to_string()
+    } else {
+        format!("metadata columns: {}", metadata_columns.join(", "))
+    };
+    let mut outputs = PortValues::new();
+    match input.data_type {
+        DataType::Text => {
+            let input = input
+                .as_text()
+                .ok_or_else(|| AdapterError::TextTypeMismatch {
+                    node_id: node.node_id.clone(),
+                    port: "text".to_string(),
+                })?;
+            let catalog_hint = if open_in_catalog {
+                " Catalog open requested."
+            } else {
+                ""
+            };
+
+            outputs.insert(
+                "write_result".to_string(),
+                TypedValue {
+                    data_type: DataType::Json,
+                    value: json!({
+                        "kind": "table_output_write",
+                        "target_schema": target_schema,
+                        "table_name": table_name,
+                        "write_mode": write_mode_label,
+                        "input_shape": "single_text_row",
+                        "value_column": value_column,
+                        "include_run_id": include_run_id,
+                        "include_written_at": include_written_at,
+                        "open_in_catalog": open_in_catalog,
+                        "value_text": input
+                    }),
+                },
+            );
+
+            Ok(NodeExecutionResult {
+                outputs,
+                logs: vec![format!(
+                    "Prepared {write_mode_label} write to `{target_schema}.{table_name}` using `{value_column}` from single text row ({char_count} chars; {metadata_summary}).{catalog_hint}",
+                    char_count = input.chars().count()
+                )],
+            })
+        }
+        DataType::TableRef => {
+            let source_table: TableReferencePayload = serde_json::from_value(input.value.clone())
+                .map_err(|error| {
+                AdapterError::ExecutionFailed {
+                    node_id: node.node_id.clone(),
+                    message: format!("invalid table reference payload: {error}"),
+                }
+            })?;
+
+            if source_table.kind != "table_reference" {
+                return Err(AdapterError::ExecutionFailed {
+                    node_id: node.node_id.clone(),
+                    message: "table input payload is not a `table_reference`.".to_string(),
+                });
+            }
+
+            let projection_summary = if source_table.selected_columns.is_empty() {
+                "all columns".to_string()
+            } else {
+                format!("{} columns", source_table.selected_columns.len())
+            };
+            let limit_summary = source_table
+                .row_limit
+                .map(|value| format!("limit {value}"))
+                .unwrap_or_else(|| "no row limit".to_string());
+            let filter_summary = source_table
+                .row_filter
+                .as_deref()
+                .map(|value| format!("filter `{value}`"))
+                .unwrap_or_else(|| "no filter".to_string());
+            let catalog_hint = if open_in_catalog || source_table.open_in_catalog {
+                " Catalog open requested."
+            } else {
+                ""
+            };
+            let resolved_shape = match configured_input_shape {
+                TableInputShape::SourceTable => "source_table",
+                TableInputShape::SingleTextRow => "source_table",
+            };
+
+            outputs.insert(
+                "write_result".to_string(),
+                TypedValue {
+                    data_type: DataType::Json,
+                    value: json!({
+                        "kind": "table_output_write",
+                        "target_schema": target_schema,
+                        "table_name": table_name,
+                        "write_mode": write_mode_label,
+                        "input_shape": resolved_shape,
+                        "value_column": value_column,
+                        "include_run_id": include_run_id,
+                        "include_written_at": include_written_at,
+                        "open_in_catalog": open_in_catalog,
+                        "source_table": {
+                            "catalog": source_table.catalog,
+                            "schema_name": source_table.schema_name,
+                            "table_name": source_table.table_name,
+                            "output_alias": source_table.output_alias,
+                            "selected_columns": source_table.selected_columns,
+                            "row_filter": source_table.row_filter,
+                            "row_limit": source_table.row_limit
+                        }
+                    }),
+                },
+            );
+
+            Ok(NodeExecutionResult {
+                outputs,
+                logs: vec![format!(
+                    "Prepared {write_mode_label} write to `{target_schema}.{table_name}` from source table `{schema}.{table}` ({projection_summary}; {filter_summary}; {limit_summary}; {metadata_summary}).{catalog_hint}",
+                    schema = source_table.schema_name,
+                    table = source_table.table_name
+                )],
+            })
+        }
+        _ => Err(AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: "table output expects text or table reference input on `text`.".to_string(),
+        }),
+    }
 }
 
 fn execute_send_email(
@@ -528,7 +886,7 @@ fn normalize_text_input_value(
 mod tests {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
     use serde_json::json;
-    use workflow_schema::{NodePosition, WorkflowNode};
+    use workflow_schema::{DataType, NodePosition, TypedValue, WorkflowNode};
 
     use super::{build_gmail_mime_message, RuntimeAdapters};
     use crate::PortValues;
@@ -630,6 +988,191 @@ mod tests {
         assert_eq!(
             result.logs,
             vec!["Queued text/plain email via `default_mailer` to ops@stitchly.dev with subject `Failed refunds need review`: Upstream message"]
+        );
+    }
+
+    #[test]
+    fn table_output_accepts_text_input_and_emits_write_summary() {
+        let registry = builtin_node_definitions();
+        let definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "table_output")
+            .expect("table_output definition");
+        let node = WorkflowNode {
+            node_id: "table_output_digest".to_string(),
+            type_id: "table_output".to_string(),
+            definition_version: 1,
+            label: None,
+            config: json!({
+                "target_schema": "outputs",
+                "table_name": "news_brief",
+                "write_mode": "append",
+                "input_shape": "single_text_row",
+                "value_column": "content",
+                "include_run_id": true,
+                "include_written_at": true
+            }),
+            position: NodePosition::default(),
+        };
+        let mut inputs = PortValues::new();
+        inputs.insert(
+            "text".to_string(),
+            workflow_schema::TypedValue::text("Latest market digest"),
+        );
+
+        let result = RuntimeAdapters::default()
+            .execute(definition, &node, &inputs)
+            .expect("table output should succeed");
+
+        let payload = result
+            .outputs
+            .get("write_result")
+            .expect("table output payload should be present");
+        assert_eq!(payload.data_type, workflow_schema::DataType::Json);
+        assert_eq!(
+            payload.value,
+            json!({
+                "kind": "table_output_write",
+                "target_schema": "outputs",
+                "table_name": "news_brief",
+                "write_mode": "append",
+                "input_shape": "single_text_row",
+                "value_column": "content",
+                "include_run_id": true,
+                "include_written_at": true,
+                "open_in_catalog": false,
+                "value_text": "Latest market digest"
+            })
+        );
+        assert_eq!(
+            result.logs,
+            vec!["Prepared append write to `outputs.news_brief` using `content` from single text row (20 chars; metadata columns: run_id, written_at)."]
+        );
+    }
+
+    #[test]
+    fn table_input_emits_table_reference_output() {
+        let registry = builtin_node_definitions();
+        let definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "table_input")
+            .expect("table_input definition");
+        let node = WorkflowNode {
+            node_id: "table_input_workflow_runs".to_string(),
+            type_id: "table_input".to_string(),
+            definition_version: 1,
+            label: None,
+            config: json!({
+                "catalog": "workflow.duckdb",
+                "schema_name": "runs",
+                "table_name": "workflow_runs",
+                "output_alias": "workflow_runs",
+                "selected_columns": ["workflow_id", "status"],
+                "row_filter": "status = 'succeeded'",
+                "row_limit": 100
+            }),
+            position: NodePosition::default(),
+        };
+
+        let result = RuntimeAdapters::default()
+            .execute(definition, &node, &PortValues::new())
+            .expect("table input should succeed");
+
+        let payload = result
+            .outputs
+            .get("table")
+            .expect("table output payload should be present");
+        assert_eq!(payload.data_type, workflow_schema::DataType::TableRef);
+        assert_eq!(
+            payload.value,
+            json!({
+                "kind": "table_reference",
+                "catalog": "workflow.duckdb",
+                "schema_name": "runs",
+                "table_name": "workflow_runs",
+                "output_alias": "workflow_runs",
+                "selected_columns": ["workflow_id", "status"],
+                "row_filter": "status = 'succeeded'",
+                "row_limit": 100,
+                "refresh_schema": true,
+                "open_in_catalog": false
+            })
+        );
+    }
+
+    #[test]
+    fn table_output_accepts_table_reference_input_and_emits_copy_summary() {
+        let registry = builtin_node_definitions();
+        let definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "table_output")
+            .expect("table_output definition");
+        let node = WorkflowNode {
+            node_id: "table_output_digest".to_string(),
+            type_id: "table_output".to_string(),
+            definition_version: 1,
+            label: None,
+            config: json!({
+                "target_schema": "tables",
+                "table_name": "workflow_runs_copy",
+                "write_mode": "replace",
+                "input_shape": "source_table",
+                "include_run_id": true,
+                "include_written_at": true
+            }),
+            position: NodePosition::default(),
+        };
+        let mut inputs = PortValues::new();
+        inputs.insert(
+            "text".to_string(),
+            TypedValue {
+                data_type: DataType::TableRef,
+                value: json!({
+                    "kind": "table_reference",
+                    "catalog": "workflow.duckdb",
+                    "schema_name": "runs",
+                    "table_name": "workflow_runs",
+                    "output_alias": "workflow_runs",
+                    "selected_columns": ["workflow_id", "status"],
+                    "row_filter": "status = 'succeeded'",
+                    "row_limit": 10,
+                    "refresh_schema": true,
+                    "open_in_catalog": false
+                }),
+            },
+        );
+
+        let result = RuntimeAdapters::default()
+            .execute(definition, &node, &inputs)
+            .expect("table output should succeed");
+
+        let payload = result
+            .outputs
+            .get("write_result")
+            .expect("table output payload should be present");
+        assert_eq!(payload.data_type, workflow_schema::DataType::Json);
+        assert_eq!(
+            payload.value,
+            json!({
+                "kind": "table_output_write",
+                "target_schema": "tables",
+                "table_name": "workflow_runs_copy",
+                "write_mode": "replace",
+                "input_shape": "source_table",
+                "value_column": "content",
+                "include_run_id": true,
+                "include_written_at": true,
+                "open_in_catalog": false,
+                "source_table": {
+                    "catalog": "workflow.duckdb",
+                    "schema_name": "runs",
+                    "table_name": "workflow_runs",
+                    "output_alias": "workflow_runs",
+                    "selected_columns": ["workflow_id", "status"],
+                    "row_filter": "status = 'succeeded'",
+                    "row_limit": 10
+                }
+            })
         );
     }
 

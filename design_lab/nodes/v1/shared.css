@@ -430,6 +430,46 @@ body {
   font-weight: 300;
 }
 
+.node-card--table-output {
+  width: 292px;
+  padding: 8px 9px 8px;
+  border-radius: 10px;
+  background: rgba(34, 34, 39, 0.96);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.07);
+}
+
+.node-card--table-output .node-card__menu {
+  color: rgba(255, 255, 255, 0.42);
+}
+
+.node-card--table-output .node-card__row--summary,
+.node-card--table-output .node-card__footer {
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.node-card--table-output .node-card__summary-label,
+.node-card--table-output .node-card__label,
+.node-card--table-output .node-card__footer-meta {
+  color: var(--text-muted);
+}
+
+.node-card--table-output .node-card__summary-target,
+.node-card--table-output .node-card__footer strong {
+  color: rgba(255, 255, 255, 0.92);
+  font-weight: 300;
+}
+
+.node-card__summary-target--path {
+  max-width: 166px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "Azeret Mono", "Space Grotesk", "Segoe UI", sans-serif;
+  font-size: 0.76rem;
+}
+
 .node-card__footer-meta {
   display: inline-flex;
   align-items: center;

@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     env, fs,
     path::{Path, PathBuf},
     process::Command,
@@ -7,14 +8,16 @@ use std::{
 
 use anyhow::{anyhow, Context};
 use api_contract::{
-    AuthSessionResponse, DeleteWorkflowResponse, EventTargetKind, LogLevel, RunErrorCategory,
-    RunEvent, RunEventType, RunLogEntry, RunSnapshot, SessionUserSummary, TriggerKind,
-    WorkflowListResponse, WorkflowResponse, WorkflowStateResponse, WorkflowSummary,
-    WorkspaceCatalogColumnSummary, WorkspaceCatalogDatabaseSummary, WorkspaceCatalogQueryColumn,
-    WorkspaceCatalogQueryResponse, WorkspaceCatalogResponse, WorkspaceCatalogSchemaResponse,
-    WorkspaceCatalogSchemaSummary, WorkspaceCatalogTableResponse, WorkspaceCatalogTableSummary,
-    WorkspaceConnectionSummary, WorkspaceConnectionsResponse, WorkspaceListResponse,
-    WorkspaceMembershipRole, WorkspaceSummary,
+    AuthSessionResponse, DeleteWorkflowResponse, DeleteWorkspaceResponse, EventTargetKind,
+    LogLevel, RunErrorCategory, RunEvent, RunEventType, RunLogEntry, RunSnapshot,
+    SessionUserSummary, TriggerKind, WorkflowListResponse, WorkflowResponse, WorkflowStateResponse,
+    WorkflowSummary, WorkspaceCatalogColumnSummary, WorkspaceCatalogDatabaseSummary,
+    WorkspaceCatalogDeleteTablePreviewResponse, WorkspaceCatalogDeleteTableResponse,
+    WorkspaceCatalogQueryColumn, WorkspaceCatalogQueryResponse, WorkspaceCatalogResponse,
+    WorkspaceCatalogSchemaResponse, WorkspaceCatalogSchemaSummary, WorkspaceCatalogTableResponse,
+    WorkspaceCatalogTableSummary, WorkspaceCatalogTableUsageNode,
+    WorkspaceCatalogTableUsageWorkflow, WorkspaceConnectionSummary, WorkspaceConnectionsResponse,
+    WorkspaceListResponse, WorkspaceMembershipRole, WorkspaceSummary,
 };
 use argon2::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
@@ -25,12 +28,71 @@ use duckdb::{Connection as DuckDbConnection, OptionalExt};
 use rand_core::OsRng;
 use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
-use workflow_schema::{TypedValue, WorkflowDefinition};
+use workflow_schema::{DataType, TypedValue, WorkflowDefinition};
 
 const DEMO_EMAIL: &str = "builder@stitchly.dev";
 const DEMO_PASSWORD: &str = "stitchly";
 const DEMO_DISPLAY_NAME: &str = "Builder";
 const SESSION_TTL_DAYS: i64 = 30;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum MirroredTableOutputWriteMode {
+    Append,
+    Replace,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+struct MirroredTableReferencePayload {
+    schema_name: String,
+    table_name: String,
+    #[serde(default)]
+    selected_columns: Vec<String>,
+    #[serde(default)]
+    row_filter: Option<String>,
+    #[serde(default)]
+    row_limit: Option<u64>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+struct MirroredTableOutputPayload {
+    kind: String,
+    target_schema: String,
+    table_name: String,
+    #[serde(default)]
+    value_column: Option<String>,
+    #[serde(default)]
+    value_text: Option<String>,
+    write_mode: MirroredTableOutputWriteMode,
+    #[serde(default, rename = "input_shape")]
+    _input_shape: Option<String>,
+    #[serde(default)]
+    source_table: Option<MirroredTableReferencePayload>,
+    #[serde(default)]
+    include_run_id: bool,
+    #[serde(default)]
+    include_written_at: bool,
+}
+
+#[derive(Clone, Debug)]
+struct CatalogTableWorkflowUpdate {
+    workflow_id: String,
+    storage_owner_user_id: String,
+    definition: WorkflowDefinition,
+}
+
+#[derive(Clone, Debug)]
+struct CatalogTableDeletePlan {
+    workflow_id: String,
+    workflow_name: String,
+    database_name: String,
+    schema_name: String,
+    table_name: String,
+    is_deletable: bool,
+    protected_reason: Option<String>,
+    affected_workflows: Vec<WorkspaceCatalogTableUsageWorkflow>,
+    workflow_updates: Vec<CatalogTableWorkflowUpdate>,
+}
 
 #[derive(Clone)]
 pub struct PlatformStore {
@@ -432,6 +494,90 @@ impl PlatformStore {
             )
             .optional()
             .map_err(Into::into)
+    }
+
+    pub fn delete_workspace(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+    ) -> anyhow::Result<Option<DeleteWorkspaceResponse>> {
+        let mut connection = self.connection();
+
+        let workspace: Option<WorkspaceSummary> = connection
+            .query_row(
+                "select w.workspace_id, w.slug, w.name, m.role
+                 from workspaces w
+                 join workspace_memberships m on m.workspace_id = w.workspace_id
+                 where w.workspace_id = ?1 and m.user_id = ?2",
+                params![workspace_id, user_id],
+                |row| {
+                    Ok(WorkspaceSummary {
+                        workspace_id: row.get(0)?,
+                        slug: row.get(1)?,
+                        name: row.get(2)?,
+                        role: role_from_db(&row.get::<_, String>(3)?)?,
+                    })
+                },
+            )
+            .optional()?;
+
+        let Some(workspace) = workspace else {
+            return Ok(None);
+        };
+
+        ensure_workspace_owner(&workspace, workspace_id)?;
+
+        let workflow_ids = {
+            let mut stmt = connection.prepare(
+                "select workflow_id
+                 from workflows
+                 where workspace_id = ?1",
+            )?;
+            let workflow_ids = stmt
+                .query_map(params![workspace_id], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            workflow_ids
+        };
+
+        let mut storage_owner_user_ids = BTreeSet::new();
+        for workflow_id in workflow_ids {
+            let storage_owner_user_id =
+                lookup_workflow_storage_owner_user_id(&connection, workspace_id, &workflow_id)?;
+            storage_owner_user_ids.insert(storage_owner_user_id);
+        }
+
+        let tx = connection.transaction()?;
+        tx.execute(
+            "update users
+             set active_workspace_id = null
+             where active_workspace_id = ?1",
+            params![workspace_id],
+        )?;
+        tx.execute(
+            "delete from workspaces
+             where workspace_id = ?1",
+            params![workspace_id],
+        )?;
+        tx.commit()?;
+
+        drop(connection);
+
+        for storage_owner_user_id in storage_owner_user_ids {
+            let workspace_root = self.workspace_root_path(&storage_owner_user_id, workspace_id);
+            if let Err(error) = fs::remove_dir_all(&workspace_root) {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!(
+                        "failed to remove workspace storage at `{}`: {error}",
+                        workspace_root.display()
+                    );
+                }
+            }
+        }
+
+        Ok(Some(DeleteWorkspaceResponse {
+            workspace_id: workspace.workspace_id,
+            deleted: true,
+        }))
     }
 
     pub fn list_workspace_connections(
@@ -897,6 +1043,7 @@ impl PlatformStore {
         // Sample row materialization currently trips a native DuckDB assertion on some
         // live workspace files, so keep table exploration metadata-only for now.
         let sample_rows = Vec::new();
+        let protected_reason = protected_workspace_catalog_table_reason(schema_name, table_name);
 
         Ok(Some(WorkspaceCatalogTableResponse {
             workflow_id: workflow.workflow_id,
@@ -904,8 +1051,145 @@ impl PlatformStore {
             database_name: "workflow.duckdb".to_string(),
             schema_name: schema_name.to_string(),
             table_name: table_name.to_string(),
+            is_deletable: protected_reason.is_none(),
+            protected_reason,
             columns,
             sample_rows,
+        }))
+    }
+
+    pub fn preview_workspace_catalog_table_delete(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        workflow_id: &str,
+        schema_name: &str,
+        table_name: &str,
+    ) -> anyhow::Result<Option<WorkspaceCatalogDeleteTablePreviewResponse>> {
+        let connection = self.connection();
+        ensure_workspace_access(&connection, user_id, workspace_id)?;
+
+        let Some(workflow) = find_catalog_workflow(&connection, workspace_id, workflow_id)? else {
+            return Ok(None);
+        };
+        let storage_owner_user_id =
+            resolve_catalog_workflow_owner_user_id(&connection, workspace_id, &workflow)?;
+        let duckdb_path = self
+            .workflow_root_path(
+                storage_owner_user_id.as_str(),
+                workspace_id,
+                workflow.workflow_id.as_str(),
+            )
+            .join("db")
+            .join("workflow.duckdb");
+        let duckdb = open_catalog_duckdb(&duckdb_path)?;
+        if !workspace_catalog_table_exists(&duckdb, schema_name, table_name)? {
+            return Ok(None);
+        }
+
+        let plan = build_catalog_table_delete_plan(
+            &connection,
+            workspace_id,
+            &workflow,
+            schema_name,
+            table_name,
+        )?;
+
+        Ok(Some(WorkspaceCatalogDeleteTablePreviewResponse {
+            workflow_id: plan.workflow_id,
+            workflow_name: plan.workflow_name,
+            database_name: plan.database_name,
+            schema_name: plan.schema_name,
+            table_name: plan.table_name,
+            is_deletable: plan.is_deletable,
+            protected_reason: plan.protected_reason,
+            affected_workflows: plan.affected_workflows,
+        }))
+    }
+
+    pub fn delete_workspace_catalog_table(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        workflow_id: &str,
+        schema_name: &str,
+        table_name: &str,
+    ) -> anyhow::Result<Option<WorkspaceCatalogDeleteTableResponse>> {
+        let mut connection = self.connection();
+        ensure_workspace_access(&connection, user_id, workspace_id)?;
+
+        let Some(workflow) = find_catalog_workflow(&connection, workspace_id, workflow_id)? else {
+            return Ok(None);
+        };
+        let storage_owner_user_id =
+            resolve_catalog_workflow_owner_user_id(&connection, workspace_id, &workflow)?;
+        let duckdb_path = self
+            .workflow_root_path(
+                storage_owner_user_id.as_str(),
+                workspace_id,
+                workflow.workflow_id.as_str(),
+            )
+            .join("db")
+            .join("workflow.duckdb");
+        let duckdb = open_catalog_duckdb(&duckdb_path)?;
+        if !workspace_catalog_table_exists(&duckdb, schema_name, table_name)? {
+            return Ok(None);
+        }
+
+        let plan = build_catalog_table_delete_plan(
+            &connection,
+            workspace_id,
+            &workflow,
+            schema_name,
+            table_name,
+        )?;
+        if !plan.is_deletable {
+            let reason = plan
+                .protected_reason
+                .unwrap_or_else(|| "This table cannot be deleted.".to_string());
+            return Err(anyhow!(reason));
+        }
+
+        duckdb.execute_batch(
+            format!(
+                "drop table {}.{}",
+                quote_duckdb_identifier(schema_name.trim()),
+                quote_duckdb_identifier(table_name.trim())
+            )
+            .as_str(),
+        )?;
+        drop(duckdb);
+
+        if !plan.workflow_updates.is_empty() {
+            persist_catalog_table_workflow_updates(
+                &mut connection,
+                workspace_id,
+                plan.workflow_updates.as_slice(),
+            )?;
+            for workflow_update in &plan.workflow_updates {
+                let owner_user_id = workflow_update
+                    .storage_owner_user_id
+                    .as_str()
+                    .trim()
+                    .is_empty()
+                    .then_some(storage_owner_user_id.as_str())
+                    .unwrap_or(workflow_update.storage_owner_user_id.as_str());
+                self.bootstrap_workflow_storage(
+                    owner_user_id,
+                    workspace_id,
+                    &workflow_update.definition,
+                )?;
+            }
+        }
+
+        Ok(Some(WorkspaceCatalogDeleteTableResponse {
+            workflow_id: plan.workflow_id,
+            workflow_name: plan.workflow_name,
+            database_name: plan.database_name,
+            schema_name: plan.schema_name,
+            table_name: plan.table_name,
+            deleted: true,
+            invalidated_workflows: plan.affected_workflows,
         }))
     }
 
@@ -1479,12 +1763,16 @@ impl PlatformStore {
         Ok(records)
     }
 
-    fn workflow_root_path(&self, user_id: &str, workspace_id: &str, workflow_id: &str) -> PathBuf {
+    fn workspace_root_path(&self, user_id: &str, workspace_id: &str) -> PathBuf {
         self.storage_root
             .join("users")
             .join(user_id)
             .join("workspaces")
             .join(workspace_id)
+    }
+
+    fn workflow_root_path(&self, user_id: &str, workspace_id: &str, workflow_id: &str) -> PathBuf {
+        self.workspace_root_path(user_id, workspace_id)
             .join("workflows")
             .join(workflow_id)
     }
@@ -1948,15 +2236,234 @@ fn load_workspace_catalog_table_summaries(
     )?;
     let tables = stmt
         .query_map([schema_name], |row| {
+            let table_name = row.get::<_, String>(0)?;
+            let protected_reason =
+                protected_workspace_catalog_table_reason(schema_name, table_name.as_str());
             Ok(WorkspaceCatalogTableSummary {
-                table_name: row.get(0)?,
+                table_name,
                 table_type: row.get(1)?,
                 column_count: row.get::<_, u32>(2)?,
+                is_deletable: protected_reason.is_none(),
+                protected_reason,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(tables)
+}
+
+fn protected_workspace_catalog_table_reason(schema_name: &str, table_name: &str) -> Option<String> {
+    match (schema_name.trim(), table_name.trim()) {
+        ("runs", "workflow_runs")
+        | ("runs", "node_runs")
+        | ("runs", "table_output_materializations")
+        | ("outputs", "node_outputs") => Some(
+            "This is a system-managed table and cannot be deleted from the catalog tree."
+                .to_string(),
+        ),
+        _ => None,
+    }
+}
+
+fn load_active_workflow_definition(
+    connection: &Connection,
+    workspace_id: &str,
+    workflow_id: &str,
+) -> anyhow::Result<Option<(u32, WorkflowDefinition)>> {
+    let row = connection
+        .query_row(
+            "select w.current_version, v.definition_json
+             from workflows w
+             join workflow_versions v
+               on v.workspace_id = w.workspace_id
+              and v.workflow_id = w.workflow_id
+              and v.version = w.current_version
+             where w.workspace_id = ?1 and w.workflow_id = ?2
+               and w.archived_at is null",
+            params![workspace_id, workflow_id],
+            |row| Ok((row.get::<_, u32>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+
+    let Some((current_version, definition_json)) = row else {
+        return Ok(None);
+    };
+    let definition: WorkflowDefinition = serde_json::from_str(&definition_json)
+        .context("stored workflow definition is not valid JSON")?;
+    Ok(Some((current_version, definition)))
+}
+
+fn clear_deleted_catalog_table_node_references(
+    workflow_definition: &mut WorkflowDefinition,
+    catalog_workflow_id: &str,
+    schema_name: &str,
+    table_name: &str,
+) -> Vec<WorkspaceCatalogTableUsageNode> {
+    if workflow_definition.workflow_id != catalog_workflow_id {
+        return Vec::new();
+    }
+
+    let mut nodes = Vec::new();
+
+    for node in &mut workflow_definition.nodes {
+        let Some(config) = node.config.as_object_mut() else {
+            continue;
+        };
+
+        if node.type_id == "table_input" {
+            let matches_schema = config
+                .get("schema_name")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                == Some(schema_name.trim());
+            let matches_table = config
+                .get("table_name")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                == Some(table_name.trim());
+
+            if matches_schema && matches_table {
+                config.insert("schema_name".to_string(), serde_json::Value::Null);
+                config.insert("table_name".to_string(), serde_json::Value::Null);
+                nodes.push(WorkspaceCatalogTableUsageNode {
+                    node_id: node.node_id.clone(),
+                    node_type: node.type_id.clone(),
+                    usage_kind: "source".to_string(),
+                    node_label: node.label.clone(),
+                });
+            }
+        }
+
+        if node.type_id == "table_output" {
+            let matches_schema = config
+                .get("target_schema")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                == Some(schema_name.trim());
+            let matches_table = config
+                .get("table_name")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                == Some(table_name.trim());
+
+            if matches_schema && matches_table {
+                config.insert("target_schema".to_string(), serde_json::Value::Null);
+                config.insert("table_name".to_string(), serde_json::Value::Null);
+                nodes.push(WorkspaceCatalogTableUsageNode {
+                    node_id: node.node_id.clone(),
+                    node_type: node.type_id.clone(),
+                    usage_kind: "target".to_string(),
+                    node_label: node.label.clone(),
+                });
+            }
+        }
+    }
+
+    nodes
+}
+
+fn build_catalog_table_delete_plan(
+    connection: &Connection,
+    workspace_id: &str,
+    workflow: &StoredCatalogWorkflow,
+    schema_name: &str,
+    table_name: &str,
+) -> anyhow::Result<CatalogTableDeletePlan> {
+    let protected_reason = protected_workspace_catalog_table_reason(schema_name, table_name);
+    let mut affected_workflows = Vec::new();
+    let mut workflow_updates = Vec::new();
+
+    if let Some((current_version, definition)) =
+        load_active_workflow_definition(connection, workspace_id, workflow.workflow_id.as_str())?
+    {
+        let mut next_definition = definition.clone();
+        let matching_nodes = clear_deleted_catalog_table_node_references(
+            &mut next_definition,
+            workflow.workflow_id.as_str(),
+            schema_name,
+            table_name,
+        );
+
+        if !matching_nodes.is_empty() {
+            affected_workflows.push(WorkspaceCatalogTableUsageWorkflow {
+                workflow_id: workflow.workflow_id.clone(),
+                workflow_name: workflow.workflow_name.clone(),
+                nodes: matching_nodes,
+            });
+
+            let normalized = normalize_workflow_definition(
+                &next_definition,
+                workflow.workflow_id.as_str(),
+                current_version.saturating_add(1),
+            )?;
+            workflow_updates.push(CatalogTableWorkflowUpdate {
+                workflow_id: workflow.workflow_id.clone(),
+                storage_owner_user_id: workflow
+                    .storage_owner_user_id
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_default()
+                    .to_string(),
+                definition: normalized,
+            });
+        }
+    }
+
+    Ok(CatalogTableDeletePlan {
+        workflow_id: workflow.workflow_id.clone(),
+        workflow_name: workflow.workflow_name.clone(),
+        database_name: "workflow.duckdb".to_string(),
+        schema_name: schema_name.to_string(),
+        table_name: table_name.to_string(),
+        is_deletable: protected_reason.is_none(),
+        protected_reason,
+        affected_workflows,
+        workflow_updates,
+    })
+}
+
+fn persist_catalog_table_workflow_updates(
+    connection: &mut Connection,
+    workspace_id: &str,
+    workflow_updates: &[CatalogTableWorkflowUpdate],
+) -> anyhow::Result<()> {
+    let now = Utc::now().to_rfc3339();
+    let tx = connection.transaction()?;
+
+    for workflow_update in workflow_updates {
+        let definition_json = serde_json::to_string(&workflow_update.definition)
+            .context("failed to serialize workflow definition")?;
+        tx.execute(
+            "update workflows
+             set name = ?3,
+                 description = ?4,
+                 current_version = ?5,
+                 updated_at = ?6
+             where workspace_id = ?1 and workflow_id = ?2",
+            params![
+                workspace_id,
+                workflow_update.workflow_id.as_str(),
+                workflow_update.definition.name.as_str(),
+                workflow_update.definition.description.as_deref(),
+                workflow_update.definition.version,
+                now
+            ],
+        )?;
+        tx.execute(
+            "insert into workflow_versions (workspace_id, workflow_id, version, definition_json, created_at)
+             values (?1, ?2, ?3, ?4, ?5)",
+            params![
+                workspace_id,
+                workflow_update.workflow_id.as_str(),
+                workflow_update.definition.version,
+                definition_json,
+                now
+            ],
+        )?;
+    }
+
+    tx.commit()?;
+    Ok(())
 }
 
 fn workspace_catalog_schema_exists(
@@ -2619,6 +3126,8 @@ fn persist_workflow_duckdb_run_snapshot(
                 ],
             )?;
         }
+
+        materialize_mirrored_table_output(&connection, snapshot, node_run, now.as_str())?;
     }
 
     connection.execute("commit", [])?;
@@ -2635,6 +3144,338 @@ fn summarize_typed_value_preview(value: &TypedValue) -> Option<String> {
         .map(|text| truncate_for_preview(text.as_str(), 160))
 }
 
+fn quote_duckdb_identifier(identifier: &str) -> String {
+    format!("\"{}\"", identifier.replace('"', "\"\""))
+}
+
+fn quote_duckdb_string_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+fn extract_mirrored_table_output_payload(
+    node_run: &api_contract::NodeRunSnapshot,
+) -> anyhow::Result<Option<MirroredTableOutputPayload>> {
+    if node_run.type_id != "table_output"
+        || !matches!(node_run.status, api_contract::NodeRunStatus::Succeeded)
+    {
+        return Ok(None);
+    }
+
+    let Some(last_output) = node_run.last_output.as_ref() else {
+        return Ok(None);
+    };
+    if last_output.data_type != DataType::Json {
+        return Ok(None);
+    }
+
+    let payload: MirroredTableOutputPayload = serde_json::from_value(last_output.value.clone())
+        .context("failed to parse mirrored table output payload")?;
+
+    if payload.kind != "table_output_write" {
+        return Ok(None);
+    }
+
+    if payload.target_schema.trim().is_empty() || payload.table_name.trim().is_empty() {
+        return Err(anyhow!(
+            "mirrored table output payload is missing target_schema or table_name"
+        ));
+    }
+
+    if let Some(source_table) = payload.source_table.as_ref() {
+        if source_table.schema_name.trim().is_empty() || source_table.table_name.trim().is_empty() {
+            return Err(anyhow!(
+                "mirrored table output payload is missing source schema_name or table_name"
+            ));
+        }
+    } else if payload
+        .value_column
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none()
+        || payload.value_text.is_none()
+    {
+        return Err(anyhow!(
+            "mirrored text table output payload is missing value_column or value_text"
+        ));
+    }
+
+    Ok(Some(payload))
+}
+
+fn ensure_mirrored_table_output_table(
+    connection: &DuckDbConnection,
+    payload: &MirroredTableOutputPayload,
+) -> anyhow::Result<String> {
+    let schema_identifier = quote_duckdb_identifier(payload.target_schema.trim());
+    let table_identifier = quote_duckdb_identifier(payload.table_name.trim());
+    let qualified_table = format!("{schema_identifier}.{table_identifier}");
+    let value_column_identifier = quote_duckdb_identifier(
+        payload
+            .value_column
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow!("missing value_column for text-based table output"))?,
+    );
+
+    connection.execute_batch(&format!("create schema if not exists {schema_identifier};"))?;
+
+    let create_columns = {
+        let mut columns = Vec::new();
+        if payload.include_run_id {
+            columns.push("\"run_id\" varchar".to_string());
+        }
+        if payload.include_written_at {
+            columns.push("\"written_at\" varchar".to_string());
+        }
+        columns.push(format!("{value_column_identifier} varchar"));
+        columns.join(", ")
+    };
+
+    if matches!(payload.write_mode, MirroredTableOutputWriteMode::Replace) {
+        connection.execute_batch(&format!(
+            "drop table if exists {qualified_table};
+             create table {qualified_table} ({create_columns});"
+        ))?;
+        return Ok(qualified_table);
+    }
+
+    connection.execute_batch(&format!(
+        "create table if not exists {qualified_table} ({create_columns});"
+    ))?;
+
+    if payload.include_run_id {
+        connection.execute_batch(&format!(
+            "alter table {qualified_table} add column if not exists \"run_id\" varchar;"
+        ))?;
+    }
+    if payload.include_written_at {
+        connection.execute_batch(&format!(
+            "alter table {qualified_table} add column if not exists \"written_at\" varchar;"
+        ))?;
+    }
+    connection.execute_batch(&format!(
+        "alter table {qualified_table} add column if not exists {value_column_identifier} varchar;"
+    ))?;
+
+    Ok(qualified_table)
+}
+
+fn insert_mirrored_table_output_row(
+    connection: &DuckDbConnection,
+    qualified_table: &str,
+    payload: &MirroredTableOutputPayload,
+    run_id: &str,
+    materialized_at: &str,
+) -> anyhow::Result<()> {
+    let value_column_identifier = quote_duckdb_identifier(
+        payload
+            .value_column
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow!("missing value_column for text-based table output"))?,
+    );
+    let value_text = payload
+        .value_text
+        .as_deref()
+        .ok_or_else(|| anyhow!("missing value_text for text-based table output"))?;
+
+    let sql = match (payload.include_run_id, payload.include_written_at) {
+        (true, true) => format!(
+            "insert into {qualified_table} (\"run_id\", \"written_at\", {value_column_identifier}) values (?1, ?2, ?3)"
+        ),
+        (true, false) => format!(
+            "insert into {qualified_table} (\"run_id\", {value_column_identifier}) values (?1, ?2)"
+        ),
+        (false, true) => format!(
+            "insert into {qualified_table} (\"written_at\", {value_column_identifier}) values (?1, ?2)"
+        ),
+        (false, false) => {
+            format!("insert into {qualified_table} ({value_column_identifier}) values (?1)")
+        }
+    };
+
+    match (payload.include_run_id, payload.include_written_at) {
+        (true, true) => {
+            connection.execute(&sql, duckdb::params![run_id, materialized_at, value_text])?
+        }
+        (true, false) => connection.execute(&sql, duckdb::params![run_id, value_text])?,
+        (false, true) => connection.execute(&sql, duckdb::params![materialized_at, value_text])?,
+        (false, false) => connection.execute(&sql, duckdb::params![value_text])?,
+    };
+
+    Ok(())
+}
+
+fn build_mirrored_source_table_select(
+    payload: &MirroredTableOutputPayload,
+    run_id: &str,
+    materialized_at: &str,
+) -> anyhow::Result<String> {
+    let source_table = payload
+        .source_table
+        .as_ref()
+        .ok_or_else(|| anyhow!("missing source_table payload"))?;
+    let source_schema = quote_duckdb_identifier(source_table.schema_name.trim());
+    let source_table_name = quote_duckdb_identifier(source_table.table_name.trim());
+    let qualified_source = format!("{source_schema}.{source_table_name}");
+
+    let selected_columns = source_table
+        .selected_columns
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    let projection = if selected_columns.is_empty()
+        || selected_columns
+            .iter()
+            .any(|value| *value == "*" || *value == "\"*\"")
+    {
+        "*".to_string()
+    } else {
+        selected_columns
+            .iter()
+            .map(|value| quote_duckdb_identifier(value))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    let mut select_list = vec![projection];
+    if payload.include_run_id {
+        select_list.push(format!(
+            "{} as {}",
+            quote_duckdb_string_literal(run_id),
+            quote_duckdb_identifier("run_id")
+        ));
+    }
+    if payload.include_written_at {
+        select_list.push(format!(
+            "{} as {}",
+            quote_duckdb_string_literal(materialized_at),
+            quote_duckdb_identifier("written_at")
+        ));
+    }
+
+    let mut sql = format!("select {} from {qualified_source}", select_list.join(", "));
+
+    if let Some(row_filter) = source_table
+        .row_filter
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        sql.push_str(" where ");
+        sql.push_str(row_filter);
+    }
+
+    if let Some(row_limit) = source_table.row_limit.filter(|value| *value > 0) {
+        sql.push_str(&format!(" limit {row_limit}"));
+    }
+
+    Ok(sql)
+}
+
+fn materialize_mirrored_source_table_output(
+    connection: &DuckDbConnection,
+    payload: &MirroredTableOutputPayload,
+    run_id: &str,
+    materialized_at: &str,
+) -> anyhow::Result<()> {
+    let schema_identifier = quote_duckdb_identifier(payload.target_schema.trim());
+    let table_identifier = quote_duckdb_identifier(payload.table_name.trim());
+    let qualified_table = format!("{schema_identifier}.{table_identifier}");
+    let source_select = build_mirrored_source_table_select(payload, run_id, materialized_at)?;
+    let wrapped_source_select = format!("select * from ({source_select}) as source_rows");
+
+    connection.execute_batch(&format!("create schema if not exists {schema_identifier};"))?;
+
+    if matches!(payload.write_mode, MirroredTableOutputWriteMode::Replace) {
+        connection.execute_batch(&format!(
+            "drop table if exists {qualified_table};
+             create table {qualified_table} as {wrapped_source_select};"
+        ))?;
+        return Ok(());
+    }
+
+    connection.execute_batch(&format!(
+        "create table if not exists {qualified_table} as {wrapped_source_select} limit 0;
+         insert into {qualified_table} {wrapped_source_select};"
+    ))?;
+
+    Ok(())
+}
+
+fn materialize_mirrored_table_output(
+    connection: &DuckDbConnection,
+    snapshot: &RunSnapshot,
+    node_run: &api_contract::NodeRunSnapshot,
+    materialized_at: &str,
+) -> anyhow::Result<()> {
+    let Some(payload) = extract_mirrored_table_output_payload(node_run)? else {
+        return Ok(());
+    };
+
+    let already_materialized: Option<String> = connection
+        .query_row(
+            "select run_id
+             from runs.table_output_materializations
+             where run_id = ?1 and node_id = ?2",
+            duckdb::params![snapshot.run_id.as_str(), node_run.node_id.as_str()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if already_materialized.is_some() {
+        return Ok(());
+    }
+
+    if payload.source_table.is_some() {
+        materialize_mirrored_source_table_output(
+            connection,
+            &payload,
+            snapshot.run_id.as_str(),
+            materialized_at,
+        )?;
+    } else {
+        let qualified_table = ensure_mirrored_table_output_table(connection, &payload)?;
+        insert_mirrored_table_output_row(
+            connection,
+            qualified_table.as_str(),
+            &payload,
+            snapshot.run_id.as_str(),
+            materialized_at,
+        )?;
+    }
+
+    let write_mode = match payload.write_mode {
+        MirroredTableOutputWriteMode::Append => "append",
+        MirroredTableOutputWriteMode::Replace => "replace",
+    };
+
+    connection.execute(
+        "insert or replace into runs.table_output_materializations (
+            run_id,
+            node_id,
+            target_schema,
+            target_table,
+            write_mode,
+            materialized_at
+         )
+         values (?1, ?2, ?3, ?4, ?5, ?6)",
+        duckdb::params![
+            snapshot.run_id.as_str(),
+            node_run.node_id.as_str(),
+            payload.target_schema.as_str(),
+            payload.table_name.as_str(),
+            write_mode,
+            materialized_at
+        ],
+    )?;
+
+    Ok(())
+}
+
 fn should_sync_workflow_duckdb_run(snapshot: &RunSnapshot) -> bool {
     if !workflow_duckdb_run_sync_enabled() {
         return false;
@@ -2647,12 +3488,12 @@ fn should_sync_workflow_duckdb_run(snapshot: &RunSnapshot) -> bool {
 }
 
 fn workflow_duckdb_run_sync_enabled() -> bool {
-    matches!(
+    !matches!(
         env::var("STITCHLY_ENABLE_WORKFLOW_RUN_DUCKDB_SYNC")
             .ok()
             .as_deref()
             .map(|value| value.trim().to_ascii_lowercase()),
-        Some(value) if matches!(value.as_str(), "1" | "true" | "yes" | "on")
+        Some(value) if matches!(value.as_str(), "0" | "false" | "no" | "off")
     )
 }
 
@@ -2745,6 +3586,16 @@ fn ensure_workspace_access(
         Ok(())
     } else {
         Err(anyhow!("workspace `{workspace_id}` was not found"))
+    }
+}
+
+fn ensure_workspace_owner(workspace: &WorkspaceSummary, workspace_id: &str) -> anyhow::Result<()> {
+    if matches!(workspace.role, WorkspaceMembershipRole::Owner) {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "workspace `{workspace_id}` requires owner role for deletion"
+        ))
     }
 }
 
@@ -3026,6 +3877,16 @@ fn initialize_workflow_duckdb(database_path: &Path) -> anyhow::Result<()> {
             produced_at varchar not null,
             primary key (run_id, node_id)
         );
+
+        create table if not exists runs.table_output_materializations (
+            run_id varchar not null,
+            node_id varchar not null,
+            target_schema varchar not null,
+            target_table varchar not null,
+            write_mode varchar not null,
+            materialized_at varchar not null,
+            primary key (run_id, node_id)
+        );
         ",
     )?;
 
@@ -3124,14 +3985,69 @@ mod tests {
         RunTrigger, TriggerKind, WorkspaceCatalogQueryColumn,
     };
     use chrono::{Duration, TimeZone, Utc};
-    use duckdb::Connection as DuckDbConnection;
+    use duckdb::{Connection as DuckDbConnection, OptionalExt};
     use rusqlite::params;
 
     use super::{
         normalize_workspace_catalog_query, resolve_duckdb_cli_path, GoogleConnectionTokens,
         GoogleIdentityProfile, PlatformStore,
     };
-    use workflow_schema::{TypedValue, WorkflowDefinition};
+    use workflow_schema::{
+        NodePosition, TypedValue, WorkflowDefinition, WorkflowEdge, WorkflowNode,
+    };
+
+    fn table_output_payload(
+        target_schema: &str,
+        table_name: &str,
+        write_mode: &str,
+        value_column: &str,
+        value_text: &str,
+    ) -> TypedValue {
+        TypedValue {
+            data_type: workflow_schema::DataType::Json,
+            value: serde_json::json!({
+                "kind": "table_output_write",
+                "target_schema": target_schema,
+                "table_name": table_name,
+                "write_mode": write_mode,
+                "input_shape": "single_text_row",
+                "value_column": value_column,
+                "include_run_id": true,
+                "include_written_at": true,
+                "open_in_catalog": false,
+                "value_text": value_text
+            }),
+        }
+    }
+
+    fn table_output_source_payload(
+        target_schema: &str,
+        table_name: &str,
+        write_mode: &str,
+        source_schema: &str,
+        source_table: &str,
+    ) -> TypedValue {
+        TypedValue {
+            data_type: workflow_schema::DataType::Json,
+            value: serde_json::json!({
+                "kind": "table_output_write",
+                "target_schema": target_schema,
+                "table_name": table_name,
+                "write_mode": write_mode,
+                "input_shape": "source_table",
+                "include_run_id": true,
+                "include_written_at": true,
+                "open_in_catalog": false,
+                "source_table": {
+                    "schema_name": source_schema,
+                    "table_name": source_table,
+                    "selected_columns": ["workflow_id", "status"],
+                    "row_filter": "run_id like 'source_%' and status = 'succeeded'",
+                    "row_limit": 10
+                }
+            }),
+        }
+    }
 
     #[test]
     fn google_identity_creates_a_local_user_and_session() {
@@ -3297,6 +4213,50 @@ mod tests {
             )
             .expect("node_outputs table query");
         assert_eq!(node_outputs_table_exists.as_deref(), Some("node_outputs"));
+    }
+
+    #[test]
+    fn deleting_a_workspace_removes_its_storage_root() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Workspace To Delete")
+            .expect("workspace");
+        let workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+
+        let created = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
+            .expect("workflow creates");
+        let workspace_root = store.workspace_root_path("usr_builder", &workspace.workspace_id);
+        let workflow_root = store.workflow_root_path(
+            "usr_builder",
+            &workspace.workspace_id,
+            created.workflow.workflow_id.as_str(),
+        );
+
+        assert!(workspace_root.is_dir(), "workspace root should exist");
+        assert!(workflow_root.is_dir(), "workflow root should exist");
+
+        let deleted = store
+            .delete_workspace("usr_builder", &workspace.workspace_id)
+            .expect("workspace deletion succeeds")
+            .expect("workspace exists");
+
+        assert_eq!(deleted.workspace_id, workspace.workspace_id);
+        assert!(deleted.deleted);
+        assert!(
+            store
+                .get_workspace("usr_builder", &workspace.workspace_id)
+                .expect("workspace lookup succeeds")
+                .is_none(),
+            "workspace should be removed from metadata"
+        );
+        assert!(
+            !workspace_root.exists(),
+            "workspace storage root should be removed"
+        );
     }
 
     #[test]
@@ -3587,6 +4547,232 @@ mod tests {
     }
 
     #[test]
+    fn workspace_catalog_delete_preview_reports_affected_workflow_nodes() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Catalog Delete Preview Workspace")
+            .expect("workspace");
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_catalog_delete_preview".to_string(),
+            version: 1,
+            name: "Catalog Delete Preview".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "table_input_digest".to_string(),
+                    type_id: "table_input".to_string(),
+                    definition_version: 1,
+                    label: Some("Table Input".to_string()),
+                    config: serde_json::json!({
+                        "catalog": "workflow.duckdb",
+                        "schema_name": "tables",
+                        "table_name": "daily_digest",
+                        "output_alias": "daily_digest"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "table_output_digest".to_string(),
+                    type_id: "table_output".to_string(),
+                    definition_version: 1,
+                    label: Some("Table Output".to_string()),
+                    config: serde_json::json!({
+                        "target_schema": "tables",
+                        "table_name": "daily_digest",
+                        "write_mode": "replace",
+                        "input_shape": "source_table"
+                    }),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![WorkflowEdge {
+                edge_id: "edge_table_input_to_table_output".to_string(),
+                source_node_id: "table_input_digest".to_string(),
+                source_port_id: "table".to_string(),
+                target_node_id: "table_output_digest".to_string(),
+                target_port_id: "text".to_string(),
+            }],
+            metadata: Default::default(),
+        };
+
+        let created = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
+            .expect("workflow creates");
+        let duckdb_path = store
+            .workflow_root_path(
+                "usr_builder",
+                &workspace.workspace_id,
+                created.workflow.workflow_id.as_str(),
+            )
+            .join("db")
+            .join("workflow.duckdb");
+        let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb opens");
+        duckdb
+            .execute_batch(
+                "create table if not exists tables.daily_digest (message varchar not null)",
+            )
+            .expect("digest table persists");
+
+        let preview = store
+            .preview_workspace_catalog_table_delete(
+                "usr_builder",
+                &workspace.workspace_id,
+                created.workflow.workflow_id.as_str(),
+                "tables",
+                "daily_digest",
+            )
+            .expect("preview succeeds")
+            .expect("table exists");
+
+        assert!(preview.is_deletable);
+        assert_eq!(preview.affected_workflows.len(), 1);
+        assert_eq!(
+            preview.affected_workflows[0]
+                .nodes
+                .iter()
+                .map(|node| node.usage_kind.as_str())
+                .collect::<Vec<_>>(),
+            vec!["source", "target"]
+        );
+    }
+
+    #[test]
+    fn deleting_catalog_table_invalidates_matching_workflow_and_removes_table() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Catalog Delete Workspace")
+            .expect("workspace");
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_catalog_delete_apply".to_string(),
+            version: 1,
+            name: "Catalog Delete Apply".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "table_input_digest".to_string(),
+                    type_id: "table_input".to_string(),
+                    definition_version: 1,
+                    label: Some("Table Input".to_string()),
+                    config: serde_json::json!({
+                        "catalog": "workflow.duckdb",
+                        "schema_name": "tables",
+                        "table_name": "daily_digest",
+                        "output_alias": "daily_digest"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "table_output_digest".to_string(),
+                    type_id: "table_output".to_string(),
+                    definition_version: 1,
+                    label: Some("Table Output".to_string()),
+                    config: serde_json::json!({
+                        "target_schema": "tables",
+                        "table_name": "daily_digest",
+                        "write_mode": "replace",
+                        "input_shape": "source_table"
+                    }),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![],
+            metadata: Default::default(),
+        };
+
+        let created = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
+            .expect("workflow creates");
+        let workflow_root = store.workflow_root_path(
+            "usr_builder",
+            &workspace.workspace_id,
+            created.workflow.workflow_id.as_str(),
+        );
+        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb opens");
+        duckdb
+            .execute_batch(
+                "create table if not exists tables.daily_digest (message varchar not null)",
+            )
+            .expect("digest table persists");
+        drop(duckdb);
+
+        let deleted = store
+            .delete_workspace_catalog_table(
+                "usr_builder",
+                &workspace.workspace_id,
+                created.workflow.workflow_id.as_str(),
+                "tables",
+                "daily_digest",
+            )
+            .expect("delete succeeds")
+            .expect("table exists");
+
+        assert!(deleted.deleted);
+        assert_eq!(deleted.invalidated_workflows.len(), 1);
+
+        let updated = store
+            .get_workflow(
+                "usr_builder",
+                &workspace.workspace_id,
+                created.workflow.workflow_id.as_str(),
+            )
+            .expect("workflow loads")
+            .expect("workflow exists");
+        let table_input = updated
+            .definition
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "table_input_digest")
+            .expect("table input node");
+        assert!(table_input.config.get("schema_name").unwrap().is_null());
+        assert!(table_input.config.get("table_name").unwrap().is_null());
+
+        let table_output = updated
+            .definition
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "table_output_digest")
+            .expect("table output node");
+        assert!(table_output.config.get("target_schema").unwrap().is_null());
+        assert!(table_output.config.get("table_name").unwrap().is_null());
+
+        let stored_workflow_json = fs::read_to_string(workflow_root.join("workflow.json"))
+            .expect("workflow.json readable");
+        let stored_definition: WorkflowDefinition =
+            serde_json::from_str(&stored_workflow_json).expect("workflow json parses");
+        let stored_table_input = stored_definition
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "table_input_digest")
+            .expect("stored table input node");
+        assert!(stored_table_input
+            .config
+            .get("schema_name")
+            .unwrap()
+            .is_null());
+        assert!(stored_table_input
+            .config
+            .get("table_name")
+            .unwrap()
+            .is_null());
+
+        let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb reopens");
+        let table_exists: Option<String> = duckdb
+            .query_row(
+                "select table_name
+                 from information_schema.tables
+                 where table_schema = 'tables' and table_name = 'daily_digest'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("table exists query");
+        assert!(table_exists.is_none());
+    }
+
+    #[test]
     fn run_snapshot_populates_denormalized_run_list_columns() {
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
@@ -3682,7 +4868,7 @@ mod tests {
     }
 
     #[test]
-    fn run_snapshot_skips_workflow_duckdb_sync_when_feature_disabled() {
+    fn run_snapshot_mirrors_into_workflow_duckdb_by_default() {
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
             .create_workspace("usr_builder", "Workflow Mirror Workspace")
@@ -3761,7 +4947,7 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("workflow run row count");
-        assert_eq!(workflow_run_rows, 0);
+        assert_eq!(workflow_run_rows, 1);
 
         let node_run_count: i64 = duckdb
             .query_row(
@@ -3772,7 +4958,7 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("node run count");
-        assert_eq!(node_run_count, 0);
+        assert_eq!(node_run_count, 2);
 
         let mirrored_output_rows: i64 = duckdb
             .query_row(
@@ -3783,11 +4969,11 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("mirrored output row count");
-        assert_eq!(mirrored_output_rows, 0);
+        assert_eq!(mirrored_output_rows, 2);
     }
 
     #[test]
-    fn workflow_duckdb_run_sync_disabled_avoids_run_rows_for_repeat_persists() {
+    fn cancelled_run_updates_do_not_duplicate_mirrored_rows() {
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
             .create_workspace("usr_builder", "DuckDB Idempotent Workspace")
@@ -3875,7 +5061,341 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("workflow run row count");
-        assert_eq!(workflow_run_rows, 0);
+        assert_eq!(workflow_run_rows, 1);
+    }
+
+    #[test]
+    fn table_output_snapshot_writes_to_the_configured_target_table() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Table Output Workspace")
+            .expect("workspace");
+        let workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+        let created = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
+            .expect("workflow creates");
+
+        let started_at = Utc
+            .with_ymd_and_hms(2026, 6, 3, 12, 0, 0)
+            .single()
+            .expect("valid datetime");
+        let finished_at = started_at + Duration::seconds(2);
+        let snapshot = RunSnapshot {
+            run_id: "run_table_output_target".to_string(),
+            workflow_id: created.workflow.workflow_id.clone(),
+            workflow_version: created.workflow.version,
+            status: RunStatus::Succeeded,
+            trigger: RunTrigger {
+                kind: TriggerKind::Manual,
+            },
+            started_at: Some(started_at),
+            finished_at: Some(finished_at),
+            node_runs: vec![NodeRunSnapshot {
+                node_id: "table_output_news_brief".to_string(),
+                type_id: "table_output".to_string(),
+                status: NodeRunStatus::Succeeded,
+                attempt: 1,
+                started_at: Some(started_at),
+                finished_at: Some(finished_at),
+                last_output: Some(table_output_payload(
+                    "outputs",
+                    "news_brief",
+                    "append",
+                    "content",
+                    "Finance headline digest",
+                )),
+                log_count: 1,
+                error: None,
+            }],
+            logs: vec![],
+            error: None,
+        };
+
+        store
+            .persist_run_snapshot(&workspace.workspace_id, Some("usr_builder"), &snapshot)
+            .expect("run snapshot persists");
+
+        let workflow_root = store.workflow_root_path(
+            "usr_builder",
+            &workspace.workspace_id,
+            created.workflow.workflow_id.as_str(),
+        );
+        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb opens");
+
+        let row: (String, String, String) = duckdb
+            .query_row(
+                "select run_id, written_at, content
+                 from outputs.news_brief
+                 limit 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("target row exists");
+
+        assert_eq!(row.0, snapshot.run_id);
+        assert!(!row.1.is_empty());
+        assert_eq!(row.2, "Finance headline digest");
+    }
+
+    #[test]
+    fn table_output_replace_mode_overwrites_previous_target_rows() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Table Output Replace Workspace")
+            .expect("workspace");
+        let workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+        let created = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
+            .expect("workflow creates");
+
+        let started_at = Utc
+            .with_ymd_and_hms(2026, 6, 3, 12, 15, 0)
+            .single()
+            .expect("valid datetime");
+        let snapshot_one = RunSnapshot {
+            run_id: "run_replace_first".to_string(),
+            workflow_id: created.workflow.workflow_id.clone(),
+            workflow_version: created.workflow.version,
+            status: RunStatus::Succeeded,
+            trigger: RunTrigger {
+                kind: TriggerKind::Manual,
+            },
+            started_at: Some(started_at),
+            finished_at: Some(started_at + Duration::seconds(1)),
+            node_runs: vec![NodeRunSnapshot {
+                node_id: "table_output_news_brief".to_string(),
+                type_id: "table_output".to_string(),
+                status: NodeRunStatus::Succeeded,
+                attempt: 1,
+                started_at: Some(started_at),
+                finished_at: Some(started_at + Duration::seconds(1)),
+                last_output: Some(table_output_payload(
+                    "tables",
+                    "daily_digest",
+                    "replace",
+                    "content",
+                    "First digest",
+                )),
+                log_count: 1,
+                error: None,
+            }],
+            logs: vec![],
+            error: None,
+        };
+        let snapshot_two = RunSnapshot {
+            run_id: "run_replace_second".to_string(),
+            workflow_id: created.workflow.workflow_id.clone(),
+            workflow_version: created.workflow.version,
+            status: RunStatus::Succeeded,
+            trigger: RunTrigger {
+                kind: TriggerKind::Manual,
+            },
+            started_at: Some(started_at + Duration::seconds(10)),
+            finished_at: Some(started_at + Duration::seconds(11)),
+            node_runs: vec![NodeRunSnapshot {
+                node_id: "table_output_news_brief".to_string(),
+                type_id: "table_output".to_string(),
+                status: NodeRunStatus::Succeeded,
+                attempt: 1,
+                started_at: Some(started_at + Duration::seconds(10)),
+                finished_at: Some(started_at + Duration::seconds(11)),
+                last_output: Some(table_output_payload(
+                    "tables",
+                    "daily_digest",
+                    "replace",
+                    "content",
+                    "Second digest",
+                )),
+                log_count: 1,
+                error: None,
+            }],
+            logs: vec![],
+            error: None,
+        };
+
+        store
+            .persist_run_snapshot(&workspace.workspace_id, Some("usr_builder"), &snapshot_one)
+            .expect("first run snapshot persists");
+        store
+            .persist_run_snapshot(&workspace.workspace_id, Some("usr_builder"), &snapshot_two)
+            .expect("second run snapshot persists");
+
+        let workflow_root = store.workflow_root_path(
+            "usr_builder",
+            &workspace.workspace_id,
+            created.workflow.workflow_id.as_str(),
+        );
+        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb opens");
+
+        let row_count: i64 = duckdb
+            .query_row("select count(*) from tables.daily_digest", [], |row| {
+                row.get(0)
+            })
+            .expect("target row count");
+        let latest_content: String = duckdb
+            .query_row(
+                "select content
+                 from tables.daily_digest
+                 limit 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("target row exists");
+
+        assert_eq!(row_count, 1);
+        assert_eq!(latest_content, "Second digest");
+    }
+
+    #[test]
+    fn table_output_source_table_materialization_copies_filtered_rows_into_target_table() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Table Input Output Workspace")
+            .expect("workspace");
+        let workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+        let created = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
+            .expect("workflow creates");
+
+        let workflow_root = store.workflow_root_path(
+            "usr_builder",
+            &workspace.workspace_id,
+            created.workflow.workflow_id.as_str(),
+        );
+        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb opens");
+
+        for (run_id, status, error_category, error_message) in [
+            ("source_run_one", "succeeded", None::<&str>, None::<&str>),
+            (
+                "source_run_two",
+                "failed",
+                Some("execution_error"),
+                Some("boom"),
+            ),
+        ] {
+            duckdb
+                .execute(
+                    "insert into runs.workflow_runs (
+                        run_id,
+                        workspace_id,
+                        workflow_id,
+                        workflow_version,
+                        status,
+                        trigger_kind,
+                        started_at,
+                        finished_at,
+                        duration_ms,
+                        error_category,
+                        error_message,
+                        error_count,
+                        retry_count,
+                        node_count,
+                        completed_node_count,
+                        snapshot_json,
+                        created_at,
+                        updated_at
+                    ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                    duckdb::params![
+                        run_id,
+                        workspace.workspace_id.as_str(),
+                        created.workflow.workflow_id.as_str(),
+                        created.workflow.version as i64,
+                        status,
+                        "manual",
+                        "2026-06-03T12:00:00Z",
+                        "2026-06-03T12:00:02Z",
+                        2000_i64,
+                        error_category,
+                        error_message,
+                        if status == "failed" { 1_i64 } else { 0_i64 },
+                        0_i64,
+                        2_i64,
+                        if status == "failed" { 1_i64 } else { 2_i64 },
+                        "{}",
+                        "2026-06-03T12:00:00Z",
+                        "2026-06-03T12:00:02Z"
+                    ],
+                )
+                .expect("seed source workflow row");
+        }
+        drop(duckdb);
+
+        let started_at = Utc
+            .with_ymd_and_hms(2026, 6, 3, 13, 0, 0)
+            .single()
+            .expect("valid datetime");
+        let finished_at = started_at + Duration::seconds(2);
+        let snapshot = RunSnapshot {
+            run_id: "run_table_copy_target".to_string(),
+            workflow_id: created.workflow.workflow_id.clone(),
+            workflow_version: created.workflow.version,
+            status: RunStatus::Succeeded,
+            trigger: RunTrigger {
+                kind: TriggerKind::Manual,
+            },
+            started_at: Some(started_at),
+            finished_at: Some(finished_at),
+            node_runs: vec![NodeRunSnapshot {
+                node_id: "table_output_copy".to_string(),
+                type_id: "table_output".to_string(),
+                status: NodeRunStatus::Succeeded,
+                attempt: 1,
+                started_at: Some(started_at),
+                finished_at: Some(finished_at),
+                last_output: Some(table_output_source_payload(
+                    "tables",
+                    "workflow_runs_copy",
+                    "append",
+                    "runs",
+                    "workflow_runs",
+                )),
+                log_count: 1,
+                error: None,
+            }],
+            logs: vec![],
+            error: None,
+        };
+
+        store
+            .persist_run_snapshot(&workspace.workspace_id, Some("usr_builder"), &snapshot)
+            .expect("run snapshot persists");
+
+        let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb reopens");
+
+        let copied_count: i64 = duckdb
+            .query_row(
+                "select count(*) from tables.workflow_runs_copy",
+                [],
+                |row| row.get(0),
+            )
+            .expect("copied row count");
+        let copied_row: (String, String, String, String) = duckdb
+            .query_row(
+                "select workflow_id, status, run_id, written_at
+                 from tables.workflow_runs_copy
+                 limit 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("copied row exists");
+
+        assert_eq!(copied_count, 1);
+        assert_eq!(copied_row.0, created.workflow.workflow_id);
+        assert_eq!(copied_row.1, "succeeded");
+        assert_eq!(copied_row.2, snapshot.run_id);
+        assert!(!copied_row.3.is_empty());
     }
 
     #[test]

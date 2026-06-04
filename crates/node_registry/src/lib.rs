@@ -587,6 +587,254 @@ pub fn builtin_node_definitions() -> Vec<NodeDefinition> {
             },
         },
         NodeDefinition {
+            type_id: "table_input".to_string(),
+            version: 1,
+            display_name: "Table Input".to_string(),
+            category: "input".to_string(),
+            description: "References a source table from the workflow DuckDB catalog.".to_string(),
+            inputs: vec![],
+            outputs: vec![PortDefinition {
+                port_id: "table".to_string(),
+                display_name: "Table".to_string(),
+                direction: PortDirection::Output,
+                data_type: DataType::TableRef,
+                required: false,
+                multiple: false,
+                description: Some("Resolved workflow table reference.".to_string()),
+            }],
+            config_schema: json!({
+                "type": "object",
+                "required": ["schema_name", "table_name"],
+                "properties": {
+                    "catalog": {
+                        "type": "string",
+                        "default": "workflow.duckdb"
+                    },
+                    "schema_name": {
+                        "type": "string",
+                        "default": "runs"
+                    },
+                    "table_name": {
+                        "type": "string",
+                        "default": "workflow_runs"
+                    },
+                    "output_alias": {
+                        "type": "string",
+                        "default": "workflow_runs"
+                    },
+                    "selected_columns": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "default": []
+                    },
+                    "row_filter": {
+                        "type": "string"
+                    },
+                    "row_limit": {
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    "refresh_schema": {
+                        "type": "boolean",
+                        "default": true
+                    },
+                    "open_in_catalog": {
+                        "type": "boolean",
+                        "default": false
+                    }
+                }
+            }),
+            runtime: RuntimeBinding {
+                executor_kind: ExecutorKind::RustNative,
+                adapter_id: None,
+                isolation_mode: IsolationMode::InProcess,
+            },
+            capabilities: NodeCapabilities {
+                reads_external_state: true,
+                supports_preview: true,
+                may_emit_structured_logs: true,
+                ..NodeCapabilities::default()
+            },
+            ui: NodeUi {
+                icon: "table_input".to_string(),
+                color_token: "var(--node-input)".to_string(),
+                default_width: 336,
+                default_height: 176,
+                help_text: Some(
+                    "Read a named source table from the workflow DuckDB file.".to_string(),
+                ),
+                node_card: Some(NodeCardUi {
+                    variant: "input".to_string(),
+                    icon_key: "table_output".to_string(),
+                    top_chip: hidden_top_chip(),
+                    header: standard_header(),
+                    rows: vec![
+                        node_card_row(
+                            "schema_name",
+                            "kv",
+                            "Schema",
+                            "config",
+                            "schema_name",
+                            "text",
+                            Some("table_output"),
+                            false,
+                        ),
+                        node_card_row(
+                            "table_name",
+                            "kv",
+                            "Table",
+                            "config",
+                            "table_name",
+                            "text",
+                            Some("label"),
+                            false,
+                        ),
+                    ],
+                    footer: Some(node_card_footer(
+                        "metric",
+                        "Catalog",
+                        "config",
+                        "catalog",
+                        "text",
+                        Some("status"),
+                    )),
+                    handles: node_card_handles("none", "single_right"),
+                    size: node_card_size(336),
+                }),
+            },
+        },
+        NodeDefinition {
+            type_id: "table_output".to_string(),
+            version: 1,
+            display_name: "Table Output".to_string(),
+            category: "output".to_string(),
+            description:
+                "Persists incoming text or table-backed data into a workflow DuckDB table."
+                    .to_string(),
+            inputs: vec![PortDefinition {
+                port_id: "text".to_string(),
+                display_name: "Text".to_string(),
+                direction: PortDirection::Input,
+                data_type: DataType::Text,
+                required: true,
+                multiple: false,
+                description: Some(
+                    "Renderable text row content or a compatible table reference.".to_string(),
+                ),
+            }],
+            outputs: vec![],
+            config_schema: json!({
+                "type": "object",
+                "required": ["target_schema", "table_name"],
+                "properties": {
+                    "target_schema": {
+                        "type": "string",
+                        "default": "outputs"
+                    },
+                    "table_name": {
+                        "type": "string",
+                        "default": "news_brief"
+                    },
+                    "write_mode": {
+                        "type": "string",
+                        "enum": ["append", "replace"],
+                        "default": "append"
+                    },
+                    "input_shape": {
+                        "type": "string",
+                        "enum": ["single_text_row", "source_table"],
+                        "default": "single_text_row"
+                    },
+                    "value_column": {
+                        "type": "string",
+                        "default": "content"
+                    },
+                    "include_run_id": {
+                        "type": "boolean",
+                        "default": true
+                    },
+                    "include_written_at": {
+                        "type": "boolean",
+                        "default": true
+                    },
+                    "open_in_catalog": {
+                        "type": "boolean",
+                        "default": false
+                    }
+                }
+            }),
+            runtime: RuntimeBinding {
+                executor_kind: ExecutorKind::RustNative,
+                adapter_id: None,
+                isolation_mode: IsolationMode::InProcess,
+            },
+            capabilities: NodeCapabilities {
+                writes_external_state: true,
+                produces_durable_artifacts: true,
+                may_emit_structured_logs: true,
+                ..NodeCapabilities::default()
+            },
+            ui: NodeUi {
+                icon: "table_output".to_string(),
+                color_token: "var(--node-output)".to_string(),
+                default_width: 336,
+                default_height: 176,
+                help_text: Some(
+                    "Write a simple sink table in the workflow DuckDB file.".to_string(),
+                ),
+                node_card: Some(NodeCardUi {
+                    variant: "output".to_string(),
+                    icon_key: "table_output".to_string(),
+                    top_chip: visible_top_chip("Persist"),
+                    header: standard_header(),
+                    rows: vec![
+                        node_card_row(
+                            "target_schema",
+                            "kv",
+                            "Schema",
+                            "config",
+                            "target_schema",
+                            "text",
+                            Some("table_output"),
+                            false,
+                        ),
+                        node_card_row(
+                            "table_name",
+                            "kv",
+                            "Table",
+                            "config",
+                            "table_name",
+                            "text",
+                            Some("label"),
+                            false,
+                        ),
+                        node_card_row(
+                            "write_mode",
+                            "kv",
+                            "Mode",
+                            "config",
+                            "write_mode",
+                            "text",
+                            Some("logic"),
+                            false,
+                        ),
+                    ],
+                    footer: Some(node_card_footer(
+                        "metric",
+                        "Last write",
+                        "runtime",
+                        "last_status",
+                        "status",
+                        Some("status"),
+                    )),
+                    handles: node_card_handles("single_left", "none"),
+                    size: node_card_size(336),
+                }),
+            },
+        },
+        NodeDefinition {
             type_id: "preview_output".to_string(),
             version: 1,
             display_name: "Preview Output".to_string(),

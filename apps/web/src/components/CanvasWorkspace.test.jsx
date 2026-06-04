@@ -10,8 +10,14 @@ vi.mock('./WorkflowCanvas', () => ({
     return (
       <div data-testid="workflow-canvas">
         <span>Workflow canvas</span>
+        <button onClick={() => onSelectionChange?.('table_input_runs')} type="button">
+          Select table input node
+        </button>
         <button onClick={() => onSelectionChange?.('send_email_notification')} type="button">
           Select send email node
+        </button>
+        <button onClick={() => onSelectionChange?.('table_output_news_brief')} type="button">
+          Select table output node
         </button>
       </div>
     );
@@ -100,6 +106,84 @@ const RUN_EVENTS = [
     }
   }
 ];
+
+function buildTableOutputWorkflow() {
+  return {
+    ...starterWorkflowFixture,
+    nodes: [
+      ...starterWorkflowFixture.nodes,
+      {
+        node_id: 'table_output_news_brief',
+        type_id: 'table_output',
+        definition_version: 1,
+        label: 'Table Output',
+        config: {
+          execution: {
+            wait_after_seconds: 0,
+            wait_before_seconds: 0
+          },
+          include_run_id: true,
+          include_written_at: true,
+          input_shape: 'single_text_row',
+          open_in_catalog: false,
+          table_name: 'news_brief',
+          target_schema: 'outputs',
+          value_column: 'content',
+          write_mode: 'append'
+        },
+        position: {
+          x: 880,
+          y: 240
+        }
+      }
+    ],
+    edges: [
+      ...starterWorkflowFixture.edges,
+      {
+        edge_id: 'edge_input_text_to_table_output_text',
+        source_node_id: 'input_text',
+        source_port_id: 'text',
+        target_node_id: 'table_output_news_brief',
+        target_port_id: 'text'
+      }
+    ]
+  };
+}
+
+function buildTableInputWorkflow() {
+  return {
+    ...starterWorkflowFixture,
+    nodes: [
+      ...starterWorkflowFixture.nodes,
+      {
+        node_id: 'table_input_runs',
+        type_id: 'table_input',
+        definition_version: 1,
+        label: 'Table Input',
+        config: {
+          catalog: 'workflow.duckdb',
+          execution: {
+            wait_after_seconds: 0,
+            wait_before_seconds: 0
+          },
+          open_in_catalog: false,
+          output_alias: 'workflow_runs',
+          refresh_schema: true,
+          row_filter: '',
+          row_limit: null,
+          schema_name: 'runs',
+          selected_columns: [],
+          table_name: 'workflow_runs'
+        },
+        position: {
+          x: 120,
+          y: 240
+        }
+      }
+    ],
+    edges: starterWorkflowFixture.edges
+  };
+}
 
 describe('CanvasWorkspace', () => {
   beforeEach(() => {
@@ -213,5 +297,107 @@ describe('CanvasWorkspace', () => {
     });
 
     expect(connectionSelect).toHaveValue('conn_gmail_ops');
+  });
+
+  it('shows the table output management panel with execution timing controls', async () => {
+    const workflowWithTableOutput = buildTableOutputWorkflow();
+
+    api.getWorkflow.mockResolvedValue({
+      workflow: {
+        workflow_id: workflowWithTableOutput.workflow_id,
+        version: workflowWithTableOutput.version
+      },
+      definition: workflowWithTableOutput
+    });
+
+    render(
+      <CanvasWorkspace
+        workflowId={workflowWithTableOutput.workflow_id}
+        workspaceId="ws_test"
+      />
+    );
+
+    await screen.findByLabelText('Workflow run status');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select table output node' }));
+
+    expect(await screen.findByLabelText('Target schema')).toHaveValue('outputs');
+    expect(screen.getByLabelText('Target table')).toHaveValue('news_brief');
+    expect(screen.getByLabelText('Write mode')).toHaveValue('append');
+    expect(screen.getByLabelText('Value column')).toHaveValue('content');
+    expect(screen.getByText('Execution timing')).toBeInTheDocument();
+    expect(screen.getByText('Include run id')).toBeInTheDocument();
+    expect(screen.getByText('Open table in catalog after write')).toBeInTheDocument();
+  });
+
+  it('shows the table input management panel with source controls', async () => {
+    const workflowWithTableInput = buildTableInputWorkflow();
+
+    api.getWorkflow.mockResolvedValue({
+      workflow: {
+        workflow_id: workflowWithTableInput.workflow_id,
+        version: workflowWithTableInput.version
+      },
+      definition: workflowWithTableInput
+    });
+
+    render(
+      <CanvasWorkspace
+        workflowId={workflowWithTableInput.workflow_id}
+        workspaceId="ws_test"
+      />
+    );
+
+    await screen.findByLabelText('Workflow run status');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select table input node' }));
+
+    expect(await screen.findByLabelText('Catalog')).toHaveValue('workflow.duckdb');
+    expect(screen.getByLabelText('Schema')).toHaveValue('runs');
+    expect(screen.getByLabelText('Source table')).toHaveValue('workflow_runs');
+    expect(screen.getByLabelText('Output alias')).toHaveValue('workflow_runs');
+    expect(screen.getByText('Refresh schema before execution')).toBeInTheDocument();
+    expect(screen.getByText('Execution timing')).toBeInTheDocument();
+  });
+
+  it('keeps validation errors inside run control instead of opening the problem popup', async () => {
+    const workflowWithTableOutput = buildTableOutputWorkflow();
+
+    api.getWorkflow.mockResolvedValue({
+      workflow: {
+        workflow_id: workflowWithTableOutput.workflow_id,
+        version: workflowWithTableOutput.version
+      },
+      definition: workflowWithTableOutput
+    });
+    api.validateWorkflow.mockResolvedValue({
+      valid: false,
+      errors: [
+        {
+          code: 'unknown_node_type',
+          message: 'Node `table_output` references unknown type `table_output`.',
+          path: 'workflow.nodes.table_output.type_id'
+        }
+      ],
+      warnings: []
+    });
+
+    render(
+      <CanvasWorkspace
+        workflowId={workflowWithTableOutput.workflow_id}
+        workspaceId="ws_test"
+      />
+    );
+
+    await screen.findByLabelText('Workflow run status');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open run control' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Validate Workflow' }));
+
+    expect(await screen.findByText('Validation Issue')).toBeInTheDocument();
+    expect(
+      screen.getByText('Node `table_output` references unknown type `table_output`.')
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Open Node Inspector')).not.toBeInTheDocument();
   });
 });

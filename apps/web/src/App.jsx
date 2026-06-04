@@ -15,6 +15,8 @@ import {
   connectWorkspaceGmail,
   createWorkspace,
   createWorkflow,
+  deleteWorkspaceCatalogTable,
+  deleteWorkspace,
   deleteWorkflow,
   getSession,
   getWorkflow,
@@ -30,6 +32,7 @@ import {
   login,
   loginWithGoogleCode,
   logout,
+  previewWorkspaceCatalogTableDelete,
   runWorkspaceCatalogQuery,
   updateWorkflow,
   updateWorkflowState
@@ -40,6 +43,7 @@ import {
   buildStarterWorkflowDefinition
 } from './lib/workflowTemplates';
 import { emitWorkspaceRunUpdated } from './lib/runSync';
+import { emitWorkspaceWorkflowsInvalidated } from './lib/catalogSync';
 import { emitWorkspaceConnectionsUpdated } from './lib/workspaceConnectionsSync';
 
 const APP_SCREENS = [
@@ -105,7 +109,7 @@ const NODE_SHELF_GROUPS = [
       { typeId: 'text_input', label: 'Text Input', implemented: true },
       { typeId: 'json_input', label: 'JSON Input', implemented: false },
       { typeId: 'file_input', label: 'File Input', implemented: false },
-      { typeId: 'table_input', label: 'Table Input', implemented: false },
+      { typeId: 'table_input', label: 'Table Input', implemented: true },
       { typeId: 'object_store_input', label: 'Object Store Input', implemented: false }
     ]
   },
@@ -152,7 +156,7 @@ const NODE_SHELF_GROUPS = [
       { typeId: 'preview_output', label: 'Preview Output', implemented: false },
       { typeId: 'file_output', label: 'File Output', implemented: false },
       { typeId: 'json_output', label: 'JSON Output', implemented: false },
-      { typeId: 'table_output', label: 'Table Output', implemented: false },
+      { typeId: 'table_output', label: 'Table Output', implemented: true },
       { typeId: 'send_email', label: 'Send Email', implemented: true },
       { typeId: 'send_telegram', label: 'Send Telegram', implemented: false },
       { typeId: 'notification', label: 'Notification', implemented: false }
@@ -413,6 +417,48 @@ function decorateWorkspaceCatalog(workspace, catalog) {
 
 function catalogWorkspaceLabel(catalog) {
   return catalog.workspace_slug ?? catalog.workspace_name ?? catalog.workspace_id;
+}
+
+function catalogWorkflowLabel(catalog) {
+  return catalog.workflow_id ?? catalog.workflowId ?? catalog.workflow_name ?? 'workflow';
+}
+
+function formatCatalogDatabaseLabel(catalog) {
+  return [
+    catalogWorkspaceLabel(catalog),
+    catalogWorkflowLabel(catalog),
+    catalog.database_name
+  ].join(' · ');
+}
+
+function buildCatalogTableDeleteWarning(preview) {
+  const lines = [
+    `Delete table "${preview.schema_name}.${preview.table_name}" from ${preview.workflow_name}?`,
+    '',
+    'This removes the table from the workflow DuckDB catalog.'
+  ];
+
+  if (preview.affected_workflows?.length) {
+    lines.push('');
+    lines.push('The following workflows use this table:');
+
+    preview.affected_workflows.forEach((workflow) => {
+      const nodeSummary = (workflow.nodes ?? [])
+        .map((node) => {
+          const label = node.node_label?.trim() || node.node_id;
+          return `${label} (${node.usage_kind})`;
+        })
+        .join(', ');
+      lines.push(`- ${workflow.workflow_name}: ${nodeSummary}`);
+    });
+
+    lines.push('');
+    lines.push(
+      'If you continue, those node references will be cleared and the affected workflows will become invalid until you reconnect them.'
+    );
+  }
+
+  return lines.join('\n');
 }
 
 function catalogTreeKey(catalogOrSelection) {
@@ -806,6 +852,7 @@ function ProductShell({
   const [canvasActions, setCanvasActions] = useState(null);
   const [canvasRunsSelectedRunId, setCanvasRunsSelectedRunId] = useState('');
   const [isCreatingCanvasWorkflow, setIsCreatingCanvasWorkflow] = useState(false);
+  const [deletingCanvasWorkspaceId, setDeletingCanvasWorkspaceId] = useState('');
   const activeCanvasShelfGroup =
     NODE_SHELF_GROUPS.find((group) => group.id === activeCanvasMenuId) ?? null;
   const isCanvasBrandMenuOpen = activeCanvasMenuId === 'brand';
@@ -899,6 +946,35 @@ function ProductShell({
     setActiveCanvasMenuId(null);
   }
 
+  async function handleCanvasDeleteWorkspace(workspace) {
+    if (!workspace?.workspace_id || deletingCanvasWorkspaceId) {
+      return;
+    }
+
+    setDeletingCanvasWorkspaceId(workspace.workspace_id);
+
+    try {
+      await deleteWorkspace(workspace.workspace_id);
+      const refreshedSession = normalizeSession(
+        onRefreshSession ? await onRefreshSession() : session
+      );
+
+      if (workspace.workspace_id === activeWorkspace.workspace_id) {
+        const nextWorkspace =
+          refreshedSession.workspaces.find(
+            (candidate) => candidate.workspace_id === refreshedSession.active_workspace_id
+          ) ?? refreshedSession.workspaces[0];
+
+        navigate(nextWorkspace ? buildCanvasHomePath(nextWorkspace.slug) : '/workspaces/new', {
+          replace: true
+        });
+        setActiveCanvasMenuId(null);
+      }
+    } finally {
+      setDeletingCanvasWorkspaceId('');
+    }
+  }
+
   return (
     <div
       className={`dashboard-app dashboard-app--${viewMode}${
@@ -925,6 +1001,7 @@ function ProductShell({
             onCreateWorkspace={handleCanvasCreateWorkspace}
             onCreateManagedWorkflow={handleCanvasManagedWorkflowCreate}
             onCreateWorkflow={handleCanvasNewWorkflow}
+            onDeleteWorkspace={handleCanvasDeleteWorkspace}
             onInspectRun={handleCanvasInspectRun}
             onOpenRunControl={handleCanvasOpenRunControl}
             onOpenWorkspace={handleCanvasOpenWorkspace}
@@ -944,6 +1021,7 @@ function ProductShell({
             onWorkflowToggle={() => handleCanvasMenuToggle('workflows')}
             isRunsPanelOpen={isCanvasRunsPanelOpen}
             selectedRunId={canvasRunsSelectedRunId}
+            deletingWorkspaceId={deletingCanvasWorkspaceId}
             workspaces={session.workspaces}
           />
         ) : (
@@ -1177,6 +1255,7 @@ function CanvasMenuDock({
   activeGroup = null,
   activeWorkspace,
   activeWorkflowId = null,
+  deletingWorkspaceId = '',
   groups,
   isCreatingWorkflow = false,
   isBrandMenuOpen = false,
@@ -1190,6 +1269,7 @@ function CanvasMenuDock({
   onCreateWorkspace,
   onCreateManagedWorkflow,
   onCreateWorkflow,
+  onDeleteWorkspace,
   onInspectRun,
   onOpenRunControl,
   onOpenWorkspace,
@@ -1312,7 +1392,9 @@ function CanvasMenuDock({
         <CanvasWorkspaceDirectoryPanel
           activeWorkflowId={activeWorkflowId}
           activeWorkspace={activeWorkspace}
+          deletingWorkspaceId={deletingWorkspaceId}
           onCreateWorkspace={onCreateWorkspace}
+          onDeleteWorkspace={onDeleteWorkspace}
           onOpenWorkspace={onOpenWorkspace}
           onOpenWorkflow={onOpenWorkflow}
           workspaces={workspaces}
@@ -1653,7 +1735,9 @@ function CanvasNodeShelfDrawer({ group, onAddNode, onNodeDragEnd, onNodeDragStar
 function CanvasWorkspaceDirectoryPanel({
   activeWorkflowId = null,
   activeWorkspace,
+  deletingWorkspaceId = '',
   onCreateWorkspace,
+  onDeleteWorkspace,
   onOpenWorkspace,
   onOpenWorkflow,
   workspaces = []
@@ -1718,6 +1802,28 @@ function CanvasWorkspaceDirectoryPanel({
     };
   }, [workspaces]);
 
+  async function handleDeleteWorkspace(workspace) {
+    const shouldDelete = window.confirm(
+      `Delete workspace "${workspace.name}"? This removes its workflows, runs, connections, and local DuckDB files.`
+    );
+    if (!shouldDelete) {
+      return;
+    }
+
+    try {
+      await onDeleteWorkspace?.(workspace);
+      setDirectoryState((current) => ({
+        ...current,
+        error: ''
+      }));
+    } catch (error) {
+      setDirectoryState((current) => ({
+        ...current,
+        error: error.message ?? 'Unable to delete workspace.'
+      }));
+    }
+  }
+
   return (
     <aside className="canvas-workspace-panel" aria-label="Workspace directory">
       <header className="canvas-workspace-panel__header">
@@ -1754,16 +1860,20 @@ function CanvasWorkspaceDirectoryPanel({
         <div className="canvas-workspace-panel__empty">Loading workspaces…</div>
       ) : null}
 
-      {directoryState.status === 'error' ? (
+      {directoryState.error ? (
         <div className="canvas-workspace-panel__empty">{directoryState.error}</div>
       ) : null}
 
-      {directoryState.status !== 'loading' && !directoryState.workspaceEntries.length ? (
+      {directoryState.status !== 'loading' &&
+      !directoryState.error &&
+      !directoryState.workspaceEntries.length ? (
         <div className="canvas-workspace-panel__empty">No workspaces yet.</div>
       ) : null}
 
       {directoryState.workspaceEntries.map(({ workspace, workflows }) => {
         const isActiveWorkspace = workspace.workspace_id === activeWorkspace.workspace_id;
+        const canDeleteWorkspace = workspace.role === 'owner';
+        const isDeletingWorkspace = deletingWorkspaceId === workspace.workspace_id;
 
         return (
           <section
@@ -1772,17 +1882,33 @@ function CanvasWorkspaceDirectoryPanel({
             }`}
             key={workspace.workspace_id}
           >
-            <button
-              className="canvas-workspace-panel__workspace"
-              onClick={() => onOpenWorkspace?.(workspace.slug)}
-              type="button"
-            >
-              <strong>
-                {workspace.name}
-                {isActiveWorkspace ? ' · Current' : ''}
-              </strong>
-              <span>{workspace.role}</span>
-            </button>
+            <div className="canvas-workspace-panel__section-head">
+              <button
+                className="canvas-workspace-panel__workspace"
+                onClick={() => onOpenWorkspace?.(workspace.slug)}
+                type="button"
+              >
+                <strong>
+                  {workspace.name}
+                  {isActiveWorkspace ? ' · Current' : ''}
+                </strong>
+                <span>{workspace.role}</span>
+              </button>
+
+              <button
+                aria-label={
+                  canDeleteWorkspace
+                    ? `Delete workspace ${workspace.name}`
+                    : `Delete workspace ${workspace.name} (owner only)`
+                }
+                className="canvas-workspace-panel__delete"
+                disabled={!canDeleteWorkspace || isDeletingWorkspace}
+                onClick={() => handleDeleteWorkspace(workspace)}
+                type="button"
+              >
+                <span aria-hidden="true">{isDeletingWorkspace ? '…' : '×'}</span>
+              </button>
+            </div>
 
             <div className="canvas-workspace-panel__tree">
               {workflows.length ? (
@@ -2398,6 +2524,7 @@ function CanvasDataPanel({ activeWorkspace, workspaces = [] }) {
     selectionKey: '',
     status: 'idle'
   });
+  const [deletingTableKey, setDeletingTableKey] = useState('');
   const workspaceScopeKey = workspaces.map((workspace) => workspace.workspace_id).join(':');
   const explorerMainRef = useRef(null);
   const editorSurfaceRef = useRef(null);
@@ -2499,6 +2626,130 @@ function CanvasDataPanel({ activeWorkspace, workspaces = [] }) {
     }
   }
 
+  async function refreshCatalogs() {
+    const results = await Promise.allSettled(
+      workspaces.map(async (workspace) => {
+        const response = await getWorkspaceCatalog(workspace.workspace_id);
+        return (response.catalogs ?? []).map((catalog) =>
+          decorateWorkspaceCatalog(workspace, catalog)
+        );
+      })
+    );
+
+    const catalogs = results
+      .flatMap((result) => (result.status === 'fulfilled' ? result.value : []))
+      .sort((left, right) => {
+        const leftIsActive = left.workspace_id === activeWorkspace.workspace_id;
+        const rightIsActive = right.workspace_id === activeWorkspace.workspace_id;
+        if (leftIsActive !== rightIsActive) {
+          return leftIsActive ? -1 : 1;
+        }
+
+        const leftWorkspaceLabel = catalogWorkspaceLabel(left);
+        const rightWorkspaceLabel = catalogWorkspaceLabel(right);
+        if (leftWorkspaceLabel !== rightWorkspaceLabel) {
+          return leftWorkspaceLabel.localeCompare(rightWorkspaceLabel);
+        }
+
+        return left.workflow_name.localeCompare(right.workflow_name);
+      });
+
+    if (!catalogs.length && results.some((result) => result.status === 'rejected')) {
+      setCatalogState({
+        error: 'Unable to load workspace catalogs.',
+        status: 'error',
+        catalogs: []
+      });
+      setSelection(null);
+      return;
+    }
+
+    setCatalogState({
+      error: '',
+      status: 'ready',
+      catalogs
+    });
+    setSelection((current) => resolveCatalogSelection(catalogs, current));
+  }
+
+  async function handleDeleteCatalogTable(catalog, schema, table) {
+    if (!catalog || !schema || !table?.is_deletable) {
+      return;
+    }
+
+    const tableKey = buildCatalogTableSelectionKey(
+      catalog.workspace_id,
+      catalog.workflow_id,
+      schema.schema_name,
+      table.table_name
+    );
+    setDeletingTableKey(tableKey);
+
+    try {
+      const preview = await previewWorkspaceCatalogTableDelete(
+        catalog.workspace_id,
+        catalog.workflow_id,
+        schema.schema_name,
+        table.table_name
+      );
+
+      if (!preview.is_deletable) {
+        throw new Error(
+          preview.protected_reason ?? 'This table cannot be deleted from the catalog tree.'
+        );
+      }
+
+      const shouldDelete = window.confirm(buildCatalogTableDeleteWarning(preview));
+      if (!shouldDelete) {
+        return;
+      }
+
+      const isDeletedTableSelected =
+        selection?.kind === 'table' &&
+        selection.workspaceId === catalog.workspace_id &&
+        selection.workflowId === catalog.workflow_id &&
+        selection.schemaName === schema.schema_name &&
+        selection.tableName === table.table_name;
+
+      if (isDeletedTableSelected) {
+        setSelection(buildSchemaCatalogSelection(catalog, schema));
+        setActiveTab('overview');
+        setTableDetailState({
+          error: '',
+          status: 'idle',
+          detail: null,
+          selectionKey: ''
+        });
+        setQueryState({
+          error: '',
+          result: null,
+          selectionKey: '',
+          status: 'idle'
+        });
+      }
+
+      const response = await deleteWorkspaceCatalogTable(
+        catalog.workspace_id,
+        catalog.workflow_id,
+        schema.schema_name,
+        table.table_name
+      );
+
+      emitWorkspaceWorkflowsInvalidated(
+        catalog.workspace_id,
+        (response.invalidated_workflows ?? []).map((workflow) => workflow.workflow_id)
+      );
+
+      await refreshCatalogs();
+    } catch (error) {
+      if (typeof window !== 'undefined') {
+        window.alert(error.message ?? 'Unable to delete this table.');
+      }
+    } finally {
+      setDeletingTableKey('');
+    }
+  }
+
   useEffect(() => {
     setActiveTab('overview');
     setEditorQuery('');
@@ -2585,52 +2836,10 @@ function CanvasDataPanel({ activeWorkspace, workspaces = [] }) {
     let cancelled = false;
 
     async function hydrate() {
-      const results = await Promise.allSettled(
-        workspaces.map(async (workspace) => {
-          const response = await getWorkspaceCatalog(workspace.workspace_id);
-          return (response.catalogs ?? []).map((catalog) =>
-            decorateWorkspaceCatalog(workspace, catalog)
-          );
-        })
-      );
+      await refreshCatalogs();
       if (cancelled) {
         return;
       }
-
-      const catalogs = results
-        .flatMap((result) => (result.status === 'fulfilled' ? result.value : []))
-        .sort((left, right) => {
-          const leftIsActive = left.workspace_id === activeWorkspace.workspace_id;
-          const rightIsActive = right.workspace_id === activeWorkspace.workspace_id;
-          if (leftIsActive !== rightIsActive) {
-            return leftIsActive ? -1 : 1;
-          }
-
-          const leftWorkspaceLabel = catalogWorkspaceLabel(left);
-          const rightWorkspaceLabel = catalogWorkspaceLabel(right);
-          if (leftWorkspaceLabel !== rightWorkspaceLabel) {
-            return leftWorkspaceLabel.localeCompare(rightWorkspaceLabel);
-          }
-
-          return left.workflow_name.localeCompare(right.workflow_name);
-        });
-
-      if (!catalogs.length && results.some((result) => result.status === 'rejected')) {
-        setCatalogState({
-          error: 'Unable to load workspace catalogs.',
-          status: 'error',
-          catalogs: []
-        });
-        setSelection(null);
-        return;
-      }
-
-      setCatalogState({
-        error: '',
-        status: 'ready',
-        catalogs
-      });
-      setSelection((current) => resolveCatalogSelection(catalogs, current));
     }
 
     setCatalogState((current) => ({
@@ -2926,6 +3135,7 @@ function CanvasDataPanel({ activeWorkspace, workspaces = [] }) {
     .map((catalog) => {
       const catalogMatches = [
         catalogWorkspaceLabel(catalog),
+        catalogWorkflowLabel(catalog),
         catalog.workspace_name ?? '',
         catalog.workflow_name,
         catalog.database_name
@@ -2969,7 +3179,7 @@ function CanvasDataPanel({ activeWorkspace, workspaces = [] }) {
     })
     .filter((catalog) => catalog.isVisible);
   const editorScopeLabel = selectedCatalog
-    ? `${catalogWorkspaceLabel(selectedCatalog)} · ${selectedCatalog.workflow_name} · ${selectedCatalog.database_name}`
+    ? formatCatalogDatabaseLabel(selectedCatalog)
     : 'Select a workflow catalog';
   const isSampleDataEnabled = selection?.kind === 'table';
   const isQueryRunning = queryState.status === 'loading';
@@ -3116,7 +3326,19 @@ function CanvasDataPanel({ activeWorkspace, workspaces = [] }) {
                 <button className="canvas-data-panel__icon-button" type="button" aria-label="Settings">
                   <CanvasDataToolbarIcon kind="settings" />
                 </button>
-                <button className="canvas-data-panel__icon-button" type="button" aria-label="Refresh">
+                <button
+                  className="canvas-data-panel__icon-button"
+                  type="button"
+                  aria-label="Refresh"
+                  onClick={() => {
+                    setCatalogState((current) => ({
+                      ...current,
+                      error: '',
+                      status: current.catalogs.length ? 'refreshing' : 'loading'
+                    }));
+                    void refreshCatalogs();
+                  }}
+                >
                   <CanvasDataToolbarIcon kind="refresh" />
                 </button>
                 <button className="canvas-data-panel__icon-button" type="button" aria-label="Add">
@@ -3166,7 +3388,7 @@ function CanvasDataPanel({ activeWorkspace, workspaces = [] }) {
                       <button
                         aria-label={`${
                           isCatalogOpen ? 'Collapse' : 'Expand'
-                        } catalog ${catalogWorkspaceLabel(catalog)} ${catalog.database_name}`}
+                        } catalog ${formatCatalogDatabaseLabel(catalog)}`}
                         className="canvas-data-panel__tree-toggle"
                         onClick={() => toggleCatalogOpen(catalog)}
                         type="button"
@@ -3193,7 +3415,7 @@ function CanvasDataPanel({ activeWorkspace, workspaces = [] }) {
                           <CanvasDataTreeGlyph kind="database" />
                         </span>
                         <span className="canvas-data-panel__tree-label">
-                          {catalogWorkspaceLabel(catalog)} · {catalog.database_name}
+                          {formatCatalogDatabaseLabel(catalog)}
                         </span>
                       </button>
                     </div>
@@ -3252,28 +3474,53 @@ function CanvasDataPanel({ activeWorkspace, workspaces = [] }) {
                                       selection.workflowId === catalog.workflow_id &&
                                       selection.schemaName === schema.schema_name &&
                                       selection.tableName === table.table_name;
+                                const tableSelectionKey = buildCatalogTableSelectionKey(
+                                  catalog.workspace_id,
+                                  catalog.workflow_id,
+                                  schema.schema_name,
+                                  table.table_name
+                                );
+                                const isDeletingTable = deletingTableKey === tableSelectionKey;
 
                                 return (
-                                  <button
+                                  <div
                                     key={`${catalog.workspace_id}:${catalog.workflow_id}:${schema.schema_name}:${table.table_name}`}
-                                    className={`canvas-data-panel__tree-item canvas-data-panel__tree-item--level-2${
-                                      isTableSelected ? ' is-active' : ''
-                                    }`}
-                                    onClick={() => {
-                                      setSelection(
-                                        buildTableCatalogSelection(catalog, schema, table)
-                                      );
-                                    }}
-                                    role="treeitem"
-                                    type="button"
                                   >
-                                    <span className="canvas-data-panel__tree-glyph" aria-hidden="true">
-                                      <CanvasDataTreeGlyph kind="table" />
-                                    </span>
-                                    <span className="canvas-data-panel__tree-label">
-                                      {table.table_name}
-                                    </span>
-                                  </button>
+                                    <div className="canvas-data-panel__tree-leaf-row">
+                                      <button
+                                        className={`canvas-data-panel__tree-item canvas-data-panel__tree-item--level-2${
+                                          isTableSelected ? ' is-active' : ''
+                                        }`}
+                                        onClick={() => {
+                                          setSelection(
+                                            buildTableCatalogSelection(catalog, schema, table)
+                                          );
+                                        }}
+                                        role="treeitem"
+                                        type="button"
+                                      >
+                                        <span className="canvas-data-panel__tree-glyph" aria-hidden="true">
+                                          <CanvasDataTreeGlyph kind="table" />
+                                        </span>
+                                        <span className="canvas-data-panel__tree-label">
+                                          {table.table_name}
+                                        </span>
+                                      </button>
+                                      {table.is_deletable ? (
+                                        <button
+                                          aria-label={`Delete table ${schema.schema_name}.${table.table_name}`}
+                                          className="canvas-data-panel__tree-action"
+                                          disabled={isDeletingTable}
+                                          onClick={() => {
+                                            void handleDeleteCatalogTable(catalog, schema, table);
+                                          }}
+                                          type="button"
+                                        >
+                                          <CanvasDataToolbarIcon kind="trash" />
+                                        </button>
+                                      ) : null}
+                                    </div>
+                                  </div>
                                 );
                               })
                               : null}
@@ -4601,6 +4848,13 @@ function CanvasDataToolbarIcon({ kind }) {
       return (
         <svg viewBox="0 0 20 20" fill="none">
           <path d="M3.8 5.1H16.2L11.35 10.55V15.45L8.65 14.15V10.55L3.8 5.1Z" stroke="currentColor" strokeWidth="1.45" strokeLinecap="square" strokeLinejoin="miter" />
+        </svg>
+      );
+    case 'trash':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <path d="M6.1 6.2H13.9L13.3 14.65H6.7L6.1 6.2Z" stroke="currentColor" strokeWidth="1.35" strokeLinejoin="miter" />
+          <path d="M4.9 5.6H15.1M7.8 5.6V4.45H12.2V5.6M8.35 8V12.8M11.65 8V12.8" stroke="currentColor" strokeWidth="1.25" strokeLinecap="square" />
         </svg>
       );
     default:

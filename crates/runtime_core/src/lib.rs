@@ -208,7 +208,7 @@ impl RuntimeService {
                 continue;
             };
 
-            if source_port.data_type != target_port.data_type {
+            if !ports_are_compatible(source_node, source_port, target_node, target_port) {
                 errors.push(issue(
                     "port_type_mismatch",
                     format!(
@@ -1097,6 +1097,260 @@ fn validate_node_config(node: &WorkflowNode) -> Option<ValidationIssue> {
             }
             None
         }
+        "table_input" => {
+            if let Some(catalog) = node.config.get("catalog") {
+                match catalog.as_str() {
+                    Some(value) if !value.trim().is_empty() => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_table_input_catalog",
+                            format!(
+                                "Node `{}` expects non-empty string `catalog` when provided.",
+                                node.node_id
+                            ),
+                            Some(format!("workflow.nodes.{}.config.catalog", node.node_id)),
+                        ));
+                    }
+                }
+            }
+
+            let schema_name = node.config.get("schema_name").and_then(Value::as_str);
+            if schema_name.map_or(true, |value| value.trim().is_empty()) {
+                return Some(issue(
+                    "invalid_table_input_schema_name",
+                    format!(
+                        "Node `{}` requires a non-empty string `schema_name` config field.",
+                        node.node_id
+                    ),
+                    Some(format!(
+                        "workflow.nodes.{}.config.schema_name",
+                        node.node_id
+                    )),
+                ));
+            }
+
+            let table_name = node.config.get("table_name").and_then(Value::as_str);
+            if table_name.map_or(true, |value| value.trim().is_empty()) {
+                return Some(issue(
+                    "invalid_table_input_table_name",
+                    format!(
+                        "Node `{}` requires a non-empty string `table_name` config field.",
+                        node.node_id
+                    ),
+                    Some(format!("workflow.nodes.{}.config.table_name", node.node_id)),
+                ));
+            }
+
+            if let Some(output_alias) = node.config.get("output_alias") {
+                match output_alias.as_str() {
+                    Some(value) if !value.trim().is_empty() => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_table_input_output_alias",
+                            format!(
+                                "Node `{}` expects non-empty string `output_alias` when provided.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.output_alias",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(selected_columns) = node.config.get("selected_columns") {
+                let Some(columns) = selected_columns.as_array() else {
+                    return Some(issue(
+                        "invalid_table_input_selected_columns",
+                        format!(
+                            "Node `{}` expects `selected_columns` to be an array of strings.",
+                            node.node_id
+                        ),
+                        Some(format!(
+                            "workflow.nodes.{}.config.selected_columns",
+                            node.node_id
+                        )),
+                    ));
+                };
+
+                if columns.iter().any(|value| {
+                    value
+                        .as_str()
+                        .map(str::trim)
+                        .filter(|column| !column.is_empty())
+                        .is_none()
+                }) {
+                    return Some(issue(
+                        "invalid_table_input_selected_columns",
+                        format!(
+                            "Node `{}` expects every `selected_columns` entry to be a non-empty string.",
+                            node.node_id
+                        ),
+                        Some(format!(
+                            "workflow.nodes.{}.config.selected_columns",
+                            node.node_id
+                        )),
+                    ));
+                }
+            }
+
+            if let Some(row_filter) = node.config.get("row_filter") {
+                if !row_filter.is_string() {
+                    return Some(issue(
+                        "invalid_table_input_row_filter",
+                        format!(
+                            "Node `{}` expects optional string `row_filter`.",
+                            node.node_id
+                        ),
+                        Some(format!("workflow.nodes.{}.config.row_filter", node.node_id)),
+                    ));
+                }
+            }
+
+            if let Some(row_limit) = node.config.get("row_limit") {
+                match row_limit.as_u64() {
+                    Some(value) if value > 0 => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_table_input_row_limit",
+                            format!(
+                                "Node `{}` expects positive integer `row_limit` when provided.",
+                                node.node_id
+                            ),
+                            Some(format!("workflow.nodes.{}.config.row_limit", node.node_id)),
+                        ));
+                    }
+                }
+            }
+
+            for (key, code) in [
+                ("refresh_schema", "invalid_table_input_refresh_schema"),
+                ("open_in_catalog", "invalid_table_input_open_in_catalog"),
+            ] {
+                if let Some(value) = node.config.get(key) {
+                    if !value.is_boolean() {
+                        return Some(issue(
+                            code,
+                            format!(
+                                "Node `{}` expects boolean `{key}` when provided.",
+                                node.node_id
+                            ),
+                            Some(format!("workflow.nodes.{}.config.{key}", node.node_id)),
+                        ));
+                    }
+                }
+            }
+
+            None
+        }
+        "table_output" => {
+            let target_schema = node.config.get("target_schema").and_then(Value::as_str);
+            if target_schema.map_or(true, |value| value.trim().is_empty()) {
+                return Some(issue(
+                    "invalid_table_output_target_schema",
+                    format!(
+                        "Node `{}` requires a non-empty string `target_schema` config field.",
+                        node.node_id
+                    ),
+                    Some(format!(
+                        "workflow.nodes.{}.config.target_schema",
+                        node.node_id
+                    )),
+                ));
+            }
+
+            let table_name = node.config.get("table_name").and_then(Value::as_str);
+            if table_name.map_or(true, |value| value.trim().is_empty()) {
+                return Some(issue(
+                    "invalid_table_output_table_name",
+                    format!(
+                        "Node `{}` requires a non-empty string `table_name` config field.",
+                        node.node_id
+                    ),
+                    Some(format!("workflow.nodes.{}.config.table_name", node.node_id)),
+                ));
+            }
+
+            if let Some(write_mode) = node.config.get("write_mode") {
+                match write_mode.as_str() {
+                    Some("append" | "replace") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_table_output_write_mode",
+                            format!(
+                                "Node `{}` has unsupported `write_mode` value.",
+                                node.node_id
+                            ),
+                            Some(format!("workflow.nodes.{}.config.write_mode", node.node_id)),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(input_shape) = node.config.get("input_shape") {
+                match input_shape.as_str() {
+                    Some("single_text_row" | "source_table") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_table_output_input_shape",
+                            format!(
+                                "Node `{}` has unsupported `input_shape` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.input_shape",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(value_column) = node.config.get("value_column") {
+                match value_column.as_str() {
+                    Some(value) if !value.trim().is_empty() => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_table_output_value_column",
+                            format!(
+                                "Node `{}` expects non-empty string `value_column` when provided.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.value_column",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            for (key, code) in [
+                ("include_run_id", "invalid_table_output_include_run_id"),
+                (
+                    "include_written_at",
+                    "invalid_table_output_include_written_at",
+                ),
+                ("open_in_catalog", "invalid_table_output_open_in_catalog"),
+            ] {
+                if let Some(value) = node.config.get(key) {
+                    if !value.is_boolean() {
+                        return Some(issue(
+                            code,
+                            format!(
+                                "Node `{}` expects boolean `{key}` when provided.",
+                                node.node_id
+                            ),
+                            Some(format!("workflow.nodes.{}.config.{key}", node.node_id)),
+                        ));
+                    }
+                }
+            }
+
+            None
+        }
         "send_email" => {
             let to = node.config.get("to").and_then(Value::as_str);
             if to.is_none() {
@@ -1197,6 +1451,23 @@ fn validate_node_config(node: &WorkflowNode) -> Option<ValidationIssue> {
         }
         _ => None,
     }
+}
+
+fn ports_are_compatible(
+    source_node: &WorkflowNode,
+    source_port: &node_registry::PortDefinition,
+    target_node: &WorkflowNode,
+    target_port: &node_registry::PortDefinition,
+) -> bool {
+    if source_port.data_type == target_port.data_type {
+        return true;
+    }
+
+    target_node.type_id == "table_output"
+        && target_port.port_id == "text"
+        && source_node.type_id == "table_input"
+        && source_port.port_id == "table"
+        && source_port.data_type == workflow_schema::DataType::TableRef
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -1688,5 +1959,106 @@ mod tests {
             .errors
             .iter()
             .any(|error| error.code == "missing_send_email_body_input"));
+    }
+
+    #[test]
+    fn table_output_requires_non_empty_table_name() {
+        let runtime = RuntimeService::default();
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_table_output_invalid".to_string(),
+            version: 1,
+            name: "Table Output Invalid".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "input_text".to_string(),
+                    type_id: "text_input".to_string(),
+                    definition_version: 1,
+                    label: Some("Text Input".to_string()),
+                    config: json!({
+                        "text": "Latest market digest"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "table_output_digest".to_string(),
+                    type_id: "table_output".to_string(),
+                    definition_version: 1,
+                    label: Some("Table Output".to_string()),
+                    config: json!({
+                        "target_schema": "outputs",
+                        "table_name": "   "
+                    }),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![WorkflowEdge {
+                edge_id: "edge_input_text_to_table_output_text".to_string(),
+                source_node_id: "input_text".to_string(),
+                source_port_id: "text".to_string(),
+                target_node_id: "table_output_digest".to_string(),
+                target_port_id: "text".to_string(),
+            }],
+            metadata: Default::default(),
+        };
+
+        let validation = runtime.validate_workflow(&workflow);
+        assert!(!validation.valid);
+        assert!(validation
+            .errors
+            .iter()
+            .any(|error| error.code == "invalid_table_output_table_name"));
+    }
+
+    #[test]
+    fn table_input_can_connect_to_table_output() {
+        let runtime = RuntimeService::default();
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_table_input_output".to_string(),
+            version: 1,
+            name: "Table Input Output".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "table_input_runs".to_string(),
+                    type_id: "table_input".to_string(),
+                    definition_version: 1,
+                    label: Some("Table Input".to_string()),
+                    config: json!({
+                        "catalog": "workflow.duckdb",
+                        "schema_name": "runs",
+                        "table_name": "workflow_runs",
+                        "output_alias": "workflow_runs"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "table_output_copy".to_string(),
+                    type_id: "table_output".to_string(),
+                    definition_version: 1,
+                    label: Some("Table Output".to_string()),
+                    config: json!({
+                        "target_schema": "tables",
+                        "table_name": "workflow_runs_copy",
+                        "input_shape": "source_table",
+                        "write_mode": "replace"
+                    }),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![WorkflowEdge {
+                edge_id: "edge_table_input_to_table_output".to_string(),
+                source_node_id: "table_input_runs".to_string(),
+                source_port_id: "table".to_string(),
+                target_node_id: "table_output_copy".to_string(),
+                target_port_id: "text".to_string(),
+            }],
+            metadata: Default::default(),
+        };
+
+        let validation = runtime.validate_workflow(&workflow);
+        assert!(validation.valid, "expected valid flow, got: {validation:?}");
     }
 }

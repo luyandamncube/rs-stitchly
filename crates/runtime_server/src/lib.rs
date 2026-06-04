@@ -2,15 +2,17 @@ use std::{convert::Infallible, env, fs, path::Path as FsPath};
 
 use api_contract::{
     AuthSessionResponse, ConnectionsResponse, CreateRunRequest, CreateWorkflowRequest,
-    CreateWorkspaceRequest, DeleteWorkflowResponse, ErrorResponse, EventTarget, EventTargetKind,
-    GoogleAuthCodeRequest, LogLevel, LoginRequest, NodeDefinitionsResponse, NodeRunStatus,
-    RunErrorCategory, RunErrorSummary, RunEvent, RunEventType, RunEventsResponse, RunLogsResponse,
-    RunSnapshot, RunStatus, UpdateWorkflowRequest, UpdateWorkflowStateRequest,
-    ValidateWorkflowRequest, ValidateWorkflowResponse, WorkflowListResponse, WorkflowResponse,
-    WorkflowStateResponse, WorkspaceCatalogQueryRequest, WorkspaceCatalogQueryResponse,
-    WorkspaceCatalogResponse, WorkspaceCatalogSchemaResponse, WorkspaceCatalogTableResponse,
-    WorkspaceConnectionResponse, WorkspaceConnectionsResponse, WorkspaceListResponse,
-    WorkspaceResponse, WorkspaceRunResponse, WorkspaceRunsResponse,
+    CreateWorkspaceRequest, DeleteWorkflowResponse, DeleteWorkspaceResponse, ErrorResponse,
+    EventTarget, EventTargetKind, GoogleAuthCodeRequest, LogLevel, LoginRequest,
+    NodeDefinitionsResponse, NodeRunStatus, RunErrorCategory, RunErrorSummary, RunEvent,
+    RunEventType, RunEventsResponse, RunLogsResponse, RunSnapshot, RunStatus,
+    UpdateWorkflowRequest, UpdateWorkflowStateRequest, ValidateWorkflowRequest,
+    ValidateWorkflowResponse, WorkflowListResponse, WorkflowResponse, WorkflowStateResponse,
+    WorkspaceCatalogDeleteTablePreviewResponse, WorkspaceCatalogDeleteTableResponse,
+    WorkspaceCatalogQueryRequest, WorkspaceCatalogQueryResponse, WorkspaceCatalogResponse,
+    WorkspaceCatalogSchemaResponse, WorkspaceCatalogTableResponse, WorkspaceConnectionResponse,
+    WorkspaceConnectionsResponse, WorkspaceListResponse, WorkspaceResponse, WorkspaceRunResponse,
+    WorkspaceRunsResponse,
 };
 use axum::{
     extract::{Path, State},
@@ -117,7 +119,10 @@ pub fn app(runtime: RuntimeService, platform: PlatformStore) -> Router {
             "/api/workspaces",
             get(list_workspaces).post(create_workspace),
         )
-        .route("/api/workspaces/:workspace_id", get(get_workspace))
+        .route(
+            "/api/workspaces/:workspace_id",
+            get(get_workspace).delete(delete_workspace),
+        )
         .route(
             "/api/workspaces/:workspace_id/connections",
             get(list_workspace_connections),
@@ -150,7 +155,11 @@ pub fn app(runtime: RuntimeService, platform: PlatformStore) -> Router {
         )
         .route(
             "/api/workspaces/:workspace_id/catalog/:workflow_id/schemas/:schema_name/tables/:table_name",
-            get(get_workspace_catalog_table),
+            get(get_workspace_catalog_table).delete(delete_workspace_catalog_table),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/catalog/:workflow_id/schemas/:schema_name/tables/:table_name/delete-preview",
+            get(preview_workspace_catalog_table_delete),
         )
         .route(
             "/api/workspaces/:workspace_id/catalog/:workflow_id/query",
@@ -479,6 +488,20 @@ async fn get_workspace(
     Ok(Json(WorkspaceResponse { workspace }))
 }
 
+async fn delete_workspace(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<String>,
+) -> Result<Json<DeleteWorkspaceResponse>, ApiError> {
+    let session = require_session(&state, &headers)?;
+    let response = state
+        .platform
+        .delete_workspace(&session.user_id, &workspace_id)
+        .map_err(map_workspace_delete_error)?
+        .ok_or_else(|| ApiError::not_found(format!("Workspace `{workspace_id}` was not found.")))?;
+    Ok(Json(response))
+}
+
 async fn list_workspace_connections(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -729,6 +752,64 @@ async fn get_workspace_catalog_table(
             ))
     })?;
     Ok(Json(table))
+}
+
+async fn preview_workspace_catalog_table_delete(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((workspace_id, workflow_id, schema_name, table_name)): Path<(
+        String,
+        String,
+        String,
+        String,
+    )>,
+) -> Result<Json<WorkspaceCatalogDeleteTablePreviewResponse>, ApiError> {
+    let session = require_session(&state, &headers)?;
+    let preview = state
+        .platform
+        .preview_workspace_catalog_table_delete(
+            &session.user_id,
+            &workspace_id,
+            &workflow_id,
+            &schema_name,
+            &table_name,
+        )
+        .map_err(map_workflow_persistence_error)?
+        .ok_or_else(|| {
+            ApiError::not_found(format!(
+                "Table `{schema_name}.{table_name}` was not found in workflow `{workflow_id}` for workspace `{workspace_id}`."
+            ))
+        })?;
+    Ok(Json(preview))
+}
+
+async fn delete_workspace_catalog_table(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((workspace_id, workflow_id, schema_name, table_name)): Path<(
+        String,
+        String,
+        String,
+        String,
+    )>,
+) -> Result<Json<WorkspaceCatalogDeleteTableResponse>, ApiError> {
+    let session = require_session(&state, &headers)?;
+    let response = state
+        .platform
+        .delete_workspace_catalog_table(
+            &session.user_id,
+            &workspace_id,
+            &workflow_id,
+            &schema_name,
+            &table_name,
+        )
+        .map_err(map_catalog_query_error)?
+        .ok_or_else(|| {
+            ApiError::not_found(format!(
+                "Table `{schema_name}.{table_name}` was not found in workflow `{workflow_id}` for workspace `{workspace_id}`."
+            ))
+        })?;
+    Ok(Json(response))
 }
 
 async fn run_workspace_catalog_query(
@@ -1612,6 +1693,14 @@ impl ApiError {
         }
     }
 
+    fn forbidden(message: String) -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
+            message,
+            validation: None,
+        }
+    }
+
     fn unavailable(message: String) -> Self {
         Self {
             status: StatusCode::SERVICE_UNAVAILABLE,
@@ -1666,6 +1755,15 @@ fn map_workspace_create_error(error: anyhow::Error) -> ApiError {
     }
 }
 
+fn map_workspace_delete_error(error: anyhow::Error) -> ApiError {
+    let message = error.to_string();
+    if message.contains("requires owner role") {
+        ApiError::forbidden(message)
+    } else {
+        map_workflow_persistence_error(error)
+    }
+}
+
 fn map_workflow_persistence_error(error: anyhow::Error) -> ApiError {
     let message = error.to_string();
     if message.contains("cannot be empty") {
@@ -1685,6 +1783,7 @@ fn map_catalog_query_error(error: anyhow::Error) -> ApiError {
         || message.contains("Only a single read-only query")
         || message.contains("Only read-only SELECT queries")
         || message.contains("DuckDB query failed")
+        || message.contains("cannot be deleted")
     {
         ApiError::bad_request(message)
     } else {
@@ -1749,6 +1848,160 @@ mod tests {
 
         let response = router.oneshot(request).await.expect("response");
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn validate_endpoint_accepts_table_output_workflow() {
+        let router = app(
+            runtime_core::RuntimeService::default(),
+            PlatformStore::for_tests().expect("platform store"),
+        );
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_table_output_validate".to_string(),
+            version: 1,
+            name: "Table Output Validate".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "input_text".to_string(),
+                    type_id: "text_input".to_string(),
+                    definition_version: 1,
+                    label: Some("Text Input".to_string()),
+                    config: json!({
+                        "text": "Latest market digest"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "table_output_news_brief".to_string(),
+                    type_id: "table_output".to_string(),
+                    definition_version: 1,
+                    label: Some("Table Output".to_string()),
+                    config: json!({
+                        "target_schema": "outputs",
+                        "table_name": "news_brief",
+                        "write_mode": "append",
+                        "input_shape": "single_text_row",
+                        "value_column": "content",
+                        "include_run_id": true,
+                        "include_written_at": true,
+                        "open_in_catalog": false
+                    }),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![WorkflowEdge {
+                edge_id: "edge_input_text_to_table_output_text".to_string(),
+                source_node_id: "input_text".to_string(),
+                source_port_id: "text".to_string(),
+                target_node_id: "table_output_news_brief".to_string(),
+                target_port_id: "text".to_string(),
+            }],
+            metadata: Default::default(),
+        };
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/workflows/validate")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&json!({ "workflow": workflow })).expect("request body"),
+            ))
+            .expect("request builds");
+
+        let response = router.oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let payload = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body collects")
+            .to_bytes();
+        let validation: api_contract::ValidateWorkflowResponse =
+            serde_json::from_slice(&payload).expect("validation response parses");
+        assert!(
+            validation.valid,
+            "expected valid response, got: {validation:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn validate_endpoint_accepts_table_input_to_table_output_workflow() {
+        let router = app(
+            runtime_core::RuntimeService::default(),
+            PlatformStore::for_tests().expect("platform store"),
+        );
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_table_input_output_validate".to_string(),
+            version: 1,
+            name: "Table Input Output Validate".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "table_input_runs".to_string(),
+                    type_id: "table_input".to_string(),
+                    definition_version: 1,
+                    label: Some("Table Input".to_string()),
+                    config: json!({
+                        "catalog": "workflow.duckdb",
+                        "schema_name": "runs",
+                        "table_name": "workflow_runs",
+                        "output_alias": "workflow_runs"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "table_output_copy".to_string(),
+                    type_id: "table_output".to_string(),
+                    definition_version: 1,
+                    label: Some("Table Output".to_string()),
+                    config: json!({
+                        "target_schema": "tables",
+                        "table_name": "workflow_runs_copy",
+                        "write_mode": "replace",
+                        "input_shape": "source_table",
+                        "include_run_id": true,
+                        "include_written_at": true,
+                        "open_in_catalog": false
+                    }),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![WorkflowEdge {
+                edge_id: "edge_table_input_to_table_output".to_string(),
+                source_node_id: "table_input_runs".to_string(),
+                source_port_id: "table".to_string(),
+                target_node_id: "table_output_copy".to_string(),
+                target_port_id: "text".to_string(),
+            }],
+            metadata: Default::default(),
+        };
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/workflows/validate")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&json!({ "workflow": workflow })).expect("request body"),
+            ))
+            .expect("request builds");
+
+        let response = router.oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let payload = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body collects")
+            .to_bytes();
+        let validation: api_contract::ValidateWorkflowResponse =
+            serde_json::from_slice(&payload).expect("validation response parses");
+        assert!(
+            validation.valid,
+            "expected valid response, got: {validation:?}"
+        );
     }
 
     #[tokio::test]
@@ -1910,6 +2163,120 @@ mod tests {
             session.active_workspace_id,
             Some(workspace.workspace.workspace_id)
         );
+    }
+
+    #[tokio::test]
+    async fn workspace_delete_removes_the_workspace_from_session() {
+        let router = app(
+            runtime_core::RuntimeService::default(),
+            PlatformStore::for_tests().expect("platform store"),
+        );
+
+        let login_request = Request::builder()
+            .method("POST")
+            .uri("/api/auth/login")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&json!({
+                    "email": "builder@stitchly.dev",
+                    "password": "stitchly"
+                }))
+                .expect("login request body"),
+            ))
+            .expect("request builds");
+        let login_response = router
+            .clone()
+            .oneshot(login_request)
+            .await
+            .expect("login response");
+        assert_eq!(login_response.status(), StatusCode::OK);
+
+        let cookie = login_response
+            .headers()
+            .get("set-cookie")
+            .expect("set-cookie header")
+            .to_str()
+            .expect("header utf8")
+            .split(';')
+            .next()
+            .expect("cookie pair")
+            .to_string();
+
+        let create_workspace_request = Request::builder()
+            .method("POST")
+            .uri("/api/workspaces")
+            .header("content-type", "application/json")
+            .header("cookie", &cookie)
+            .body(Body::from(
+                serde_json::to_vec(&json!({ "name": "Delete Me" })).expect("workspace body"),
+            ))
+            .expect("request builds");
+        let create_workspace_response = router
+            .clone()
+            .oneshot(create_workspace_request)
+            .await
+            .expect("workspace response");
+        assert_eq!(create_workspace_response.status(), StatusCode::CREATED);
+
+        let payload = create_workspace_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let workspace: api_contract::WorkspaceResponse =
+            serde_json::from_slice(&payload).expect("workspace payload");
+
+        let delete_workspace_request = Request::builder()
+            .method("DELETE")
+            .uri(format!(
+                "/api/workspaces/{}",
+                workspace.workspace.workspace_id
+            ))
+            .header("cookie", &cookie)
+            .body(Body::empty())
+            .expect("request builds");
+        let delete_workspace_response = router
+            .clone()
+            .oneshot(delete_workspace_request)
+            .await
+            .expect("delete response");
+        assert_eq!(delete_workspace_response.status(), StatusCode::OK);
+
+        let delete_payload = delete_workspace_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let deleted: api_contract::DeleteWorkspaceResponse =
+            serde_json::from_slice(&delete_payload).expect("delete payload");
+        assert_eq!(deleted.workspace_id, workspace.workspace.workspace_id);
+        assert!(deleted.deleted);
+
+        let session_request = Request::builder()
+            .method("GET")
+            .uri("/api/auth/session")
+            .header("cookie", &cookie)
+            .body(Body::empty())
+            .expect("request builds");
+        let session_response = router
+            .oneshot(session_request)
+            .await
+            .expect("session response");
+        assert_eq!(session_response.status(), StatusCode::OK);
+
+        let body = session_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let session: api_contract::AuthSessionResponse =
+            serde_json::from_slice(&body).expect("session payload");
+        assert!(session.authenticated);
+        assert!(session.workspaces.is_empty());
+        assert_eq!(session.active_workspace_id, None);
     }
 
     #[tokio::test]
@@ -2495,6 +2862,143 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["run_id", "workflow_id", "status"]
         );
+    }
+
+    #[tokio::test]
+    async fn workspace_catalog_delete_routes_protect_system_tables() {
+        let platform = PlatformStore::for_tests().expect("platform store");
+        let router = app(runtime_core::RuntimeService::default(), platform.clone());
+
+        let login_request = Request::builder()
+            .method("POST")
+            .uri("/api/auth/login")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&json!({
+                    "email": "builder@stitchly.dev",
+                    "password": "stitchly"
+                }))
+                .expect("login request body"),
+            ))
+            .expect("request builds");
+        let login_response = router
+            .clone()
+            .oneshot(login_request)
+            .await
+            .expect("login response");
+        let cookie = login_response
+            .headers()
+            .get("set-cookie")
+            .expect("set-cookie header")
+            .to_str()
+            .expect("header utf8")
+            .split(';')
+            .next()
+            .expect("cookie pair")
+            .to_string();
+
+        let create_workspace_request = Request::builder()
+            .method("POST")
+            .uri("/api/workspaces")
+            .header("content-type", "application/json")
+            .header("cookie", &cookie)
+            .body(Body::from(
+                serde_json::to_vec(&json!({ "name": "Catalog Delete Routes" }))
+                    .expect("workspace body"),
+            ))
+            .expect("request builds");
+        let create_workspace_response = router
+            .clone()
+            .oneshot(create_workspace_request)
+            .await
+            .expect("workspace response");
+        let workspace_payload = create_workspace_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let workspace: api_contract::WorkspaceResponse =
+            serde_json::from_slice(&workspace_payload).expect("workspace payload");
+
+        let mut workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+        workflow.workflow_id = "wf_catalog_delete_route".to_string();
+        workflow.name = "Catalog Delete Route Workflow".to_string();
+
+        let create_workflow_request = Request::builder()
+            .method("POST")
+            .uri(format!(
+                "/api/workspaces/{}/workflows",
+                workspace.workspace.workspace_id
+            ))
+            .header("content-type", "application/json")
+            .header("cookie", &cookie)
+            .body(Body::from(
+                serde_json::to_vec(&json!({ "workflow": workflow })).expect("workflow body"),
+            ))
+            .expect("request builds");
+        let create_workflow_response = router
+            .clone()
+            .oneshot(create_workflow_request)
+            .await
+            .expect("workflow response");
+        let create_workflow_body = create_workflow_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let created: api_contract::WorkflowResponse =
+            serde_json::from_slice(&create_workflow_body).expect("workflow payload");
+
+        let preview_request = Request::builder()
+            .method("GET")
+            .uri(format!(
+                "/api/workspaces/{}/catalog/{}/schemas/runs/tables/workflow_runs/delete-preview",
+                workspace.workspace.workspace_id, created.workflow.workflow_id
+            ))
+            .header("cookie", &cookie)
+            .body(Body::empty())
+            .expect("request builds");
+        let preview_response = router
+            .clone()
+            .oneshot(preview_request)
+            .await
+            .expect("preview response");
+        assert_eq!(preview_response.status(), StatusCode::OK);
+        let preview_body = preview_response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let preview: api_contract::WorkspaceCatalogDeleteTablePreviewResponse =
+            serde_json::from_slice(&preview_body).expect("preview payload");
+        assert!(!preview.is_deletable);
+        assert!(preview
+            .protected_reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("system-managed"));
+
+        let delete_request = Request::builder()
+            .method("DELETE")
+            .uri(format!(
+                "/api/workspaces/{}/catalog/{}/schemas/runs/tables/workflow_runs",
+                workspace.workspace.workspace_id, created.workflow.workflow_id
+            ))
+            .header("cookie", &cookie)
+            .body(Body::empty())
+            .expect("request builds");
+        let delete_response = router
+            .clone()
+            .oneshot(delete_request)
+            .await
+            .expect("delete response");
+        assert_eq!(delete_response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

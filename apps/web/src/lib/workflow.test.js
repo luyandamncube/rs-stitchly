@@ -10,6 +10,59 @@ import {
   syncWorkflowEdges
 } from './workflow';
 
+function buildTableInputToTableOutputWorkflow() {
+  return {
+    ...workflowFixture,
+    nodes: [
+      ...workflowFixture.nodes,
+      {
+        node_id: 'table_input_runs',
+        type_id: 'table_input',
+        definition_version: 1,
+        label: 'Table Input',
+        config: {
+          catalog: 'workflow.duckdb',
+          execution: {
+            wait_after_seconds: 0,
+            wait_before_seconds: 0
+          },
+          open_in_catalog: false,
+          output_alias: 'workflow_runs',
+          refresh_schema: true,
+          row_filter: '',
+          row_limit: null,
+          schema_name: 'runs',
+          selected_columns: [],
+          table_name: 'workflow_runs'
+        },
+        position: { x: 120, y: 320 }
+      },
+      {
+        node_id: 'table_output_copy',
+        type_id: 'table_output',
+        definition_version: 1,
+        label: 'Table Output',
+        config: {
+          execution: {
+            wait_after_seconds: 0,
+            wait_before_seconds: 0
+          },
+          include_run_id: true,
+          include_written_at: true,
+          input_shape: 'single_text_row',
+          open_in_catalog: false,
+          table_name: 'workflow_runs_copy',
+          target_schema: 'tables',
+          value_column: 'content',
+          write_mode: 'append'
+        },
+        position: { x: 560, y: 320 }
+      }
+    ],
+    edges: workflowFixture.edges
+  };
+}
+
 describe('createCanvasElements', () => {
   it('consumes the shared fixture workflow and preserves its graph shape', () => {
     const graph = createCanvasElements(
@@ -134,5 +187,35 @@ describe('createCanvasElements', () => {
     expect(nextWorkflow.edges).toHaveLength(1)
     expect(nextWorkflow.edges[0].source_port_id).toBe('text')
     expect(nextWorkflow.edges[0].target_port_id).toBe('body')
+  })
+
+  it('allows table input to connect into table output and updates the sink shape', () => {
+    const workflow = buildTableInputToTableOutputWorkflow()
+    const connection = {
+      source: 'table_input_runs',
+      sourceHandle: 'table',
+      target: 'table_output_copy',
+      targetHandle: 'text'
+    }
+
+    expect(
+      canConnect(connection, workflow, nodeDefinitionFixture.node_definitions)
+    ).toBe(true)
+
+    const nextWorkflow = connectWorkflowNodes(
+      {
+        ...workflow,
+        edges: []
+      },
+      connection,
+      nodeDefinitionFixture.node_definitions
+    )
+
+    expect(nextWorkflow.edges).toHaveLength(1)
+    expect(nextWorkflow.edges[0].source_port_id).toBe('table')
+    expect(nextWorkflow.edges[0].target_port_id).toBe('text')
+    expect(
+      nextWorkflow.nodes.find((node) => node.node_id === 'table_output_copy')?.config.input_shape
+    ).toBe('source_table')
   })
 });

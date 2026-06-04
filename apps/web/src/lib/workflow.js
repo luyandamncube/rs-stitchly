@@ -152,7 +152,7 @@ export function connectWorkflowNodes(workflow, connection, nodeDefinitions = [])
         )
       : workflow.edges
 
-  return {
+  return applyConnectionSideEffects({
     ...workflow,
     edges: [
       ...nextEdges,
@@ -164,7 +164,7 @@ export function connectWorkflowNodes(workflow, connection, nodeDefinitions = [])
         target_port_id: connection.targetHandle
       }
     ]
-  }
+  }, connection)
 }
 
 export function reconnectWorkflowEdge(workflow, edgeId, connection, nodeDefinitions = []) {
@@ -185,7 +185,7 @@ export function reconnectWorkflowEdge(workflow, edgeId, connection, nodeDefiniti
         )
       : workflow.edges
 
-  return {
+  return applyConnectionSideEffects({
     ...workflow,
     edges: nextEdges.map((edge) =>
       edge.edge_id === edgeId
@@ -198,7 +198,7 @@ export function reconnectWorkflowEdge(workflow, edgeId, connection, nodeDefiniti
           }
         : edge
     )
-  }
+  }, connection)
 }
 
 export function syncWorkflowNodes(workflow, nodes) {
@@ -324,7 +324,7 @@ export function inspectConnection(connection, workflow, nodeDefinitions) {
 
   const sourceDataType = normalizeDataType(sourcePort.data_type)
   const targetDataType = normalizeDataType(targetPort.data_type)
-  const valid = sourceDataType === targetDataType
+  const valid = arePortTypesCompatible(sourceNode, sourcePort, targetNode, targetPort)
 
   return {
     reason: valid ? 'ok' : 'type_mismatch',
@@ -337,6 +337,58 @@ export function inspectConnection(connection, workflow, nodeDefinitions) {
     targetHandleFound: true,
     targetTypeId: targetNode.type_id,
     valid
+  }
+}
+
+function arePortTypesCompatible(sourceNode, sourcePort, targetNode, targetPort) {
+  const sourceDataType = normalizeDataType(sourcePort?.data_type)
+  const targetDataType = normalizeDataType(targetPort?.data_type)
+
+  if (sourceDataType === targetDataType) {
+    return true
+  }
+
+  return (
+    sourceNode?.type_id === 'table_input' &&
+    sourcePort?.port_id === 'table' &&
+    sourceDataType === 'table_ref' &&
+    targetNode?.type_id === 'table_output' &&
+    targetPort?.port_id === 'text'
+  )
+}
+
+function applyConnectionSideEffects(workflow, connection) {
+  const sourceNode = workflow.nodes.find((node) => node.node_id === connection.source)
+  const targetNode = workflow.nodes.find((node) => node.node_id === connection.target)
+
+  if (!sourceNode || !targetNode || targetNode.type_id !== 'table_output' || connection.targetHandle !== 'text') {
+    return workflow
+  }
+
+  let nextInputShape = null
+  if (sourceNode.type_id === 'table_input') {
+    nextInputShape = 'source_table'
+  } else if (sourceNode.type_id === 'text_input') {
+    nextInputShape = 'single_text_row'
+  }
+
+  if (!nextInputShape) {
+    return workflow
+  }
+
+  return {
+    ...workflow,
+    nodes: workflow.nodes.map((node) =>
+      node.node_id === targetNode.node_id
+        ? {
+            ...node,
+            config: {
+              ...(node.config ?? {}),
+              input_shape: nextInputShape
+            }
+          }
+        : node
+    )
   }
 }
 
@@ -371,6 +423,14 @@ export function updateNodeLabel(workflow, nodeId, nextLabel) {
 function resolveCanvasNodeType(typeId) {
   if (typeId === 'text_input') {
     return 'text_input'
+  }
+
+  if (typeId === 'table_input') {
+    return 'table_input'
+  }
+
+  if (typeId === 'table_output') {
+    return 'table_output'
   }
 
   if (typeId === 'send_email') {
@@ -436,6 +496,29 @@ const FALLBACK_NODE_DEFINITIONS = {
     ],
     outputs: [],
     type_id: 'send_email'
+  },
+  table_input: {
+    inputs: [],
+    outputs: [
+      {
+        data_type: 'table_ref',
+        multiple: false,
+        port_id: 'table'
+      }
+    ],
+    type_id: 'table_input'
+  },
+  table_output: {
+    inputs: [
+      {
+        data_type: 'text',
+        multiple: false,
+        port_id: 'text',
+        required: true
+      }
+    ],
+    outputs: [],
+    type_id: 'table_output'
   },
   text_input: {
     inputs: [],

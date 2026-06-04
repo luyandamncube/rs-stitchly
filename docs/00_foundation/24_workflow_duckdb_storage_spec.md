@@ -230,9 +230,9 @@ Phase 4 adds the first concrete workflow-local run mirror tables.
 
 Current implementation note:
 - workflow-local run mirroring is feature-flagged behind `STITCHLY_ENABLE_WORKFLOW_RUN_DUCKDB_SYNC`
-- the default is `disabled`
+- the default is `enabled`
 - canonical run history remains the control-plane store in SQLite
-- this guard exists because DuckDB native assertion failures are process-fatal and can crash the backend during repeated run-state updates
+- set `STITCHLY_ENABLE_WORKFLOW_RUN_DUCKDB_SYNC=0` to disable local DuckDB mirroring if needed during debugging
 
 ### `runs.workflow_runs`
 

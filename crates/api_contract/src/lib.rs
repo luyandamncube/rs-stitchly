@@ -324,6 +324,12 @@ pub struct WorkspaceResponse {
     pub workspace: WorkspaceSummary,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeleteWorkspaceResponse {
+    pub workspace_id: String,
+    pub deleted: bool,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct WorkflowSummary {
     pub workflow_id: String,
@@ -358,6 +364,10 @@ pub struct WorkspaceCatalogTableSummary {
     pub table_name: String,
     pub table_type: String,
     pub column_count: u32,
+    #[serde(default)]
+    pub is_deletable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protected_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -410,9 +420,57 @@ pub struct WorkspaceCatalogTableResponse {
     pub schema_name: String,
     pub table_name: String,
     #[serde(default)]
+    pub is_deletable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protected_reason: Option<String>,
+    #[serde(default)]
     pub columns: Vec<WorkspaceCatalogColumnSummary>,
     #[serde(default)]
     pub sample_rows: Vec<Vec<Option<String>>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceCatalogTableUsageNode {
+    pub node_id: String,
+    pub node_type: String,
+    pub usage_kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_label: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceCatalogTableUsageWorkflow {
+    pub workflow_id: String,
+    pub workflow_name: String,
+    #[serde(default)]
+    pub nodes: Vec<WorkspaceCatalogTableUsageNode>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceCatalogDeleteTablePreviewResponse {
+    pub workflow_id: String,
+    pub workflow_name: String,
+    pub database_name: String,
+    pub schema_name: String,
+    pub table_name: String,
+    #[serde(default)]
+    pub is_deletable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protected_reason: Option<String>,
+    #[serde(default)]
+    pub affected_workflows: Vec<WorkspaceCatalogTableUsageWorkflow>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceCatalogDeleteTableResponse {
+    pub workflow_id: String,
+    pub workflow_name: String,
+    pub database_name: String,
+    pub schema_name: String,
+    pub table_name: String,
+    pub deleted: bool,
+    #[serde(default)]
+    pub invalidated_workflows: Vec<WorkspaceCatalogTableUsageWorkflow>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

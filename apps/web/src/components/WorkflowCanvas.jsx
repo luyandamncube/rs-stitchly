@@ -48,6 +48,8 @@ const EMPTY_CANVAS_DEBUG_STATE = {
 
 const NODE_TYPES = {
   send_email: memo(SendEmailNode),
+  table_input: memo(TableInputNode),
+  table_output: memo(TableOutputNode),
   stitchly: memo(StitchlyNode),
   text_input: memo(TextInputNode)
 }
@@ -754,6 +756,165 @@ function SendEmailNode({ data, dragging, selected }) {
   )
 }
 
+function TableOutputNode({ data, dragging, selected }) {
+  const runtime = data.uiState?.runtime ?? null
+  const nodeLabel = data.node?.label ?? data.label ?? 'Table Output'
+  const config = normalizeTableOutputNodeConfig(data.node?.config)
+  const runtimeState = runtime?.status ?? null
+  const footerValue = runtimeState ? humanizeRuntimeStatus(runtimeState) : 'Idle'
+  const executionWait = getNodeExecutionWaitState(data.node?.config)
+  const destination = `${config.target_schema}.${config.table_name}`
+  const shapeLabel =
+    config.input_shape === 'source_table' ? 'Source table' : 'Single text row'
+
+  return (
+    <div
+      className={buildWorkflowNodeCardClassName(
+        'workflow-node-card--output-result workflow-node-card--table-output',
+        {
+          dragging,
+          hovered: Boolean(data.uiState?.interaction?.hovered),
+          selected
+        }
+      )}
+      data-runtime-state={runtimeState ?? undefined}
+      title={buildNodeRuntimeTitle(runtime, 'Click to select. Drag to move. Double-click to inspect.')}
+    >
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="text"
+        position={Position.Left}
+        type="target"
+      />
+
+      <header className="workflow-node-card__header">
+        <div className="workflow-node-card__heading">
+          <span className="workflow-node-card__icon" aria-hidden="true">
+            []
+          </span>
+          <strong>{nodeLabel}</strong>
+        </div>
+        <div className="workflow-node-card__tools">
+          {executionWait.enabled ? (
+            <NodeExecutionWaitIcon
+              className="workflow-node-card__delay-icon"
+              hasAfterWait={executionWait.hasAfterWait}
+              hasBeforeWait={executionWait.hasBeforeWait}
+            />
+          ) : null}
+          <span className="workflow-node-card__menu" aria-hidden="true">
+            ...
+          </span>
+        </div>
+      </header>
+
+      <section className="workflow-node-card__body">
+        <div className="workflow-node-card__row workflow-node-card__row--summary">
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__label">Target</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {destination}
+            </span>
+          </div>
+
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Shape</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {shapeLabel}
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <footer className="workflow-node-card__footer">
+        <span className="workflow-node-card__footer-meta">Last write</span>
+        <strong>{footerValue}</strong>
+      </footer>
+    </div>
+  )
+}
+
+function TableInputNode({ data, dragging, selected }) {
+  const runtime = data.uiState?.runtime ?? null
+  const nodeLabel = data.node?.label ?? data.label ?? 'Table Input'
+  const config = normalizeTableInputNodeConfig(data.node?.config)
+  const runtimeState = runtime?.status ?? null
+  const executionWait = getNodeExecutionWaitState(data.node?.config)
+  const source = `${config.schema_name}.${config.table_name}`
+  const selectedColumnsLabel =
+    config.selected_columns.length === 0
+      ? 'All columns'
+      : config.selected_columns.length === 1
+        ? config.selected_columns[0]
+        : `${config.selected_columns.length} columns`
+
+  return (
+    <div
+      className={buildWorkflowNodeCardClassName(
+        'workflow-node-card--input-reference workflow-node-card--table-input',
+        {
+          dragging,
+          hovered: Boolean(data.uiState?.interaction?.hovered),
+          selected
+        }
+      )}
+      data-runtime-state={runtimeState ?? undefined}
+      title={buildNodeRuntimeTitle(runtime, 'Click to select. Drag to move. Double-click to inspect.')}
+    >
+      <header className="workflow-node-card__header">
+        <div className="workflow-node-card__heading">
+          <span className="workflow-node-card__icon" aria-hidden="true">
+            []
+          </span>
+          <strong>{nodeLabel}</strong>
+        </div>
+        <div className="workflow-node-card__tools">
+          {executionWait.enabled ? (
+            <NodeExecutionWaitIcon
+              className="workflow-node-card__delay-icon"
+              hasAfterWait={executionWait.hasAfterWait}
+              hasBeforeWait={executionWait.hasBeforeWait}
+            />
+          ) : null}
+          <span className="workflow-node-card__menu" aria-hidden="true">
+            ...
+          </span>
+        </div>
+      </header>
+
+      <section className="workflow-node-card__body">
+        <div className="workflow-node-card__row workflow-node-card__row--summary">
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__label">Source</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {source}
+            </span>
+          </div>
+
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Columns</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {selectedColumnsLabel}
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <footer className="workflow-node-card__footer">
+        <span className="workflow-node-card__footer-meta">Catalog</span>
+        <strong>{config.catalog}</strong>
+      </footer>
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="table"
+        position={Position.Right}
+        type="source"
+      />
+    </div>
+  )
+}
+
 function StitchlyNode({ data, dragging, selected }) {
   const card = data.card
   const hovered = Boolean(data.uiState?.interaction?.hovered)
@@ -905,6 +1066,45 @@ function normalizeExecutionWaitSeconds(value) {
   }
 
   return value
+}
+
+function normalizeTableOutputNodeConfig(config = {}) {
+  return {
+    input_shape:
+      config?.input_shape === 'source_table' ? 'source_table' : 'single_text_row',
+    table_name:
+      typeof config?.table_name === 'string' && config.table_name.trim()
+        ? config.table_name.trim()
+        : 'news_brief',
+    target_schema:
+      typeof config?.target_schema === 'string' && config.target_schema.trim()
+        ? config.target_schema.trim()
+        : 'outputs'
+  }
+}
+
+function normalizeTableInputNodeConfig(config = {}) {
+  const selectedColumns = Array.isArray(config?.selected_columns)
+    ? config.selected_columns
+        .map((value) => (typeof value === 'string' ? value.trim() : ''))
+        .filter((value) => value.length > 0)
+    : []
+
+  return {
+    catalog:
+      typeof config?.catalog === 'string' && config.catalog.trim()
+        ? config.catalog.trim()
+        : 'workflow.duckdb',
+    schema_name:
+      typeof config?.schema_name === 'string' && config.schema_name.trim()
+        ? config.schema_name.trim()
+        : 'runs',
+    selected_columns: selectedColumns,
+    table_name:
+      typeof config?.table_name === 'string' && config.table_name.trim()
+        ? config.table_name.trim()
+        : 'workflow_runs'
+  }
 }
 
 function NodeExecutionWaitIcon({

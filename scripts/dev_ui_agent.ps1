@@ -184,7 +184,7 @@ function Wait-ForReady {
         Write-Host "$Label process exited before it became ready."
         if (Test-Path -LiteralPath $LogFile) {
           Write-Host ""
-          Write-Host "Last lines from $LogFile:"
+          Write-Host "Last lines from ${LogFile}:"
           Get-Content -LiteralPath $LogFile -Tail 40
         }
         throw "$Label failed to start."
@@ -197,7 +197,7 @@ function Wait-ForReady {
   Write-Host "$Label did not become ready in time."
   if (Test-Path -LiteralPath $LogFile) {
     Write-Host ""
-    Write-Host "Last lines from $LogFile:"
+    Write-Host "Last lines from ${LogFile}:"
     Get-Content -LiteralPath $LogFile -Tail 40
   }
   throw "$Label readiness timed out."

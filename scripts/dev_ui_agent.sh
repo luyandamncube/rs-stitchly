@@ -32,6 +32,7 @@ usage() {
   cat <<'EOF'
 Usage:
   scripts/dev_ui_agent.sh up [--no-open]
+  scripts/dev_ui_agent.sh restart [--no-open]
   scripts/dev_ui_agent.sh down
   scripts/dev_ui_agent.sh status
   scripts/dev_ui_agent.sh open
@@ -289,6 +290,11 @@ stop_process() {
   rm -f "$pid_file"
 }
 
+stop_agent() {
+  stop_process "frontend" "$FRONTEND_PID_FILE"
+  stop_process "backend" "$BACKEND_PID_FILE"
+}
+
 show_status() {
   clear_stale_pid_file "$BACKEND_PID_FILE"
   clear_stale_pid_file "$FRONTEND_PID_FILE"
@@ -356,9 +362,13 @@ main() {
       shift || true
       start_agent "$@"
       ;;
+    restart)
+      shift || true
+      stop_agent
+      start_agent "$@"
+      ;;
     down)
-      stop_process "frontend" "$FRONTEND_PID_FILE"
-      stop_process "backend" "$BACKEND_PID_FILE"
+      stop_agent
       ;;
     status)
       show_status

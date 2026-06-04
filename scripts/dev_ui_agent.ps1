@@ -203,18 +203,83 @@ function Wait-ForReady {
   throw "$Label readiness timed out."
 }
 
-function Get-CommandPath {
+function Get-OptionalEnvValue {
   param(
     [Parameter(Mandatory = $true)]
     [string]$Name
   )
 
-  $command = Get-Command $Name -ErrorAction SilentlyContinue
-  if (-not $command) {
-    throw "Could not find required command: $Name"
+  $item = Get-Item -Path "env:$Name" -ErrorAction SilentlyContinue
+  if ($null -eq $item) {
+    return $null
   }
 
-  return $command.Source
+  return $item.Value
+}
+
+function Get-CargoFallbackPaths {
+  $paths = [System.Collections.Generic.List[string]]::new()
+
+  if ($env:CARGO_HOME) {
+    $paths.Add((Join-Path $env:CARGO_HOME 'bin\cargo.exe'))
+  }
+
+  $paths.Add((Join-Path $HOME '.cargo\bin\cargo.exe'))
+  return $paths.ToArray()
+}
+
+function Get-CorepackFallbackPaths {
+  $paths = [System.Collections.Generic.List[string]]::new()
+  $programFilesX86 = Get-OptionalEnvValue -Name 'ProgramFiles(x86)'
+
+  foreach ($baseDir in @($env:ProgramFiles, $programFilesX86)) {
+    if (-not $baseDir) {
+      continue
+    }
+
+    $paths.Add((Join-Path $baseDir 'nodejs\corepack.cmd'))
+    $paths.Add((Join-Path $baseDir 'nodejs\corepack.exe'))
+  }
+
+  return $paths.ToArray()
+}
+
+function Get-CommandPath {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Name,
+    [string[]]$FallbackPaths = @(),
+    [string]$InstallHint = ''
+  )
+
+  $command = Get-Command $Name -ErrorAction SilentlyContinue
+  if ($command) {
+    return $command.Source
+  }
+
+  foreach ($path in $FallbackPaths) {
+    if ($path -and (Test-Path -LiteralPath $path)) {
+      return $path
+    }
+  }
+
+  $messageLines = [System.Collections.Generic.List[string]]::new()
+  $messageLines.Add("Could not find required command '$Name'.")
+
+  if ($FallbackPaths.Count -gt 0) {
+    $messageLines.Add('Checked these fallback locations:')
+    foreach ($path in $FallbackPaths) {
+      if ($path) {
+        $messageLines.Add("  - $path")
+      }
+    }
+  }
+
+  if ($InstallHint) {
+    $messageLines.Add($InstallHint)
+  }
+
+  throw ($messageLines -join [Environment]::NewLine)
 }
 
 function Start-Backend {
@@ -232,7 +297,7 @@ function Start-Backend {
   }
 
   Write-Host "Starting backend on $BackendBindAddr"
-  $cargoPath = Get-CommandPath -Name 'cargo'
+  $cargoPath = Get-CommandPath -Name 'cargo' -FallbackPaths (Get-CargoFallbackPaths) -InstallHint 'Install the native Windows Rust toolchain from https://rustup.rs/ or make sure cargo.exe is available on PATH.'
   & $cargoPath build -p runtime_server --bin stitchly-server *> $BackendLogFile
 
   $backendExe = Join-Path $RootDir 'target\debug\stitchly-server.exe'
@@ -264,7 +329,7 @@ function Start-Frontend {
 
   Write-Host "Starting frontend on $UiBindHost`:$UiPort"
   $env:STITCHLY_API_PROXY = $BackendHttpUrl
-  $corepackPath = Get-CommandPath -Name 'corepack'
+  $corepackPath = Get-CommandPath -Name 'corepack' -FallbackPaths (Get-CorepackFallbackPaths) -InstallHint 'Install native Windows Node.js (which includes corepack) or add corepack.cmd to PATH.'
   $frontendProcess = Start-Process -FilePath $corepackPath -ArgumentList @('pnpm', '--dir', 'apps/web', 'dev', '--host', $UiBindHost, '--port', $UiPort, '--strictPort') -WorkingDirectory $RootDir -RedirectStandardOutput $FrontendLogFile -RedirectStandardError $FrontendLogFile -WindowStyle Hidden -PassThru
   Write-Pid -Path $FrontendPidFile -ProcessId $frontendProcess.Id
 

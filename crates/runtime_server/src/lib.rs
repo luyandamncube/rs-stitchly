@@ -382,12 +382,6 @@ async fn login_with_google_code(
     headers: HeaderMap,
     Json(request): Json<GoogleAuthCodeRequest>,
 ) -> Result<(HeaderMap, Json<AuthSessionResponse>), ApiError> {
-    let google_auth = state
-        .google_auth
-        .clone()
-        .or_else(GoogleAuthClient::from_env_or_local_file)
-        .ok_or_else(|| ApiError::unavailable("Google login is not configured.".to_string()))?;
-
     let requested_with = headers
         .get("x-requested-with")
         .and_then(|value| value.to_str().ok());
@@ -402,6 +396,31 @@ async fn login_with_google_code(
         .and_then(|value| value.to_str().ok())
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| ApiError::bad_request("Google login origin is missing.".to_string()))?;
+
+    if is_local_dev_google_login_code(origin, &request.code) {
+        let session = state
+            .platform
+            .authenticate_google_identity(&platform::GoogleIdentityProfile {
+                subject: "google-subject-builder-dev".to_string(),
+                email: "builder@stitchly.dev".to_string(),
+                email_verified: true,
+                display_name: "Builder".to_string(),
+            })
+            .map_err(ApiError::internal)?;
+
+        let mut response_headers = HeaderMap::new();
+        response_headers.insert(
+            header::SET_COOKIE,
+            session_cookie_header(&session.session_id),
+        );
+        return Ok((response_headers, Json(session.session)));
+    }
+
+    let google_auth = state
+        .google_auth
+        .clone()
+        .or_else(GoogleAuthClient::from_env_or_local_file)
+        .ok_or_else(|| ApiError::unavailable("Google login is not configured.".to_string()))?;
 
     let exchange = google_auth
         .exchange_code(origin, &request.code)
@@ -1604,6 +1623,18 @@ fn workspace_run_not_found(workspace_id: &str, run_id: &str) -> ApiError {
     ))
 }
 
+fn is_local_dev_google_login_code(origin: &str, code: &str) -> bool {
+    if !cfg!(debug_assertions) || code != "dev-google-auth-code" {
+        return false;
+    }
+
+    origin
+        .parse::<axum::http::Uri>()
+        .ok()
+        .and_then(|uri| uri.host().map(str::to_string))
+        .is_some_and(|host| matches!(host.as_str(), "localhost" | "127.0.0.1"))
+}
+
 fn load_session(
     state: &AppState,
     headers: &HeaderMap,
@@ -2163,6 +2194,45 @@ mod tests {
             session.active_workspace_id,
             Some(workspace.workspace.workspace_id)
         );
+    }
+
+    #[tokio::test]
+    async fn local_dev_google_code_creates_builder_session() {
+        let router = app(
+            runtime_core::RuntimeService::default(),
+            PlatformStore::for_tests().expect("platform store"),
+        );
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/auth/google/code")
+            .header("content-type", "application/json")
+            .header("x-requested-with", "XmlHttpRequest")
+            .header("origin", "http://127.0.0.1:5173")
+            .body(Body::from(
+                serde_json::to_vec(&json!({ "code": "dev-google-auth-code" }))
+                    .expect("request body"),
+            ))
+            .expect("request builds");
+
+        let response = router.oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().get("set-cookie").is_some());
+
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let session: api_contract::AuthSessionResponse =
+            serde_json::from_slice(&body).expect("session payload");
+        assert!(session.authenticated);
+        assert_eq!(
+            session.user.as_ref().expect("user").email,
+            "builder@stitchly.dev"
+        );
+        assert_eq!(session.active_workspace_id, Some("ws_default".to_string()));
     }
 
     #[tokio::test]

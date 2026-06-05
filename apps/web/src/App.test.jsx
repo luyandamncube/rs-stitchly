@@ -19,6 +19,7 @@ vi.mock('./components/CanvasWorkspace', () => ({
 }));
 
 const api = vi.hoisted(() => ({
+  canUseDevAuthFallback: vi.fn(),
   cancelWorkspaceRun: vi.fn(),
   connectWorkspaceGmail: vi.fn(),
   createWorkflow: vi.fn(),
@@ -43,6 +44,7 @@ const api = vi.hoisted(() => ({
   logout: vi.fn(),
   previewWorkspaceCatalogTableDelete: vi.fn(),
   runWorkspaceCatalogQuery: vi.fn(),
+  shouldUseDevGoogleAuthFallback: vi.fn(),
   updateWorkflow: vi.fn(),
   updateWorkflowState: vi.fn()
 }));
@@ -90,7 +92,7 @@ const AUTHENTICATED_MULTI_WORKSPACE_SESSION = {
 const WORKSPACE_CATALOG_RESPONSE = {
   catalogs: [
     {
-      workflow_id: 'wf_text_preview',
+      workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
       workflow_name: 'Text Preview',
       database_name: 'workflow.duckdb',
       schemas: [
@@ -171,7 +173,7 @@ const SECONDARY_WORKSPACE_CATALOG_RESPONSE = {
 };
 
 const WORKSPACE_CATALOG_TABLE_RESPONSE = {
-  workflow_id: 'wf_text_preview',
+  workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
   workflow_name: 'Text Preview',
   database_name: 'workflow.duckdb',
   schema_name: 'runs',
@@ -196,11 +198,11 @@ const WORKSPACE_CATALOG_TABLE_RESPONSE = {
       description: null
     }
   ],
-  sample_rows: [['run_1', 'wf_text_preview', 'succeeded']]
+  sample_rows: [['run_1', 'ScJUvQ7dgxHqu7tXtsekiL', 'succeeded']]
 };
 
 const WORKSPACE_CATALOG_NODE_RUNS_TABLE_RESPONSE = {
-  workflow_id: 'wf_text_preview',
+  workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
   workflow_name: 'Text Preview',
   database_name: 'workflow.duckdb',
   schema_name: 'runs',
@@ -235,7 +237,7 @@ const WORKSPACE_CATALOG_NODE_RUNS_TABLE_RESPONSE = {
 };
 
 const WORKSPACE_CATALOG_QUERY_RESPONSE = {
-  workflow_id: 'wf_text_preview',
+  workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
   workflow_name: 'Text Preview',
   database_name: 'workflow.duckdb',
   query: 'SELECT run_id, workflow_id, status\nFROM runs.workflow_runs\nLIMIT 1000',
@@ -253,7 +255,7 @@ const WORKSPACE_CATALOG_QUERY_RESPONSE = {
       data_type: 'VARCHAR'
     }
   ],
-  rows: [['run_1', 'wf_text_preview', 'succeeded']]
+  rows: [['run_1', 'ScJUvQ7dgxHqu7tXtsekiL', 'succeeded']]
 };
 
 describe('App platform shell', () => {
@@ -261,6 +263,7 @@ describe('App platform shell', () => {
     window.localStorage.clear();
     window.history.replaceState({}, '', '/');
     delete window.google;
+    api.canUseDevAuthFallback.mockReset();
     api.cancelWorkspaceRun.mockReset();
     api.connectWorkspaceGmail.mockReset();
     api.createWorkspace.mockReset();
@@ -285,8 +288,11 @@ describe('App platform shell', () => {
     api.logout.mockReset();
     api.previewWorkspaceCatalogTableDelete.mockReset();
     api.runWorkspaceCatalogQuery.mockReset();
+    api.shouldUseDevGoogleAuthFallback.mockReset();
     api.updateWorkflow.mockReset();
     api.updateWorkflowState.mockReset();
+    api.canUseDevAuthFallback.mockReturnValue(false);
+    api.shouldUseDevGoogleAuthFallback.mockReturnValue(false);
     api.getSession.mockResolvedValue(UNAUTHENTICATED_SESSION);
     api.getWorkflowState.mockResolvedValue({ last_opened_workflow_id: null });
     api.getWorkspaceCatalog.mockImplementation(async (workspaceId) => {
@@ -297,7 +303,7 @@ describe('App platform shell', () => {
       return WORKSPACE_CATALOG_RESPONSE;
     });
     api.getWorkspaceCatalogSchema.mockResolvedValue({
-      workflow_id: 'wf_text_preview',
+      workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
       workflow_name: 'Text Preview',
       database_name: 'workflow.duckdb',
       schema_name: 'runs',
@@ -305,7 +311,7 @@ describe('App platform shell', () => {
     });
     api.getWorkspaceCatalogTable.mockResolvedValue(WORKSPACE_CATALOG_TABLE_RESPONSE);
     api.previewWorkspaceCatalogTableDelete.mockResolvedValue({
-      workflow_id: 'wf_text_preview',
+      workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
       workflow_name: 'Text Preview',
       database_name: 'workflow.duckdb',
       schema_name: 'runs',
@@ -323,7 +329,7 @@ describe('App platform shell', () => {
     api.getWorkspaceRunLogs.mockResolvedValue({ logs: [] });
     api.updateWorkflowState.mockResolvedValue({ last_opened_workflow_id: null });
     api.deleteWorkspaceCatalogTable.mockResolvedValue({
-      workflow_id: 'wf_text_preview',
+      workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
       workflow_name: 'Text Preview',
       database_name: 'workflow.duckdb',
       schema_name: 'tables',
@@ -388,6 +394,26 @@ describe('App platform shell', () => {
     });
 
     delete window.google;
+  });
+
+  it('uses the local dev Google code fallback in embedded browsers', async () => {
+    api.shouldUseDevGoogleAuthFallback.mockReturnValue(true);
+    api.loginWithGoogleCode.mockResolvedValue(AUTHENTICATED_SESSION);
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole('heading', { name: /log in/i })
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /continue with google/i }));
+
+    await waitFor(() => {
+      expect(api.loginWithGoogleCode).toHaveBeenCalledWith('dev-google-auth-code');
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('canvas-workspace')).toBeInTheDocument();
+    });
   });
 
   it('navigates to the canvas home route with a collapsed overlay rail', async () => {
@@ -474,7 +500,7 @@ describe('App platform shell', () => {
     api.getWorkflows.mockResolvedValue({
       workflows: [
         {
-          workflow_id: 'wf_text_preview',
+          workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
           workspace_id: 'ws_default',
           name: 'Text Preview',
           description: 'Starter text preview flow.',
@@ -562,7 +588,7 @@ describe('App platform shell', () => {
     expect(screen.getByLabelText('Data sources window')).toBeInTheDocument();
     expect(screen.getByText('Catalog Tree')).toBeInTheDocument();
     expect(
-      await screen.findByText('default-workspace · wf_text_preview · workflow.duckdb')
+      await screen.findByText('default-workspace · ScJUvQ7dgxHqu7tXtsekiL · workflow.duckdb')
     ).toBeInTheDocument();
     expect(
       screen.getByText('warehouse-workspace · wf_warehouse_ops · workflow.duckdb')
@@ -578,7 +604,7 @@ describe('App platform shell', () => {
       expect(api.getWorkspaceCatalog).toHaveBeenCalledWith('ws_secondary');
       expect(api.getWorkspaceCatalogSchema).toHaveBeenCalledWith(
         'ws_default',
-        'wf_text_preview',
+        'ScJUvQ7dgxHqu7tXtsekiL',
         'runs'
       );
     });
@@ -604,7 +630,7 @@ describe('App platform shell', () => {
       .mockResolvedValueOnce({
         catalogs: [
           {
-            workflow_id: 'wf_text_preview',
+            workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
             workflow_name: 'Text Preview',
             database_name: 'workflow.duckdb',
             schemas: [
@@ -627,7 +653,7 @@ describe('App platform shell', () => {
       .mockResolvedValueOnce({
         catalogs: [
           {
-            workflow_id: 'wf_text_preview',
+            workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
             workflow_name: 'Text Preview',
             database_name: 'workflow.duckdb',
             schemas: [
@@ -641,7 +667,7 @@ describe('App platform shell', () => {
         ]
       });
     api.getWorkspaceCatalogSchema.mockResolvedValue({
-      workflow_id: 'wf_text_preview',
+      workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
       workflow_name: 'Text Preview',
       database_name: 'workflow.duckdb',
       schema_name: 'tables',
@@ -655,7 +681,7 @@ describe('App platform shell', () => {
       ]
     });
     api.previewWorkspaceCatalogTableDelete.mockResolvedValue({
-      workflow_id: 'wf_text_preview',
+      workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
       workflow_name: 'Text Preview',
       database_name: 'workflow.duckdb',
       schema_name: 'tables',
@@ -664,7 +690,7 @@ describe('App platform shell', () => {
       protected_reason: null,
       affected_workflows: [
         {
-          workflow_id: 'wf_text_preview',
+          workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
           workflow_name: 'Text Preview',
           nodes: [
             {
@@ -678,7 +704,7 @@ describe('App platform shell', () => {
       ]
     });
     api.deleteWorkspaceCatalogTable.mockResolvedValue({
-      workflow_id: 'wf_text_preview',
+      workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
       workflow_name: 'Text Preview',
       database_name: 'workflow.duckdb',
       schema_name: 'tables',
@@ -686,7 +712,7 @@ describe('App platform shell', () => {
       deleted: true,
       invalidated_workflows: [
         {
-          workflow_id: 'wf_text_preview',
+          workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
           workflow_name: 'Text Preview',
           nodes: []
         }
@@ -708,7 +734,7 @@ describe('App platform shell', () => {
     await waitFor(() => {
       expect(api.previewWorkspaceCatalogTableDelete).toHaveBeenCalledWith(
         'ws_default',
-        'wf_text_preview',
+        'ScJUvQ7dgxHqu7tXtsekiL',
         'tables',
         'daily_digest'
       );
@@ -719,7 +745,7 @@ describe('App platform shell', () => {
     await waitFor(() => {
       expect(api.deleteWorkspaceCatalogTable).toHaveBeenCalledWith(
         'ws_default',
-        'wf_text_preview',
+        'ScJUvQ7dgxHqu7tXtsekiL',
         'tables',
         'daily_digest'
       );
@@ -736,7 +762,7 @@ describe('App platform shell', () => {
     api.runWorkspaceCatalogQuery
       .mockResolvedValueOnce(WORKSPACE_CATALOG_QUERY_RESPONSE)
       .mockResolvedValueOnce({
-        workflow_id: 'wf_text_preview',
+        workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
         workflow_name: 'Text Preview',
         database_name: 'workflow.duckdb',
         query: 'SELECT status\nFROM runs.workflow_runs\nLIMIT 1000',
@@ -761,7 +787,7 @@ describe('App platform shell', () => {
     await waitFor(() => {
       expect(api.getWorkspaceCatalogTable).toHaveBeenCalledWith(
         'ws_default',
-        'wf_text_preview',
+        'ScJUvQ7dgxHqu7tXtsekiL',
         'runs',
         'workflow_runs'
       );
@@ -769,7 +795,7 @@ describe('App platform shell', () => {
     await waitFor(() => {
       expect(api.runWorkspaceCatalogQuery).toHaveBeenCalledWith(
         'ws_default',
-        'wf_text_preview',
+        'ScJUvQ7dgxHqu7tXtsekiL',
         expect.stringContaining('FROM runs.workflow_runs')
       );
     });
@@ -787,7 +813,7 @@ describe('App platform shell', () => {
     await waitFor(() => {
       expect(api.runWorkspaceCatalogQuery).toHaveBeenLastCalledWith(
         'ws_default',
-        'wf_text_preview',
+        'ScJUvQ7dgxHqu7tXtsekiL',
         'SELECT status\nFROM runs.workflow_runs\nLIMIT 1000'
       );
     });
@@ -825,7 +851,7 @@ describe('App platform shell', () => {
     await waitFor(() => {
       expect(api.runWorkspaceCatalogQuery).toHaveBeenCalledWith(
         'ws_default',
-        'wf_text_preview',
+        'ScJUvQ7dgxHqu7tXtsekiL',
         expect.stringContaining('FROM runs.node_runs')
       );
     });
@@ -835,7 +861,7 @@ describe('App platform shell', () => {
     await waitFor(() => {
       expect(api.runWorkspaceCatalogQuery).toHaveBeenLastCalledWith(
         'ws_default',
-        'wf_text_preview',
+        'ScJUvQ7dgxHqu7tXtsekiL',
         expect.stringContaining('FROM runs.workflow_runs')
       );
     });
@@ -850,7 +876,7 @@ describe('App platform shell', () => {
     api.login.mockResolvedValue(AUTHENTICATED_SESSION);
     api.getWorkspaceCatalogTable.mockResolvedValue(WORKSPACE_CATALOG_NODE_RUNS_TABLE_RESPONSE);
     api.runWorkspaceCatalogQuery.mockResolvedValue({
-      workflow_id: 'wf_text_preview',
+      workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
       workflow_name: 'Text Preview',
       database_name: 'workflow.duckdb',
       query: 'SELECT run_id, node_id\nFROM runs.node_runs\nLIMIT 1000',
@@ -894,7 +920,7 @@ describe('App platform shell', () => {
     api.getWorkflows.mockResolvedValue({
       workflows: [
         {
-          workflow_id: 'wf_text_preview',
+          workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
           workspace_id: 'ws_default',
           name: 'Email Draft Flow',
           description: 'Starter text preview flow.',
@@ -906,7 +932,7 @@ describe('App platform shell', () => {
     api.getWorkspaceRun.mockResolvedValue({
       run: {
         run_id: 'run_6734',
-        workflow_id: 'wf_text_preview',
+        workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
         workflow_name_at_run: 'Email Draft Flow',
         workflow_version: 1,
         status: 'failed',
@@ -969,7 +995,7 @@ describe('App platform shell', () => {
       runs: [
         {
           run_id: 'run_6734',
-          workflow_id: 'wf_text_preview',
+          workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
           workflow_version: 1,
           status: 'failed',
           trigger: { kind: 'manual' },
@@ -1042,7 +1068,7 @@ describe('App platform shell', () => {
     api.getWorkflows.mockResolvedValue({
       workflows: [
         {
-          workflow_id: 'wf_text_preview',
+          workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
           workspace_id: 'ws_default',
           name: 'Email Draft Flow',
           description: 'Starter text preview flow.',
@@ -1055,7 +1081,7 @@ describe('App platform shell', () => {
       runs: [
         {
           run_id: 'run_6734',
-          workflow_id: 'wf_text_preview',
+          workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
           workflow_version: 1,
           status: 'succeeded',
           trigger: { kind: 'manual' },
@@ -1070,7 +1096,7 @@ describe('App platform shell', () => {
     api.getWorkspaceRun.mockResolvedValue({
       run: {
         run_id: 'run_6734',
-        workflow_id: 'wf_text_preview',
+        workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
         workflow_name_at_run: 'Email Draft Flow',
         workflow_version: 1,
         status: 'succeeded',
@@ -1118,7 +1144,7 @@ describe('App platform shell', () => {
         return {
           workflows: [
             {
-              workflow_id: 'wf_text_preview',
+              workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
               workspace_id: 'ws_default',
               name: 'Text Preview',
               description: 'Starter text preview flow.',
@@ -1185,7 +1211,7 @@ describe('App platform shell', () => {
       return {
         workflows: [
           {
-            workflow_id: 'wf_text_preview',
+            workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
             workspace_id: 'ws_default',
             name: 'Text Preview',
             description: 'Primary workflow.',

@@ -32,7 +32,7 @@ export function buildStarterWorkflowDefinition(name = 'Starter Workflow') {
   }
 }
 
-function nextWorkflowId() {
+export function nextWorkflowId() {
   if (typeof globalThis.crypto?.getRandomValues === 'function') {
     const bytes = new Uint8Array(WORKFLOW_ID_LENGTH)
     globalThis.crypto.getRandomValues(bytes)

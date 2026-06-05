@@ -247,7 +247,7 @@ describe('WorkflowCanvas', () => {
   it('maps an active run snapshot into real node runtime states', () => {
     const activeRunSnapshot = {
       run_id: 'run_phase1',
-      workflow_id: 'wf_text_preview',
+      workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
       workflow_version: 1,
       status: 'failed',
       trigger: { kind: 'manual' },

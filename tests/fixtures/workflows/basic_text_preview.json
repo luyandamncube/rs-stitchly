@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "workflow_id": "wf_text_preview",
+  "workflow_id": "ScJUvQ7dgxHqu7tXtsekiL",
   "version": 1,
   "name": "Email Draft Flow",
   "description": "A starter workflow with text input feeding the send email node.",

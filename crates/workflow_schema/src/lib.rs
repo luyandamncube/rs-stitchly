@@ -116,7 +116,7 @@ mod tests {
         let workflow: WorkflowDefinition =
             serde_json::from_str(fixture).expect("fixture should parse");
 
-        assert_eq!(workflow.workflow_id, "wf_text_preview");
+        assert_eq!(workflow.workflow_id, "ScJUvQ7dgxHqu7tXtsekiL");
         assert_eq!(workflow.nodes.len(), 2);
         assert_eq!(workflow.edges.len(), 1);
     }

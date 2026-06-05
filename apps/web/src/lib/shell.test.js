@@ -42,7 +42,7 @@ describe('shell helpers', () => {
       runHistory: [
         {
           run_id: 'run_demo',
-          workflow_id: 'wf_text_preview',
+          workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
           status: 'running'
         }
       ],

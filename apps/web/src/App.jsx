@@ -29,11 +29,13 @@ import {
   getWorkspaceRunLogs,
   getWorkflows,
   getWorkspaceRuns,
+  canUseDevAuthFallback,
   login,
   loginWithGoogleCode,
   logout,
   previewWorkspaceCatalogTableDelete,
   runWorkspaceCatalogQuery,
+  shouldUseDevGoogleAuthFallback,
   updateWorkflow,
   updateWorkflowState
 } from './lib/api';
@@ -5024,6 +5026,21 @@ function LoginRoute({ onGoogleLogin, onLogin }) {
                   setError(
                     'Google sign-in is not configured yet. Set VITE_GOOGLE_CLIENT_ID on the web app and the matching Google credentials on the Rust backend.'
                   );
+                  return;
+                }
+
+                if (canUseDevAuthFallback() || shouldUseDevGoogleAuthFallback()) {
+                  setIsGoogleSubmitting(true);
+                  void onGoogleLogin('dev-google-auth-code')
+                    .then((session) => {
+                      navigate(getDefaultAppPath(session), { replace: true });
+                    })
+                    .catch((requestError) => {
+                      setError(requestError.message ?? 'Unable to sign in with Google.');
+                    })
+                    .finally(() => {
+                      setIsGoogleSubmitting(false);
+                    });
                   return;
                 }
 

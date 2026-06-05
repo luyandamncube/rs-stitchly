@@ -1,0 +1,10 @@
+/target
+/dist
+/coverage
+/node_modules
+/.stitchly
+/apps/web/node_modules
+/apps/web/dist
+/apps/web/coverage
+/.env.server
+/apps/web/.env.local

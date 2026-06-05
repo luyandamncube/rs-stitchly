@@ -1,4 +1,42 @@
+import connectionFixture from '../../../../tests/fixtures/api/connections.json';
+import nodeDefinitionFixture from '../../../../tests/fixtures/api/node_definitions.json';
+import starterWorkflowFixture from '../../../../tests/fixtures/workflows/basic_text_preview.json';
+import { nextWorkflowId } from './workflowTemplates';
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
+const DEV_SESSION_STORAGE_KEY = 'stitchly.dev-api.session.v1';
+const DEV_WORKFLOW_STORAGE_KEY = 'stitchly.dev-api.workflows.v1';
+const DEV_WORKSPACE = {
+  workspace_id: 'ws_default',
+  slug: 'default-workspace',
+  name: 'Default Workspace',
+  role: 'owner'
+};
+const DEV_AUTHENTICATED_SESSION = {
+  authenticated: true,
+  active_workspace_id: DEV_WORKSPACE.workspace_id,
+  user: {
+    user_id: 'usr_builder',
+    email: 'builder@stitchly.dev',
+    display_name: 'Builder'
+  },
+  workspaces: [DEV_WORKSPACE]
+};
+const DEV_RUN = {
+  run_id: 'run_dev_preview',
+  workflow_id: starterWorkflowFixture.workflow_id,
+  status: 'succeeded',
+  trigger: { kind: 'manual' },
+  started_at: new Date().toISOString(),
+  finished_at: new Date().toISOString()
+};
+const DEV_UNAUTHENTICATED_SESSION = {
+  authenticated: false,
+  active_workspace_id: null,
+  user: null,
+  workspaces: []
+};
+let devFallbackHasHandledRequest = false;
 
 function buildUrl(pathname) {
   if (!API_BASE_URL) {
@@ -10,17 +48,33 @@ function buildUrl(pathname) {
 
 async function request(pathname, options = {}) {
   const { headers: optionHeaders, ...restOptions } = options;
-  const response = await fetch(buildUrl(pathname), {
-    credentials: 'include',
-    ...restOptions,
-    headers: {
-      'content-type': 'application/json',
-      ...(optionHeaders ?? {})
-    },
-  });
+  let response;
+
+  try {
+    response = await fetch(buildUrl(pathname), {
+      credentials: 'include',
+      ...restOptions,
+      headers: {
+        'content-type': 'application/json',
+        ...(optionHeaders ?? {})
+      },
+    });
+  } catch (error) {
+    const fallback = getDevFallbackResponse(pathname, restOptions);
+    if (fallback) {
+      return fallback;
+    }
+
+    throw error;
+  }
 
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
+    const fallback = getDevFallbackResponse(pathname, restOptions);
+    if (fallback) {
+      return fallback;
+    }
+
     const error = new Error(payload.message ?? `Request failed with status ${response.status}`);
     error.payload = payload;
     error.status = response.status;
@@ -28,6 +82,18 @@ async function request(pathname, options = {}) {
   }
 
   return payload;
+}
+
+export function canUseDevAuthFallback() {
+  return isDevApiFallbackEnabled() && devFallbackHasHandledRequest;
+}
+
+export function shouldUseDevGoogleAuthFallback() {
+  if (!isDevApiFallbackEnabled() || typeof window === 'undefined') {
+    return false;
+  }
+
+  return import.meta.env.VITE_GOOGLE_POPUP_IN_DEV !== 'true';
 }
 
 export function getSession() {
@@ -268,5 +334,217 @@ export function subscribeToRun(runId, { onEvent, onError }) {
   return () => {
     closed = true;
     source.close();
+  };
+}
+
+function isDevApiFallbackEnabled() {
+  if (!import.meta.env.DEV || API_BASE_URL) {
+    return false;
+  }
+
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  return ['localhost', '127.0.0.1'].includes(window.location.hostname);
+}
+
+function getDevFallbackResponse(pathname, options = {}) {
+  if (!isDevApiFallbackEnabled()) {
+    return null;
+  }
+
+  devFallbackHasHandledRequest = true;
+
+  const method = String(options.method ?? 'GET').toUpperCase();
+  const workflowMatch = pathname.match(/^\/api\/workspaces\/([^/]+)\/workflows\/([^/]+)$/);
+  const workflowsMatch = pathname.match(/^\/api\/workspaces\/([^/]+)\/workflows$/);
+  const workflowStateMatch = pathname.match(/^\/api\/workspaces\/([^/]+)\/workflow-state$/);
+  const connectionsMatch = pathname.match(/^\/api\/workspaces\/([^/]+)\/connections$/);
+  const catalogMatch = pathname.match(/^\/api\/workspaces\/([^/]+)\/catalog$/);
+  const catalogQueryMatch = pathname.match(
+    /^\/api\/workspaces\/([^/]+)\/catalog\/([^/]+)\/query$/
+  );
+  const runsMatch = pathname.match(/^\/api\/workspaces\/([^/]+)\/runs$/);
+  const runMatch = pathname.match(/^\/api\/workspaces\/([^/]+)\/runs\/([^/]+)$/);
+  const runEventsMatch = pathname.match(/^\/api\/workspaces\/([^/]+)\/runs\/([^/]+)\/events$/);
+  const runLogsMatch = pathname.match(/^\/api\/workspaces\/([^/]+)\/runs\/([^/]+)\/logs$/);
+
+  if (pathname === '/api/auth/session' && method === 'GET') {
+    return readDevSession();
+  }
+
+  if ((pathname === '/api/auth/login' || pathname === '/api/auth/google/code') && method === 'POST') {
+    writeDevSession(DEV_AUTHENTICATED_SESSION);
+    return DEV_AUTHENTICATED_SESSION;
+  }
+
+  if (pathname === '/api/auth/logout' && method === 'POST') {
+    writeDevSession(DEV_UNAUTHENTICATED_SESSION);
+    return DEV_UNAUTHENTICATED_SESSION;
+  }
+
+  if (pathname === '/api/workspaces' && method === 'GET') {
+    return { workspaces: [DEV_WORKSPACE] };
+  }
+
+  if (workflowsMatch && method === 'GET') {
+    return { workflows: readDevWorkflows() };
+  }
+
+  if (workflowsMatch && method === 'POST') {
+    const body = parseDevJsonBody(options.body);
+    const workflow = body.workflow ?? {
+      ...structuredClone(starterWorkflowFixture),
+      workflow_id: nextWorkflowId(),
+      name: 'New Workflow'
+    };
+    const workflows = [...readDevWorkflows(), workflow];
+    writeDevWorkflows(workflows);
+    return { workflow };
+  }
+
+  if (workflowMatch && method === 'GET') {
+    const workflow = readDevWorkflows().find(
+      (candidate) => candidate.workflow_id === workflowMatch[2]
+    );
+    return workflow ?? readDevWorkflows()[0];
+  }
+
+  if (workflowMatch && method === 'PUT') {
+    const body = parseDevJsonBody(options.body);
+    const nextWorkflow = body.workflow;
+    const workflows = readDevWorkflows().map((workflow) =>
+      workflow.workflow_id === workflowMatch[2] && nextWorkflow ? nextWorkflow : workflow
+    );
+    writeDevWorkflows(workflows);
+    return { workflow: nextWorkflow ?? workflows.find((workflow) => workflow.workflow_id === workflowMatch[2]) };
+  }
+
+  if (workflowMatch && method === 'DELETE') {
+    writeDevWorkflows(
+      readDevWorkflows().filter((workflow) => workflow.workflow_id !== workflowMatch[2])
+    );
+    return { workflow_id: workflowMatch[2], deleted: true };
+  }
+
+  if (workflowStateMatch && method === 'GET') {
+    return { last_opened_workflow_id: readDevWorkflows()[0]?.workflow_id ?? null };
+  }
+
+  if (workflowStateMatch && method === 'PUT') {
+    return parseDevJsonBody(options.body);
+  }
+
+  if (connectionsMatch && method === 'GET') {
+    return { connections: [] };
+  }
+
+  if (catalogMatch && method === 'GET') {
+    return { catalogs: [buildDevCatalog()] };
+  }
+
+  if (catalogQueryMatch && method === 'POST') {
+    return {
+      columns: [
+        { name: 'run_id', data_type: 'text' },
+        { name: 'status', data_type: 'text' }
+      ],
+      rows: [[DEV_RUN.run_id, DEV_RUN.status]]
+    };
+  }
+
+  if (runsMatch && method === 'GET') {
+    return { runs: [DEV_RUN] };
+  }
+
+  if (runsMatch && method === 'POST') {
+    return { run: DEV_RUN };
+  }
+
+  if (runMatch && method === 'GET') {
+    return { run: { ...DEV_RUN, run_id: runMatch[2] } };
+  }
+
+  if (runEventsMatch && method === 'GET') {
+    return { events: [] };
+  }
+
+  if (runLogsMatch && method === 'GET') {
+    return { logs: [] };
+  }
+
+  if (pathname === '/api/node-definitions' && method === 'GET') {
+    return nodeDefinitionFixture;
+  }
+
+  if (pathname === '/api/connections' && method === 'GET') {
+    return connectionFixture;
+  }
+
+  return null;
+}
+
+function readDevSession() {
+  try {
+    const rawSession = window.localStorage.getItem(DEV_SESSION_STORAGE_KEY);
+    return rawSession ? JSON.parse(rawSession) : DEV_UNAUTHENTICATED_SESSION;
+  } catch {
+    return DEV_UNAUTHENTICATED_SESSION;
+  }
+}
+
+function writeDevSession(session) {
+  window.localStorage.setItem(DEV_SESSION_STORAGE_KEY, JSON.stringify(session));
+}
+
+function readDevWorkflows() {
+  try {
+    const rawWorkflows = window.localStorage.getItem(DEV_WORKFLOW_STORAGE_KEY);
+    return rawWorkflows ? JSON.parse(rawWorkflows) : [structuredClone(starterWorkflowFixture)];
+  } catch {
+    return [structuredClone(starterWorkflowFixture)];
+  }
+}
+
+function writeDevWorkflows(workflows) {
+  window.localStorage.setItem(DEV_WORKFLOW_STORAGE_KEY, JSON.stringify(workflows));
+}
+
+function parseDevJsonBody(body) {
+  if (!body || typeof body !== 'string') {
+    return {};
+  }
+
+  try {
+    return JSON.parse(body);
+  } catch {
+    return {};
+  }
+}
+
+function buildDevCatalog() {
+  return {
+    workspace_id: DEV_WORKSPACE.workspace_id,
+    workspace_slug: DEV_WORKSPACE.slug,
+    workspace_name: DEV_WORKSPACE.name,
+    workflow_id: starterWorkflowFixture.workflow_id,
+    workflow_name: starterWorkflowFixture.name,
+    database_name: 'workflow.duckdb',
+    schemas: [
+      {
+        schema_name: 'runs',
+        tables: [
+          {
+            table_name: 'workflow_runs',
+            columns: [
+              { column_name: 'run_id', data_type: 'VARCHAR' },
+              { column_name: 'workflow_id', data_type: 'VARCHAR' },
+              { column_name: 'status', data_type: 'VARCHAR' }
+            ]
+          }
+        ]
+      }
+    ]
   };
 }

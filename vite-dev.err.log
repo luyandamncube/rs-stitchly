@@ -1,0 +1,738 @@
+[2m11:42:03[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/session[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:42:03[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/session[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:42:03[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:42:03[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:42:03[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:42:03[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:42:03[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:42:03[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:42:03[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:42:03[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:42:03[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:42:03[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:42:03[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:42:03[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:42:03[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:42:03[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:06[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/session[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:06[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/session[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:06[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:06[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:06[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:06[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:06[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:06[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:06[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:06[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:06[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:06[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:06[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:06[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:06[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:06[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:06[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:06[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:06[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:06[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:06[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:06[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:07[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:07[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:07[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:07[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:07[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:43:07[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:45:45[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/session[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:45:45[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/session[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:45:45[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:45:45[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:45:45[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:45:45[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:45:45[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:45:45[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:45:45[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:45:45[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:45:45[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:45:45[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:45:45[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:45:45[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:45:45[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:48:14[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/session[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:48:14[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/session[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:48:14[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:48:14[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:48:14[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:48:14[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:48:14[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:48:14[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:48:14[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:48:14[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:48:14[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:48:14[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:48:14[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:48:14[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:50:00[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/logout[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:50:23[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/google/code[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:50:23[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:50:23[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:50:23[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:50:23[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:50:23[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:50:23[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:50:23[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:50:23[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:50:23[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:50:23[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:50:23[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:50:23[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:51:55[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:51:55[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:51:55[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:51:55[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:51:55[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:51:55[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/session[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:51:55[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:51:55[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:51:55[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:53:03[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:53:03[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:53:07[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/catalog[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:53:07[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/catalog[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:53:07[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/catalog/wf_text_preview/schemas/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:53:13[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:53:13[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:37:30[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/session[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:37:30[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/session[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:37:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:37:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:37:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:37:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:37:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:37:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:37:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:37:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:37:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:37:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:37:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:37:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:55:53[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/session[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:55:53[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/session[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:55:53[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:55:53[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:55:53[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:55:53[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:55:53[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:55:53[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:55:53[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:55:53[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:55:53[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:55:53[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:55:53[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:55:53[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:55:53[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:55:53[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:57:09[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/catalog[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:57:09[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/catalog[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:57:09[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/catalog/wf_text_preview/schemas/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:57:14[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:57:14[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:57:16[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:57:16[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:57:18[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:57:18[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:57:20[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:57:20[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:57:23[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:57:23[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:57:23[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:57:23[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:57:27[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m13:57:27[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:08:19[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/session[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:08:19[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/session[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:08:19[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:08:19[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:08:19[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:08:19[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:08:19[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:08:19[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:08:19[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:08:19[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:08:19[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:08:19[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:08:19[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:08:19[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:08:19[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:08:19[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:11:13[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/session[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:11:13[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/session[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:11:13[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:11:13[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:11:13[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:11:13[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:11:13[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:11:13[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:11:13[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:11:13[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:11:13[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:11:13[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:11:13[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:11:13[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:18:56[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/session[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:18:56[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/session[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:18:56[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:18:56[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:18:56[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:18:56[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:18:56[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:18:56[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:18:56[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:18:56[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:18:56[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:18:56[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:18:56[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:18:56[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:18:56[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:18:56[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:18[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:22[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/session[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:22[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/session[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:22[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:22[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:22[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:22[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:22[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:22[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:22[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:22[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:22[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:22[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:22[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:22[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:25[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/session[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/session[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:19:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:20:02[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:20:16[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:20:17[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:20:17[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:20:17[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:20:17[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:20:17[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/node-definitions[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:20:17[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflow-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:20:17[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:20:17[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/connections[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:20:17[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/runs[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:20:17[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:20:17[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows/wf_text_preview[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:20:18[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:20:18[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces/ws_default/workflows[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m14:20:25[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/workspaces[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m15:24:11[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/session[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m15:24:11[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/auth/session[39m
+Error: connect ECONNREFUSED 127.0.0.1:3000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)

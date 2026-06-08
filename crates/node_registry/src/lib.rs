@@ -706,6 +706,175 @@ pub fn builtin_node_definitions() -> Vec<NodeDefinition> {
             },
         },
         NodeDefinition {
+            type_id: "table_schema".to_string(),
+            version: 1,
+            display_name: "Table Schema".to_string(),
+            category: "input".to_string(),
+            description:
+                "Declares a workflow-local table schema and emits a downstream table reference."
+                    .to_string(),
+            inputs: vec![],
+            outputs: vec![PortDefinition {
+                port_id: "table".to_string(),
+                display_name: "Table".to_string(),
+                direction: PortDirection::Output,
+                data_type: DataType::TableRef,
+                required: false,
+                multiple: false,
+                description: Some("Declared workflow table reference.".to_string()),
+            }],
+            config_schema: json!({
+                "type": "object",
+                "required": ["schema_name", "table_name", "columns"],
+                "properties": {
+                    "catalog": {
+                        "type": "string",
+                        "default": "workflow.duckdb"
+                    },
+                    "schema_name": {
+                        "type": "string",
+                        "default": "tables"
+                    },
+                    "table_name": {
+                        "type": "string",
+                        "default": "orders_fact"
+                    },
+                    "output_alias": {
+                        "type": "string",
+                        "default": "orders_fact"
+                    },
+                    "columns": {
+                        "type": "array",
+                        "default": [
+                            {
+                                "name": "order_id",
+                                "type": "bigint",
+                                "nullable": false,
+                                "primary_key": true
+                            }
+                        ],
+                        "items": {
+                            "type": "object",
+                            "required": ["name", "type"],
+                            "properties": {
+                                "name": {
+                                    "type": "string"
+                                },
+                                "type": {
+                                    "type": "string"
+                                },
+                                "nullable": {
+                                    "type": "boolean",
+                                    "default": true
+                                },
+                                "primary_key": {
+                                    "type": "boolean",
+                                    "default": false
+                                },
+                                "default": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "primary_key": {
+                        "type": "array",
+                        "default": [],
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "checks": {
+                        "type": "array",
+                        "default": [],
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "create_mode": {
+                        "type": "string",
+                        "default": "create_if_missing"
+                    },
+                    "if_target_exists": {
+                        "type": "string",
+                        "default": "keep_existing"
+                    },
+                    "open_in_catalog": {
+                        "type": "boolean",
+                        "default": false
+                    }
+                }
+            }),
+            runtime: RuntimeBinding {
+                executor_kind: ExecutorKind::RustNative,
+                adapter_id: None,
+                isolation_mode: IsolationMode::InProcess,
+            },
+            capabilities: NodeCapabilities {
+                supports_preview: true,
+                may_emit_structured_logs: true,
+                ..NodeCapabilities::default()
+            },
+            ui: NodeUi {
+                icon: "table_input".to_string(),
+                color_token: "var(--node-input)".to_string(),
+                default_width: 336,
+                default_height: 176,
+                help_text: Some(
+                    "Define a workflow-local DuckDB table shape before rows are written."
+                        .to_string(),
+                ),
+                node_card: Some(NodeCardUi {
+                    variant: "input".to_string(),
+                    icon_key: "table_input".to_string(),
+                    top_chip: hidden_top_chip(),
+                    header: standard_header(),
+                    rows: vec![
+                        node_card_row(
+                            "schema_name",
+                            "kv",
+                            "Schema",
+                            "config",
+                            "schema_name",
+                            "text",
+                            Some("table_input"),
+                            false,
+                        ),
+                        node_card_row(
+                            "table_name",
+                            "kv",
+                            "Table",
+                            "config",
+                            "table_name",
+                            "text",
+                            Some("label"),
+                            false,
+                        ),
+                        node_card_row(
+                            "create_mode",
+                            "kv",
+                            "Mode",
+                            "config",
+                            "create_mode",
+                            "text",
+                            Some("logic"),
+                            false,
+                        ),
+                    ],
+                    footer: Some(node_card_footer(
+                        "metric",
+                        "Alias",
+                        "config",
+                        "output_alias",
+                        "text",
+                        Some("status"),
+                    )),
+                    handles: node_card_handles("none", "single_right"),
+                    size: node_card_size(336),
+                }),
+            },
+        },
+        NodeDefinition {
             type_id: "table_output".to_string(),
             version: 1,
             display_name: "Table Output".to_string(),
@@ -744,7 +913,7 @@ pub fn builtin_node_definitions() -> Vec<NodeDefinition> {
                     },
                     "input_shape": {
                         "type": "string",
-                        "enum": ["single_text_row", "source_table"],
+                        "enum": ["single_text_row", "source_table", "table_schema"],
                         "default": "single_text_row"
                     },
                     "value_column": {

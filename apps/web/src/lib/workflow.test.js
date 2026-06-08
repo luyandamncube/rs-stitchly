@@ -63,6 +63,67 @@ function buildTableInputToTableOutputWorkflow() {
   };
 }
 
+function buildTableSchemaToTableOutputWorkflow() {
+  return {
+    ...workflowFixture,
+    nodes: [
+      ...workflowFixture.nodes,
+      {
+        node_id: 'table_schema_orders',
+        type_id: 'table_schema',
+        definition_version: 1,
+        label: 'Table Schema',
+        config: {
+          catalog: 'workflow.duckdb',
+          checks: ['total_amount >= 0'],
+          columns: [
+            {
+              name: 'order_id',
+              nullable: false,
+              primary_key: true,
+              type: 'bigint'
+            }
+          ],
+          create_mode: 'create_if_missing',
+          execution: {
+            wait_after_seconds: 0,
+            wait_before_seconds: 0
+          },
+          if_target_exists: 'keep_existing',
+          open_in_catalog: false,
+          output_alias: 'orders_definition',
+          primary_key: ['order_id'],
+          schema_name: 'output',
+          table_name: 'orders'
+        },
+        position: { x: 120, y: 320 }
+      },
+      {
+        node_id: 'table_output_copy',
+        type_id: 'table_output',
+        definition_version: 1,
+        label: 'Table Output',
+        config: {
+          execution: {
+            wait_after_seconds: 0,
+            wait_before_seconds: 0
+          },
+          include_run_id: true,
+          include_written_at: true,
+          input_shape: 'single_text_row',
+          open_in_catalog: false,
+          table_name: 'workflow_runs_copy',
+          target_schema: 'tables',
+          value_column: 'content',
+          write_mode: 'append'
+        },
+        position: { x: 560, y: 320 }
+      }
+    ],
+    edges: workflowFixture.edges
+  };
+}
+
 describe('createCanvasElements', () => {
   it('consumes the shared fixture workflow and preserves its graph shape', () => {
     const graph = createCanvasElements(
@@ -80,6 +141,20 @@ describe('createCanvasElements', () => {
     expect(graph.edges[0].targetHandle).toBe('body');
     expect(graph.nodes[1].data.uiState.interaction.hovered).toBe(true);
   });
+
+  it('maps table schema nodes onto their dedicated canvas node type', () => {
+    const workflow = buildTableSchemaToTableOutputWorkflow()
+    const graph = createCanvasElements(
+      workflow,
+      nodeDefinitionFixture.node_definitions,
+      'table_schema_orders',
+      null
+    )
+
+    expect(
+      graph.nodes.find((node) => node.id === 'table_schema_orders')?.type
+    ).toBe('table_schema')
+  })
 
   it('can remove and resync edges from the workflow graph', () => {
     const nextWorkflow = syncWorkflowEdges(workflowFixture, [])
@@ -217,5 +292,35 @@ describe('createCanvasElements', () => {
     expect(
       nextWorkflow.nodes.find((node) => node.node_id === 'table_output_copy')?.config.input_shape
     ).toBe('source_table')
+  })
+
+  it('allows table schema to connect into table output and updates the sink shape', () => {
+    const workflow = buildTableSchemaToTableOutputWorkflow()
+    const connection = {
+      source: 'table_schema_orders',
+      sourceHandle: 'table',
+      target: 'table_output_copy',
+      targetHandle: 'text'
+    }
+
+    expect(
+      canConnect(connection, workflow, nodeDefinitionFixture.node_definitions)
+    ).toBe(true)
+
+    const nextWorkflow = connectWorkflowNodes(
+      {
+        ...workflow,
+        edges: []
+      },
+      connection,
+      nodeDefinitionFixture.node_definitions
+    )
+
+    expect(nextWorkflow.edges).toHaveLength(1)
+    expect(nextWorkflow.edges[0].source_port_id).toBe('table')
+    expect(nextWorkflow.edges[0].target_port_id).toBe('text')
+    expect(
+      nextWorkflow.nodes.find((node) => node.node_id === 'table_output_copy')?.config.input_shape
+    ).toBe('table_schema')
   })
 });

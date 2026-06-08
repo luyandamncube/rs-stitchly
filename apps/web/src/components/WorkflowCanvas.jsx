@@ -50,6 +50,7 @@ const NODE_TYPES = {
   send_email: memo(SendEmailNode),
   table_input: memo(TableInputNode),
   table_output: memo(TableOutputNode),
+  table_schema: memo(TableSchemaNode),
   stitchly: memo(StitchlyNode),
   text_input: memo(TextInputNode)
 }
@@ -60,7 +61,6 @@ function WorkflowCanvas({
   nodeDefinitions = [],
   onDebugStateChange,
   onNodeTypeDrop,
-  onNodeOpen,
   onSelectionChange,
   onViewportActionsReady,
   onViewportChange,
@@ -241,13 +241,6 @@ function WorkflowCanvas({
       inspectCanvas(event, node.id, null)
     },
     [inspectCanvas, onSelectionChange]
-  )
-
-  const handleNodeDoubleClick = useCallback(
-    (_event, node) => {
-      onNodeOpen?.(node.id)
-    },
-    [onNodeOpen]
   )
 
   const handleNodeMouseEnter = useCallback(
@@ -589,7 +582,6 @@ function WorkflowCanvas({
           onViewportChange?.(viewport)
         }}
         onNodeClick={handleNodeClick}
-        onNodeDoubleClick={handleNodeDoubleClick}
         onNodeMouseEnter={handleNodeMouseEnter}
         onNodeMouseLeave={handleNodeMouseLeave}
         onNodesChange={handleNodesChange}
@@ -763,9 +755,16 @@ function TableOutputNode({ data, dragging, selected }) {
   const runtimeState = runtime?.status ?? null
   const footerValue = runtimeState ? humanizeRuntimeStatus(runtimeState) : 'Idle'
   const executionWait = getNodeExecutionWaitState(data.node?.config)
-  const destination = `${config.target_schema}.${config.table_name}`
+  const destination =
+    config.input_shape === 'table_schema'
+      ? `${config.target_schema}.*`
+      : `${config.target_schema}.${config.table_name}`
   const shapeLabel =
-    config.input_shape === 'source_table' ? 'Source table' : 'Single text row'
+    config.input_shape === 'table_schema'
+      ? 'Schema bootstrap'
+      : config.input_shape === 'source_table'
+        ? 'Source table'
+        : 'Single text row'
 
   return (
     <div
@@ -903,6 +902,91 @@ function TableInputNode({ data, dragging, selected }) {
       <footer className="workflow-node-card__footer">
         <span className="workflow-node-card__footer-meta">Catalog</span>
         <strong>{config.catalog}</strong>
+      </footer>
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="table"
+        position={Position.Right}
+        type="source"
+      />
+    </div>
+  )
+}
+
+function TableSchemaNode({ data, dragging, selected }) {
+  const runtime = data.uiState?.runtime ?? null
+  const nodeLabel = data.node?.label ?? data.label ?? 'Table Schema'
+  const config = normalizeTableSchemaNodeConfig(data.node?.config)
+  const runtimeState = runtime?.status ?? null
+  const executionWait = getNodeExecutionWaitState(data.node?.config)
+
+  return (
+    <div
+      className={buildWorkflowNodeCardClassName(
+        'workflow-node-card--input-reference workflow-node-card--table-schema',
+        {
+          dragging,
+          hovered: Boolean(data.uiState?.interaction?.hovered),
+          selected
+        }
+      )}
+      data-runtime-state={runtimeState ?? undefined}
+      title={buildNodeRuntimeTitle(runtime, 'Click to select. Drag to move. Double-click to inspect.')}
+    >
+      <header className="workflow-node-card__header">
+        <div className="workflow-node-card__heading">
+          <span className="workflow-node-card__icon" aria-hidden="true">
+            []
+          </span>
+          <strong>{nodeLabel}</strong>
+        </div>
+        <div className="workflow-node-card__tools">
+          {executionWait.enabled ? (
+            <NodeExecutionWaitIcon
+              className="workflow-node-card__delay-icon"
+              hasAfterWait={executionWait.hasAfterWait}
+              hasBeforeWait={executionWait.hasBeforeWait}
+            />
+          ) : null}
+          <span className="workflow-node-card__menu" aria-hidden="true">
+            ...
+          </span>
+        </div>
+      </header>
+
+      <section className="workflow-node-card__body">
+        <div className="workflow-node-card__row workflow-node-card__row--summary">
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">
+              {config.table_count === 1 ? 'Table' : 'Tables'}
+            </span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.table_label}
+            </span>
+          </div>
+
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Columns</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.total_columns} col{config.total_columns === 1 ? '' : 's'}
+            </span>
+          </div>
+
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Mode</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.mode_summary}
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <footer className="workflow-node-card__footer">
+        <span className="workflow-node-card__footer-meta">
+          {config.table_count === 1 ? 'Alias' : 'Preview'}
+        </span>
+        <strong>{config.table_count === 1 ? config.output_alias : config.preview_label}</strong>
       </footer>
 
       <Handle
@@ -1071,7 +1155,9 @@ function normalizeExecutionWaitSeconds(value) {
 function normalizeTableOutputNodeConfig(config = {}) {
   return {
     input_shape:
-      config?.input_shape === 'source_table' ? 'source_table' : 'single_text_row',
+      config?.input_shape === 'source_table' || config?.input_shape === 'table_schema'
+        ? config.input_shape
+        : 'single_text_row',
     table_name:
       typeof config?.table_name === 'string' && config.table_name.trim()
         ? config.table_name.trim()
@@ -1104,6 +1190,56 @@ function normalizeTableInputNodeConfig(config = {}) {
       typeof config?.table_name === 'string' && config.table_name.trim()
         ? config.table_name.trim()
         : 'workflow_runs'
+  }
+}
+
+function normalizeTableSchemaNodeConfig(config = {}) {
+  const rawTables =
+    Array.isArray(config?.tables) && config.tables.length > 0 ? config.tables : [config]
+  const tables = rawTables.map((tableConfig, index) => {
+    const tableName =
+      typeof tableConfig?.table_name === 'string' && tableConfig.table_name.trim()
+        ? tableConfig.table_name.trim()
+        : index === 0
+          ? 'orders_fact'
+          : `table_${index + 1}`
+    const createMode =
+      typeof tableConfig?.create_mode === 'string' && tableConfig.create_mode.trim()
+        ? tableConfig.create_mode.trim()
+        : typeof config?.create_mode === 'string' && config.create_mode.trim()
+          ? config.create_mode.trim()
+          : 'create_if_missing'
+    const outputAlias =
+      typeof tableConfig?.output_alias === 'string' && tableConfig.output_alias.trim()
+        ? tableConfig.output_alias.trim()
+        : tableName
+    const columns = Array.isArray(tableConfig?.columns)
+      ? tableConfig.columns.filter((column) => column && typeof column === 'object')
+      : []
+
+    return {
+      column_count: columns.length,
+      create_mode: createMode,
+      output_alias: outputAlias,
+      table_name: tableName
+    }
+  })
+  const primaryTable = tables[0]
+  const uniqueModes = [...new Set(tables.map((table) => table.create_mode))]
+  const totalColumns = tables.reduce((count, table) => count + table.column_count, 0)
+  const previewLabel =
+    tables.length <= 1
+      ? primaryTable.table_name
+      : `${primaryTable.table_name} +${tables.length - 1} more`
+
+  return {
+    create_mode: primaryTable.create_mode,
+    mode_summary: uniqueModes.length === 1 ? uniqueModes[0] : `${uniqueModes.length} modes`,
+    output_alias: primaryTable.output_alias,
+    preview_label: previewLabel,
+    table_count: tables.length,
+    table_label: tables.length === 1 ? primaryTable.table_name : `${tables.length} tables`,
+    total_columns: totalColumns
   }
 }
 

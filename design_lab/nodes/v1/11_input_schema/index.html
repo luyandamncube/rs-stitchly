@@ -13,9 +13,14 @@
 
       .lab-stage--schema-studio {
         position: relative;
-        width: min(100%, 1580px);
+        width: min(100%, 1760px);
         min-height: 880px;
         margin: 0 auto;
+        padding: 28px;
+        display: grid;
+        grid-template-columns: 792px minmax(0, 1fr);
+        gap: 24px;
+        align-items: stretch;
         border-radius: 28px;
         overflow: hidden;
         background:
@@ -38,8 +43,8 @@
 
       .flow-caption {
         position: absolute;
-        left: 28px;
-        top: 28px;
+        left: 0;
+        top: 0;
         z-index: 2;
         display: grid;
         gap: 6px;
@@ -92,15 +97,20 @@
         z-index: 2;
       }
 
+      .flow-scene {
+        position: relative;
+        min-height: 824px;
+      }
+
       .flow-node--schema {
-        left: 128px;
-        top: 322px;
+        left: 100px;
+        top: 294px;
         width: 294px;
       }
 
       .flow-node--table-output {
-        left: 498px;
-        top: 340px;
+        left: 470px;
+        top: 312px;
         width: 282px;
       }
 
@@ -213,13 +223,10 @@
       }
 
       .schema-studio {
-        position: absolute;
-        right: 28px;
-        top: 28px;
-        bottom: 28px;
+        position: relative;
         z-index: 2;
-        width: min(920px, calc(100% - 860px));
-        min-width: 860px;
+        min-width: 0;
+        min-height: 824px;
         display: grid;
         grid-template-rows: auto auto minmax(0, 1fr);
         gap: 14px;
@@ -352,6 +359,7 @@
         border: 1px solid rgba(255, 255, 255, 0.08);
         border-radius: 8px;
         background: rgba(255, 255, 255, 0.04);
+        flex-wrap: wrap;
         color: rgba(255, 255, 255, 0.72);
         font-family: "Azeret Mono", "Space Grotesk", "Segoe UI", sans-serif;
         font-size: 0.7rem;
@@ -360,6 +368,7 @@
       .json-surface__actions {
         display: inline-flex;
         align-items: center;
+        flex-wrap: wrap;
         gap: 8px;
         color: rgba(255, 255, 255, 0.42);
       }
@@ -444,6 +453,7 @@
 
       .json-tree__group {
         font-weight: 500;
+        background: rgba(255, 255, 255, 0.06);
       }
 
       .json-tree__branch {
@@ -505,6 +515,16 @@
         color: #ffc17c;
       }
 
+      .json-tree__type--object {
+        background: rgba(75, 210, 195, 0.16);
+        color: #8cefe2;
+      }
+
+      .json-tree__type--time {
+        background: rgba(255, 142, 170, 0.16);
+        color: #ffb0c8;
+      }
+
       .json-tree__value {
         color: rgba(255, 255, 255, 0.68);
         font-size: 0.76rem;
@@ -552,6 +572,44 @@
         gap: 8px;
       }
 
+      .schema-config__stats {
+        display: grid;
+        gap: 8px;
+      }
+
+      .schema-config__stat {
+        min-height: 38px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 0 12px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      .schema-config__stat span {
+        color: rgba(255, 255, 255, 0.62);
+        font-size: 0.76rem;
+      }
+
+      .schema-config__stat strong {
+        color: rgba(255, 255, 255, 0.92);
+        font-size: 0.8rem;
+        font-weight: 500;
+      }
+
+      .schema-config__note {
+        padding: 10px 12px;
+        border: 1px solid rgba(245, 110, 15, 0.16);
+        border-radius: 8px;
+        background: rgba(245, 110, 15, 0.08);
+        color: rgba(255, 228, 207, 0.88);
+        font-size: 0.74rem;
+        line-height: 1.5;
+      }
+
       .schema-config__field-head label {
         color: rgba(255, 255, 255, 0.9);
         font-size: 0.8rem;
@@ -575,6 +633,31 @@
         font: inherit;
       }
 
+      .schema-config__input {
+        outline: none;
+      }
+
+      .schema-config__select-wrap {
+        position: relative;
+      }
+
+      .schema-config__select {
+        display: flex;
+        align-items: center;
+        padding-right: 34px;
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      .schema-config__caret {
+        position: absolute;
+        right: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: rgba(255, 255, 255, 0.48);
+        font-size: 0.78rem;
+        pointer-events: none;
+      }
+
       .schema-config__code {
         min-height: 88px;
         padding: 10px 12px;
@@ -582,6 +665,7 @@
         font-family: "Azeret Mono", "Space Grotesk", "Segoe UI", sans-serif;
         font-size: 0.72rem;
         line-height: 1.65;
+        white-space: pre-wrap;
       }
 
       .schema-config__checkbox {
@@ -599,6 +683,7 @@
       }
 
       .schema-config__checkbox-mark {
+        position: relative;
         width: 18px;
         height: 18px;
         border: 1px solid rgba(255, 255, 255, 0.16);
@@ -606,10 +691,28 @@
         background: rgba(255, 255, 255, 0.02);
       }
 
+      .schema-config__checkbox--on .schema-config__checkbox-mark {
+        border-color: rgba(245, 110, 15, 0.36);
+        background: rgba(245, 110, 15, 0.16);
+      }
+
+      .schema-config__checkbox--on .schema-config__checkbox-mark::after {
+        content: "";
+        position: absolute;
+        left: 5px;
+        top: 2px;
+        width: 4px;
+        height: 9px;
+        border-right: 1.75px solid #ffd8c0;
+        border-bottom: 1.75px solid #ffd8c0;
+        transform: rotate(40deg);
+      }
+
       .schema-config__footer {
         display: grid;
         gap: 10px;
-        padding-top: 2px;
+        padding-top: 12px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
       }
 
       .schema-config__footer-eyebrow {
@@ -641,85 +744,240 @@
         border-radius: 8px;
         background: rgba(245, 110, 15, 0.2);
         color: #ffd8c0;
+        cursor: default;
+        font: inherit;
         font-size: 0.8rem;
         font-weight: 600;
+      }
+
+      @media (max-width: 1600px) {
+        .lab-stage--schema-studio {
+          grid-template-columns: 1fr;
+          min-height: auto;
+        }
+
+        .flow-scene {
+          width: min(100%, 792px);
+          justify-self: center;
+        }
+
+        .schema-studio {
+          min-height: 0;
+        }
+
+        .schema-studio__grid {
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        }
+
+        .schema-config {
+          grid-column: 1 / -1;
+        }
+      }
+
+      @media (max-width: 1180px) {
+        .lab-page--schema-studio {
+          padding: 18px;
+        }
+
+        .lab-stage--schema-studio {
+          padding: 18px;
+          gap: 22px;
+        }
+
+        .flow-scene {
+          min-height: auto;
+          width: min(100%, 860px);
+          display: grid;
+          gap: 22px;
+          align-content: start;
+          justify-items: center;
+        }
+
+        .flow-caption,
+        .flow-node,
+        .flow-connection {
+          position: relative;
+          inset: auto;
+          left: auto;
+          right: auto;
+          top: auto;
+        }
+
+        .flow-caption {
+          width: 100%;
+          max-width: 520px;
+        }
+
+        .flow-node--schema {
+          order: 1;
+        }
+
+        .flow-connection {
+          order: 2;
+          width: min(100%, 860px);
+          height: 120px;
+        }
+
+        .flow-node--table-output {
+          order: 3;
+        }
+      }
+
+      @media (max-width: 980px) {
+        .schema-studio__header,
+        .schema-studio__title-group,
+        .schema-studio__header-meta {
+          flex-wrap: wrap;
+        }
+
+        .schema-studio__grid {
+          grid-template-columns: 1fr;
+        }
+
+        .schema-config {
+          grid-column: auto;
+        }
+      }
+
+      @media (max-width: 720px) {
+        .lab-page--schema-studio {
+          padding: 16px;
+        }
+
+        .lab-stage--schema-studio {
+          padding: 16px;
+          border-radius: 22px;
+        }
+
+        .schema-studio,
+        .json-surface,
+        .schema-config {
+          padding: 12px;
+        }
+
+        .json-surface__toolbar,
+        .schema-config__field-head,
+        .schema-config__footer-row {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .json-surface__actions {
+          justify-content: flex-start;
+        }
+
+        .json-code {
+          font-size: 0.72rem;
+        }
+
+        .json-code__line {
+          grid-template-columns: 24px minmax(0, 1fr);
+          gap: 10px;
+          padding: 0 12px;
+        }
       }
     </style>
   </head>
   <body>
     <main class="lab-page lab-page--schema-studio">
       <section class="lab-stage lab-stage--schema-studio">
-        <div class="flow-caption">
-          <span class="flow-caption__eyebrow">Nodes V1</span>
-          <h1>11 Table Schema</h1>
-          <p>
-            Revised study for a DuckDB-native table-definition node that can
-            pair with <code>table_output</code> to bootstrap an empty local
-            table before any rows exist.
-          </p>
+        <div class="flow-scene">
+          <div class="flow-caption">
+            <span class="flow-caption__eyebrow">Nodes V1</span>
+            <h1>11 Table Schema</h1>
+            <p>
+              Revised study for a DuckDB-native table-definition node that can
+              pair with <code>table_output</code> to bootstrap an empty local
+              table before any rows exist.
+            </p>
+          </div>
+
+          <svg
+            class="flow-connection"
+            viewBox="0 0 792 824"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+          >
+            <path d="M 394 360 C 426 360, 438 360, 470 360" />
+            <circle cx="394" cy="360" r="5.5" />
+            <circle cx="470" cy="360" r="5.5" />
+          </svg>
+
+          <article
+            class="node-card flow-node flow-node--schema flow-node--selected"
+            aria-label="Selected table schema node"
+            data-node-kind="input-schema"
+          >
+            <header class="node-card__header">
+              <div class="node-card__heading">
+                <span class="node-card__icon" aria-hidden="true">[]</span>
+                <strong>Table Schema</strong>
+              </div>
+              <span class="node-card__menu" aria-hidden="true">...</span>
+            </header>
+
+            <div class="node-card__body">
+              <div class="node-card__row--summary">
+                <div class="node-card__summary-head">
+                  <span class="node-card__summary-label">Target</span>
+                  <strong class="node-card__summary-target">tables.orders_fact</strong>
+                </div>
+                <div class="node-card__summary-head">
+                  <span class="node-card__summary-label">Shape</span>
+                  <strong class="node-card__summary-target">5 cols · pk order_id</strong>
+                </div>
+              </div>
+            </div>
+
+            <footer class="node-card__footer">
+              <span class="node-card__footer-meta">Last draft</span>
+              <strong>DuckDB ready</strong>
+            </footer>
+
+            <span
+              class="node-card__handle node-card__handle--right"
+              aria-hidden="true"
+            ></span>
+          </article>
+
+          <article
+            class="node-card node-card--table-output flow-node flow-node--table-output"
+            aria-label="Downstream table output node"
+            data-node-kind="table-output"
+          >
+            <span class="node-card__top-chip">Output</span>
+            <span
+              class="node-card__handle node-card__handle--left"
+              aria-hidden="true"
+            ></span>
+
+            <header class="node-card__header">
+              <div class="node-card__heading">
+                <span class="node-card__icon" aria-hidden="true">[]</span>
+                <strong>Table Output</strong>
+              </div>
+              <span class="node-card__menu" aria-hidden="true">...</span>
+            </header>
+
+            <div class="node-card__body">
+              <div class="node-card__row--summary">
+                <div class="node-card__summary-head">
+                  <span class="node-card__summary-label">Target</span>
+                  <strong class="node-card__summary-target">tables.orders_fact</strong>
+                </div>
+                <div class="node-card__summary-head">
+                  <span class="node-card__summary-label">Shape</span>
+                  <strong class="node-card__summary-target">Schema bootstrap</strong>
+                </div>
+              </div>
+            </div>
+
+            <footer class="node-card__footer">
+              <span class="node-card__footer-meta">Last write</span>
+              <strong>Idle</strong>
+            </footer>
+          </article>
         </div>
-
-        <svg class="flow-connection" viewBox="0 0 1580 880" aria-hidden="true">
-          <path d="M 420 388 C 455 388, 468 388, 498 388" />
-          <circle cx="420" cy="388" r="5.5" />
-          <circle cx="498" cy="388" r="5.5" />
-        </svg>
-
-        <article class="node-card flow-node flow-node--schema flow-node--selected" aria-label="Selected table schema node">
-          <header class="node-card__header">
-            <div class="node-card__heading">
-              <span class="node-card__icon" aria-hidden="true">[]</span>
-              <strong>Table Schema</strong>
-            </div>
-            <span class="node-card__menu" aria-hidden="true">...</span>
-          </header>
-
-          <div class="node-card__body">
-            <div class="node-card__row--summary">
-              <div class="node-card__summary-head">
-                <span class="node-card__summary-label">Target</span>
-                <strong class="node-card__summary-target">tables.orders_fact</strong>
-              </div>
-              <div class="node-card__summary-head">
-                <span class="node-card__summary-label">Shape</span>
-                <strong class="node-card__summary-target">5 cols · pk order_id</strong>
-              </div>
-            </div>
-          </div>
-
-          <footer class="node-card__footer">
-            <span class="node-card__footer-meta">Last draft</span>
-            <strong>DuckDB ready</strong>
-          </footer>
-        </article>
-
-        <article class="node-card flow-node flow-node--table-output" aria-label="Downstream table output node">
-          <header class="node-card__header">
-            <div class="node-card__heading">
-              <span class="node-card__icon" aria-hidden="true">[]</span>
-              <strong>Table Output</strong>
-            </div>
-            <span class="node-card__menu" aria-hidden="true">...</span>
-          </header>
-
-          <div class="node-card__body">
-            <div class="node-card__row--summary">
-              <div class="node-card__summary-head">
-                <span class="node-card__summary-label">Target</span>
-                <strong class="node-card__summary-target">tables.orders_fact</strong>
-              </div>
-              <div class="node-card__summary-head">
-                <span class="node-card__summary-label">Shape</span>
-                <strong class="node-card__summary-target">Schema bootstrap</strong>
-              </div>
-            </div>
-          </div>
-
-          <footer class="node-card__footer">
-            <span class="node-card__footer-meta">Last write</span>
-            <strong>Idle</strong>
-          </footer>
-        </article>
 
         <aside class="schema-studio" aria-label="Table schema management panel">
           <header class="schema-studio__header">
@@ -739,9 +997,10 @@
 
           <div class="schema-studio__sync-note">
             Panel 1 and Panel 2 are linked in this concept: text edits reshape
-            the structured tree, and structured edits rewrite the JSON text.
-            The shared contract is intentionally DuckDB-native: columns,
-            defaults, primary key, and optional checks.
+            the structured tree, structured edits rewrite the JSON text, and
+            config choices reshape the bootstrap DDL preview. The shared
+            contract is intentionally DuckDB-native: columns, defaults, primary
+            key, and optional checks.
           </div>
 
           <div class="schema-studio__grid">
@@ -774,6 +1033,23 @@
 
               <div class="json-surface__body">
                 <div class="json-tree">
+                  <div class="json-tree__group">
+                    <span class="json-tree__name">
+                      <span class="json-tree__caret">▾</span>
+                      <span>kind</span>
+                    </span>
+                    <span class="json-tree__pill">string</span>
+                    <span class="json-tree__delete">x</span>
+                  </div>
+                  <div class="json-tree__leaf">
+                    <span class="json-tree__name">
+                      <span class="json-tree__type json-tree__type--object">O</span>
+                      <span>duckdb_table</span>
+                    </span>
+                    <span class="json-tree__value">schema contract kind</span>
+                    <span class="json-tree__delete">x</span>
+                  </div>
+
                   <div class="json-tree__group">
                     <span class="json-tree__name">
                       <span class="json-tree__caret">▾</span>
@@ -830,14 +1106,14 @@
                       <span class="json-tree__caret">▾</span>
                       <span>columns</span>
                     </span>
-                    <span class="json-tree__pill">{5}</span>
+                    <span class="json-tree__pill">[5]</span>
                     <span class="json-tree__delete">x</span>
                   </div>
 
                   <div class="json-tree__branch">
                     <div class="json-tree__leaf">
                       <span class="json-tree__name">
-                        <span class="json-tree__type json-tree__type--number">12</span>
+                        <span class="json-tree__type json-tree__type--number">#</span>
                         <span>order_id</span>
                       </span>
                       <span class="json-tree__value">bigint / required / primary key</span>
@@ -855,7 +1131,7 @@
 
                     <div class="json-tree__leaf">
                       <span class="json-tree__name">
-                        <span class="json-tree__type json-tree__type--number">12</span>
+                        <span class="json-tree__type json-tree__type--number">#</span>
                         <span>total_amount</span>
                       </span>
                       <span class="json-tree__value">decimal(18,2) / default 0.00</span>
@@ -873,7 +1149,7 @@
 
                     <div class="json-tree__leaf">
                       <span class="json-tree__name">
-                        <span class="json-tree__type json-tree__type--string">S</span>
+                        <span class="json-tree__type json-tree__type--time">T</span>
                         <span>posted_at</span>
                       </span>
                       <span class="json-tree__value">timestamp / nullable</span>
@@ -950,41 +1226,88 @@
                 </div>
 
                 <div class="schema-config__section">
+                  <span class="schema-config__section-title">Schema status</span>
+
+                  <div class="schema-config__stats">
+                    <div class="schema-config__stat">
+                      <span>Draft columns</span>
+                      <strong>5 columns</strong>
+                    </div>
+
+                    <div class="schema-config__stat">
+                      <span>Primary key</span>
+                      <strong>order_id</strong>
+                    </div>
+
+                    <div class="schema-config__stat">
+                      <span>Guardrails</span>
+                      <strong>1 check · 2 defaults</strong>
+                    </div>
+                  </div>
+
+                  <div class="schema-config__note">
+                    The same draft should drive the node summary, the JSON
+                    contract, and the generated bootstrap SQL so downstream
+                    table creation stays reviewable before rows ever land.
+                  </div>
+                </div>
+
+                <div class="schema-config__section">
                   <span class="schema-config__section-title">Behavior</span>
 
                   <div class="schema-config__field">
                     <div class="schema-config__field-head">
                       <label>Object type</label>
                     </div>
-                    <div class="schema-config__select">DuckDB table</div>
+                    <div class="schema-config__select-wrap">
+                      <div class="schema-config__select">DuckDB table</div>
+                      <span class="schema-config__caret" aria-hidden="true">▾</span>
+                    </div>
                   </div>
 
                   <div class="schema-config__field">
                     <div class="schema-config__field-head">
                       <label>Create mode</label>
                     </div>
-                    <div class="schema-config__select">Create if missing</div>
+                    <div class="schema-config__select-wrap">
+                      <div class="schema-config__select">Create if missing</div>
+                      <span class="schema-config__caret" aria-hidden="true">▾</span>
+                    </div>
                   </div>
 
                   <div class="schema-config__field">
                     <div class="schema-config__field-head">
                       <label>If target exists</label>
                     </div>
-                    <div class="schema-config__select">Keep existing table</div>
+                    <div class="schema-config__select-wrap">
+                      <div class="schema-config__select">Keep existing table</div>
+                      <span class="schema-config__caret" aria-hidden="true">▾</span>
+                    </div>
                   </div>
 
                   <div class="schema-config__field">
                     <div class="schema-config__field-head">
                       <label>Constraint scope</label>
                     </div>
-                    <div class="schema-config__select">Primary key + checks</div>
+                    <div class="schema-config__select-wrap">
+                      <div class="schema-config__select">Primary key + checks</div>
+                      <span class="schema-config__caret" aria-hidden="true">▾</span>
+                    </div>
                   </div>
 
                   <div class="schema-config__field">
                     <div class="schema-config__field-head">
                       <label>Bootstrap SQL preview</label>
                     </div>
-                    <div class="schema-config__code">CREATE TABLE IF NOT EXISTS tables.orders_fact (...)\nPRIMARY KEY (order_id)\nCHECK (total_amount &gt;= 0)</div>
+                    <div class="schema-config__code">CREATE TABLE IF NOT EXISTS tables.orders_fact (
+  order_id BIGINT NOT NULL,
+  customer_id VARCHAR NOT NULL,
+  total_amount DECIMAL(18,2) NOT NULL DEFAULT 0.00,
+  currency_code VARCHAR NOT NULL DEFAULT 'USD',
+  posted_at TIMESTAMP,
+  PRIMARY KEY (order_id),
+  CHECK (total_amount &gt;= 0)
+);</div>
                   </div>
                 </div>
 
@@ -996,7 +1319,7 @@
                     <span>Wait before execution</span>
                   </div>
 
-                  <div class="schema-config__checkbox">
+                  <div class="schema-config__checkbox schema-config__checkbox--on">
                     <span class="schema-config__checkbox-mark" aria-hidden="true"></span>
                     <span>Wait after execution</span>
                   </div>

@@ -55,6 +55,50 @@ struct MirroredTableReferencePayload {
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
+struct MirroredTableSchemaColumnPayload {
+    name: String,
+    #[serde(rename = "type")]
+    column_type: String,
+    #[serde(default)]
+    nullable: Option<bool>,
+    #[serde(default)]
+    primary_key: Option<bool>,
+    #[serde(default)]
+    default: Option<String>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+struct MirroredTableSchemaDefinitionPayload {
+    columns: Vec<MirroredTableSchemaColumnPayload>,
+    #[serde(default)]
+    primary_key: Vec<String>,
+    #[serde(default)]
+    checks: Vec<String>,
+    #[serde(default, rename = "create_mode")]
+    _create_mode: Option<String>,
+    #[serde(default, rename = "if_target_exists")]
+    _if_target_exists: Option<String>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+struct MirroredTableSchemaTargetPayload {
+    #[serde(rename = "schema_name")]
+    _schema_name: String,
+    table_name: String,
+    #[serde(default, rename = "output_alias")]
+    _output_alias: Option<String>,
+    columns: Vec<MirroredTableSchemaColumnPayload>,
+    #[serde(default)]
+    primary_key: Vec<String>,
+    #[serde(default)]
+    checks: Vec<String>,
+    #[serde(default, rename = "create_mode")]
+    _create_mode: Option<String>,
+    #[serde(default, rename = "if_target_exists")]
+    _if_target_exists: Option<String>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
 struct MirroredTableOutputPayload {
     kind: String,
     target_schema: String,
@@ -68,6 +112,10 @@ struct MirroredTableOutputPayload {
     _input_shape: Option<String>,
     #[serde(default)]
     source_table: Option<MirroredTableReferencePayload>,
+    #[serde(default)]
+    schema_definition: Option<MirroredTableSchemaDefinitionPayload>,
+    #[serde(default)]
+    schema_definitions: Option<Vec<MirroredTableSchemaTargetPayload>>,
     #[serde(default)]
     include_run_id: bool,
     #[serde(default)]
@@ -3175,7 +3223,16 @@ fn extract_mirrored_table_output_payload(
         return Ok(None);
     }
 
-    if payload.target_schema.trim().is_empty() || payload.table_name.trim().is_empty() {
+    let has_schema_bundle = payload.schema_definition.is_some()
+        || payload
+            .schema_definitions
+            .as_ref()
+            .map(|definitions| !definitions.is_empty())
+            .unwrap_or(false);
+
+    if payload.target_schema.trim().is_empty()
+        || (!has_schema_bundle && payload.table_name.trim().is_empty())
+    {
         return Err(anyhow!(
             "mirrored table output payload is missing target_schema or table_name"
         ));
@@ -3187,13 +3244,14 @@ fn extract_mirrored_table_output_payload(
                 "mirrored table output payload is missing source schema_name or table_name"
             ));
         }
-    } else if payload
-        .value_column
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .is_none()
-        || payload.value_text.is_none()
+    } else if !has_schema_bundle
+        && (payload
+            .value_column
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_none()
+            || payload.value_text.is_none())
     {
         return Err(anyhow!(
             "mirrored text table output payload is missing value_column or value_text"
@@ -3309,6 +3367,123 @@ fn insert_mirrored_table_output_row(
     Ok(())
 }
 
+fn build_mirrored_schema_table_columns_from_definition(
+    columns: &[MirroredTableSchemaColumnPayload],
+    primary_key: &[String],
+    checks: &[String],
+    include_run_id: bool,
+    include_written_at: bool,
+) -> anyhow::Result<String> {
+    if columns.is_empty() {
+        return Err(anyhow!(
+            "schema_definition must include at least one declared column"
+        ));
+    }
+
+    let mut column_definitions = Vec::new();
+    let mut column_names = BTreeSet::new();
+
+    for column in columns {
+        let column_name = column.name.trim();
+        if column_name.is_empty() {
+            return Err(anyhow!(
+                "schema_definition contains a column with an empty name"
+            ));
+        }
+
+        let normalized_name = column_name.to_ascii_lowercase();
+        if !column_names.insert(normalized_name) {
+            return Err(anyhow!(
+                "schema_definition contains duplicate column `{column_name}`"
+            ));
+        }
+
+        let column_type = column.column_type.trim();
+        if column_type.is_empty() {
+            return Err(anyhow!(
+                "schema_definition column `{column_name}` is missing a type"
+            ));
+        }
+
+        let mut column_sql = format!("{} {}", quote_duckdb_identifier(column_name), column_type);
+        if matches!(column.nullable, Some(false)) {
+            column_sql.push_str(" not null");
+        }
+        if let Some(default_expression) = column
+            .default
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            column_sql.push_str(" default ");
+            column_sql.push_str(default_expression);
+        }
+
+        column_definitions.push(column_sql);
+    }
+
+    if include_run_id && column_names.insert("run_id".to_string()) {
+        column_definitions.push(format!("{} varchar", quote_duckdb_identifier("run_id")));
+    }
+    if include_written_at && column_names.insert("written_at".to_string()) {
+        column_definitions.push(format!("{} varchar", quote_duckdb_identifier("written_at")));
+    }
+
+    let primary_key_columns = if primary_key.is_empty() {
+        columns
+            .iter()
+            .filter_map(|column| {
+                if column.primary_key.unwrap_or(false) {
+                    let column_name = column.name.trim();
+                    if column_name.is_empty() {
+                        None
+                    } else {
+                        Some(column_name.to_string())
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+    } else {
+        primary_key
+            .iter()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+
+    if !primary_key_columns.is_empty() {
+        for column_name in &primary_key_columns {
+            if !column_names.contains(&column_name.to_ascii_lowercase()) {
+                return Err(anyhow!(
+                    "schema_definition primary key references unknown column `{column_name}`"
+                ));
+            }
+        }
+
+        column_definitions.push(format!(
+            "primary key ({})",
+            primary_key_columns
+                .iter()
+                .map(|value| quote_duckdb_identifier(value))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+
+    for check_expression in checks
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        column_definitions.push(format!("check ({check_expression})"));
+    }
+
+    Ok(column_definitions.join(", "))
+}
+
 fn build_mirrored_source_table_select(
     payload: &MirroredTableOutputPayload,
     run_id: &str,
@@ -3377,6 +3552,73 @@ fn build_mirrored_source_table_select(
     Ok(sql)
 }
 
+fn materialize_mirrored_schema_table_output(
+    connection: &DuckDbConnection,
+    payload: &MirroredTableOutputPayload,
+) -> anyhow::Result<()> {
+    let schema_identifier = quote_duckdb_identifier(payload.target_schema.trim());
+    connection.execute_batch(&format!("create schema if not exists {schema_identifier};"))?;
+
+    if let Some(schema_definitions) = payload
+        .schema_definitions
+        .as_ref()
+        .filter(|definitions| !definitions.is_empty())
+    {
+        for definition in schema_definitions {
+            let table_identifier = quote_duckdb_identifier(definition.table_name.trim());
+            let qualified_table = format!("{schema_identifier}.{table_identifier}");
+            let create_columns = build_mirrored_schema_table_columns_from_definition(
+                &definition.columns,
+                &definition.primary_key,
+                &definition.checks,
+                payload.include_run_id,
+                payload.include_written_at,
+            )?;
+
+            if matches!(payload.write_mode, MirroredTableOutputWriteMode::Replace) {
+                connection.execute_batch(&format!(
+                    "drop table if exists {qualified_table};
+                     create table {qualified_table} ({create_columns});"
+                ))?;
+            } else {
+                connection.execute_batch(&format!(
+                    "create table if not exists {qualified_table} ({create_columns});"
+                ))?;
+            }
+        }
+
+        return Ok(());
+    }
+
+    let schema_definition = payload
+        .schema_definition
+        .as_ref()
+        .ok_or_else(|| anyhow!("missing schema_definition payload"))?;
+    let table_identifier = quote_duckdb_identifier(payload.table_name.trim());
+    let qualified_table = format!("{schema_identifier}.{table_identifier}");
+    let create_columns = build_mirrored_schema_table_columns_from_definition(
+        &schema_definition.columns,
+        &schema_definition.primary_key,
+        &schema_definition.checks,
+        payload.include_run_id,
+        payload.include_written_at,
+    )?;
+
+    if matches!(payload.write_mode, MirroredTableOutputWriteMode::Replace) {
+        connection.execute_batch(&format!(
+            "drop table if exists {qualified_table};
+             create table {qualified_table} ({create_columns});"
+        ))?;
+        return Ok(());
+    }
+
+    connection.execute_batch(&format!(
+        "create table if not exists {qualified_table} ({create_columns});"
+    ))?;
+
+    Ok(())
+}
+
 fn materialize_mirrored_source_table_output(
     connection: &DuckDbConnection,
     payload: &MirroredTableOutputPayload,
@@ -3430,7 +3672,15 @@ fn materialize_mirrored_table_output(
         return Ok(());
     }
 
-    if payload.source_table.is_some() {
+    if payload.schema_definition.is_some()
+        || payload
+            .schema_definitions
+            .as_ref()
+            .map(|definitions| !definitions.is_empty())
+            .unwrap_or(false)
+    {
+        materialize_mirrored_schema_table_output(connection, &payload)?;
+    } else if payload.source_table.is_some() {
         materialize_mirrored_source_table_output(
             connection,
             &payload,
@@ -3452,6 +3702,18 @@ fn materialize_mirrored_table_output(
         MirroredTableOutputWriteMode::Append => "append",
         MirroredTableOutputWriteMode::Replace => "replace",
     };
+    let target_table_label = payload
+        .schema_definitions
+        .as_ref()
+        .filter(|definitions| !definitions.is_empty())
+        .map(|definitions| {
+            if definitions.len() == 1 {
+                definitions[0].table_name.as_str()
+            } else {
+                "[multiple tables]"
+            }
+        })
+        .unwrap_or(payload.table_name.as_str());
 
     connection.execute(
         "insert or replace into runs.table_output_materializations (
@@ -3467,7 +3729,7 @@ fn materialize_mirrored_table_output(
             snapshot.run_id.as_str(),
             node_run.node_id.as_str(),
             payload.target_schema.as_str(),
-            payload.table_name.as_str(),
+            target_table_label,
             write_mode,
             materialized_at
         ],
@@ -4044,6 +4306,258 @@ mod tests {
                     "selected_columns": ["workflow_id", "status"],
                     "row_filter": "run_id like 'source_%' and status = 'succeeded'",
                     "row_limit": 10
+                }
+            }),
+        }
+    }
+
+    fn table_output_schema_payload(
+        target_schema: &str,
+        table_name: &str,
+        write_mode: &str,
+        source_schema: &str,
+        source_table: &str,
+    ) -> TypedValue {
+        TypedValue {
+            data_type: workflow_schema::DataType::Json,
+            value: serde_json::json!({
+                "kind": "table_output_write",
+                "target_schema": target_schema,
+                "table_name": table_name,
+                "write_mode": write_mode,
+                "input_shape": "table_schema",
+                "include_run_id": true,
+                "include_written_at": true,
+                "open_in_catalog": false,
+                "schema_definition": {
+                    "columns": [
+                        {
+                            "name": "order_id",
+                            "type": "bigint",
+                            "nullable": false,
+                            "primary_key": true,
+                            "default": null
+                        },
+                        {
+                            "name": "customer_id",
+                            "type": "varchar",
+                            "nullable": false,
+                            "primary_key": false,
+                            "default": "'unknown'"
+                        }
+                    ],
+                    "primary_key": ["order_id"],
+                    "checks": ["order_id > 0"],
+                    "create_mode": "create_if_missing",
+                    "if_target_exists": "keep_existing"
+                },
+                "source_table": {
+                    "schema_name": source_schema,
+                    "table_name": source_table,
+                    "selected_columns": [],
+                    "row_filter": null,
+                    "row_limit": null
+                }
+            }),
+        }
+    }
+
+    fn table_output_multi_schema_payload(target_schema: &str, write_mode: &str) -> TypedValue {
+        TypedValue {
+            data_type: workflow_schema::DataType::Json,
+            value: serde_json::json!({
+                "kind": "table_output_write",
+                "target_schema": target_schema,
+                "table_name": "orders_bootstrap",
+                "write_mode": write_mode,
+                "input_shape": "table_schema",
+                "include_run_id": true,
+                "include_written_at": true,
+                "open_in_catalog": false,
+                "schema_definition": {
+                    "columns": [
+                        {
+                            "name": "order_id",
+                            "type": "bigint",
+                            "nullable": false,
+                            "primary_key": true,
+                            "default": null
+                        }
+                    ],
+                    "primary_key": ["order_id"],
+                    "checks": [],
+                    "create_mode": "create_if_missing",
+                    "if_target_exists": "keep_existing"
+                },
+                "schema_definitions": [
+                    {
+                        "schema_name": "tables",
+                        "table_name": "orders_bootstrap",
+                        "output_alias": "orders_definition",
+                        "columns": [
+                            {
+                                "name": "order_id",
+                                "type": "bigint",
+                                "nullable": false,
+                                "primary_key": true,
+                                "default": null
+                            }
+                        ],
+                        "primary_key": ["order_id"],
+                        "checks": [],
+                        "create_mode": "create_if_missing",
+                        "if_target_exists": "keep_existing"
+                    },
+                    {
+                        "schema_name": "tables",
+                        "table_name": "order_lines_bootstrap",
+                        "output_alias": "order_lines_definition",
+                        "columns": [
+                            {
+                                "name": "line_id",
+                                "type": "bigint",
+                                "nullable": false,
+                                "primary_key": true,
+                                "default": null
+                            },
+                            {
+                                "name": "order_id",
+                                "type": "bigint",
+                                "nullable": false,
+                                "primary_key": false,
+                                "default": null
+                            }
+                        ],
+                        "primary_key": ["line_id"],
+                        "checks": [],
+                        "create_mode": "create_if_missing",
+                        "if_target_exists": "keep_existing"
+                    }
+                ],
+                "source_table": {
+                    "schema_name": "tables",
+                    "table_name": "orders",
+                    "selected_columns": [],
+                    "row_filter": null,
+                    "row_limit": null
+                }
+            }),
+        }
+    }
+
+    fn table_output_three_table_schema_payload(
+        target_schema: &str,
+        write_mode: &str,
+    ) -> TypedValue {
+        TypedValue {
+            data_type: workflow_schema::DataType::Json,
+            value: serde_json::json!({
+                "kind": "table_output_write",
+                "target_schema": target_schema,
+                "table_name": "orders",
+                "write_mode": write_mode,
+                "input_shape": "table_schema",
+                "include_run_id": true,
+                "include_written_at": true,
+                "open_in_catalog": false,
+                "schema_definition": {
+                    "columns": [
+                        {
+                            "name": "order_id",
+                            "type": "bigint",
+                            "nullable": false,
+                            "primary_key": true,
+                            "default": null
+                        }
+                    ],
+                    "primary_key": ["order_id"],
+                    "checks": [],
+                    "create_mode": "create_if_missing",
+                    "if_target_exists": "keep_existing"
+                },
+                "schema_definitions": [
+                    {
+                        "schema_name": "tables",
+                        "table_name": "orders",
+                        "output_alias": "orders_definition",
+                        "columns": [
+                            {
+                                "name": "order_id",
+                                "type": "bigint",
+                                "nullable": false,
+                                "primary_key": true,
+                                "default": null
+                            },
+                            {
+                                "name": "customer_id",
+                                "type": "varchar",
+                                "nullable": false,
+                                "primary_key": false,
+                                "default": null
+                            }
+                        ],
+                        "primary_key": ["order_id"],
+                        "checks": [],
+                        "create_mode": "create_if_missing",
+                        "if_target_exists": "keep_existing"
+                    },
+                    {
+                        "schema_name": "tables",
+                        "table_name": "order_lines",
+                        "output_alias": "order_lines_definition",
+                        "columns": [
+                            {
+                                "name": "line_id",
+                                "type": "bigint",
+                                "nullable": false,
+                                "primary_key": true,
+                                "default": null
+                            },
+                            {
+                                "name": "order_id",
+                                "type": "bigint",
+                                "nullable": false,
+                                "primary_key": false,
+                                "default": null
+                            }
+                        ],
+                        "primary_key": ["line_id"],
+                        "checks": [],
+                        "create_mode": "create_if_missing",
+                        "if_target_exists": "keep_existing"
+                    },
+                    {
+                        "schema_name": "tables",
+                        "table_name": "order_payments",
+                        "output_alias": "order_payments_definition",
+                        "columns": [
+                            {
+                                "name": "payment_id",
+                                "type": "bigint",
+                                "nullable": false,
+                                "primary_key": true,
+                                "default": null
+                            },
+                            {
+                                "name": "order_id",
+                                "type": "bigint",
+                                "nullable": false,
+                                "primary_key": false,
+                                "default": null
+                            }
+                        ],
+                        "primary_key": ["payment_id"],
+                        "checks": [],
+                        "create_mode": "create_if_missing",
+                        "if_target_exists": "keep_existing"
+                    }
+                ],
+                "source_table": {
+                    "schema_name": "tables",
+                    "table_name": "orders",
+                    "selected_columns": [],
+                    "row_filter": null,
+                    "row_limit": null
                 }
             }),
         }
@@ -5396,6 +5910,322 @@ mod tests {
         assert_eq!(copied_row.1, "succeeded");
         assert_eq!(copied_row.2, snapshot.run_id);
         assert!(!copied_row.3.is_empty());
+    }
+
+    #[test]
+    fn table_output_schema_materialization_bootstraps_target_table() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Table Schema Output Workspace")
+            .expect("workspace");
+        let workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+        let created = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
+            .expect("workflow creates");
+
+        let workflow_root = store.workflow_root_path(
+            "usr_builder",
+            &workspace.workspace_id,
+            created.workflow.workflow_id.as_str(),
+        );
+        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+
+        let started_at = Utc
+            .with_ymd_and_hms(2026, 6, 3, 14, 0, 0)
+            .single()
+            .expect("valid datetime");
+        let finished_at = started_at + Duration::seconds(2);
+        let snapshot = RunSnapshot {
+            run_id: "run_table_schema_target".to_string(),
+            workflow_id: created.workflow.workflow_id.clone(),
+            workflow_version: created.workflow.version,
+            status: RunStatus::Succeeded,
+            trigger: RunTrigger {
+                kind: TriggerKind::Manual,
+            },
+            started_at: Some(started_at),
+            finished_at: Some(finished_at),
+            node_runs: vec![NodeRunSnapshot {
+                node_id: "table_output_schema".to_string(),
+                type_id: "table_output".to_string(),
+                status: NodeRunStatus::Succeeded,
+                attempt: 1,
+                started_at: Some(started_at),
+                finished_at: Some(finished_at),
+                last_output: Some(table_output_schema_payload(
+                    "tables",
+                    "orders_bootstrap",
+                    "append",
+                    "output",
+                    "orders",
+                )),
+                log_count: 1,
+                error: None,
+            }],
+            logs: vec![],
+            error: None,
+        };
+
+        store
+            .persist_run_snapshot(&workspace.workspace_id, Some("usr_builder"), &snapshot)
+            .expect("run snapshot persists");
+
+        let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb reopens");
+        let columns = duckdb
+            .prepare("pragma table_info('tables.orders_bootstrap')")
+            .expect("prepare table info")
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, bool>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, bool>(5)?,
+                ))
+            })
+            .expect("query table info")
+            .collect::<duckdb::Result<Vec<_>>>()
+            .expect("collect columns");
+        let row_count: i64 = duckdb
+            .query_row("select count(*) from tables.orders_bootstrap", [], |row| {
+                row.get(0)
+            })
+            .expect("row count");
+
+        assert_eq!(row_count, 0);
+        assert_eq!(columns.len(), 4);
+        assert_eq!(columns[0].0, "order_id");
+        assert_eq!(columns[0].1.to_ascii_lowercase(), "bigint");
+        assert!(columns[0].2);
+        assert!(columns[0].4);
+        assert_eq!(columns[1].0, "customer_id");
+        assert_eq!(columns[1].1.to_ascii_lowercase(), "varchar");
+        assert!(columns[1].2);
+        assert!(columns[1]
+            .3
+            .as_deref()
+            .map(|value| value.contains("unknown"))
+            .unwrap_or(false));
+        assert_eq!(columns[2].0, "run_id");
+        assert_eq!(columns[2].1.to_ascii_lowercase(), "varchar");
+        assert_eq!(columns[3].0, "written_at");
+        assert_eq!(columns[3].1.to_ascii_lowercase(), "varchar");
+    }
+
+    #[test]
+    fn table_output_schema_materialization_bootstraps_multiple_target_tables() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Multi Table Schema Output Workspace")
+            .expect("workspace");
+        let workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+        let created = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
+            .expect("workflow creates");
+
+        let workflow_root = store.workflow_root_path(
+            "usr_builder",
+            &workspace.workspace_id,
+            created.workflow.workflow_id.as_str(),
+        );
+        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+
+        let started_at = Utc
+            .with_ymd_and_hms(2026, 6, 3, 14, 5, 0)
+            .single()
+            .expect("valid datetime");
+        let finished_at = started_at + Duration::seconds(2);
+        let snapshot = RunSnapshot {
+            run_id: "run_multi_table_schema_target".to_string(),
+            workflow_id: created.workflow.workflow_id.clone(),
+            workflow_version: created.workflow.version,
+            status: RunStatus::Succeeded,
+            trigger: RunTrigger {
+                kind: TriggerKind::Manual,
+            },
+            started_at: Some(started_at),
+            finished_at: Some(finished_at),
+            node_runs: vec![NodeRunSnapshot {
+                node_id: "table_output_schema_bundle".to_string(),
+                type_id: "table_output".to_string(),
+                status: NodeRunStatus::Succeeded,
+                attempt: 1,
+                started_at: Some(started_at),
+                finished_at: Some(finished_at),
+                last_output: Some(table_output_multi_schema_payload("tables", "append")),
+                log_count: 1,
+                error: None,
+            }],
+            logs: vec![],
+            error: None,
+        };
+
+        store
+            .persist_run_snapshot(&workspace.workspace_id, Some("usr_builder"), &snapshot)
+            .expect("run snapshot persists");
+
+        let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb reopens");
+        let created_tables = duckdb
+            .prepare(
+                "select table_name
+                 from information_schema.tables
+                 where table_schema = 'tables'
+                   and table_name in ('orders_bootstrap', 'order_lines_bootstrap')
+                 order by table_name",
+            )
+            .expect("prepare table listing")
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("query table listing")
+            .collect::<duckdb::Result<Vec<_>>>()
+            .expect("collect table listing");
+        let order_line_columns = duckdb
+            .prepare("pragma table_info('tables.order_lines_bootstrap')")
+            .expect("prepare order_lines table info")
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+            })
+            .expect("query order_lines table info")
+            .collect::<duckdb::Result<Vec<_>>>()
+            .expect("collect order_lines columns");
+
+        assert_eq!(
+            created_tables,
+            vec![
+                "order_lines_bootstrap".to_string(),
+                "orders_bootstrap".to_string()
+            ]
+        );
+        assert_eq!(order_line_columns.len(), 4);
+        assert_eq!(order_line_columns[0].0, "line_id");
+        assert_eq!(order_line_columns[0].1.to_ascii_lowercase(), "bigint");
+        assert_eq!(order_line_columns[1].0, "order_id");
+        assert_eq!(order_line_columns[1].1.to_ascii_lowercase(), "bigint");
+        assert_eq!(order_line_columns[2].0, "run_id");
+        assert_eq!(order_line_columns[3].0, "written_at");
+    }
+
+    #[test]
+    fn table_output_schema_materialization_adds_new_tables_when_primary_already_exists() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Existing Primary Schema Output Workspace")
+            .expect("workspace");
+        let workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+        let created = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
+            .expect("workflow creates");
+
+        let workflow_root = store.workflow_root_path(
+            "usr_builder",
+            &workspace.workspace_id,
+            created.workflow.workflow_id.as_str(),
+        );
+        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+
+        let started_at = Utc
+            .with_ymd_and_hms(2026, 6, 3, 14, 10, 0)
+            .single()
+            .expect("valid datetime");
+        let finished_at = started_at + Duration::seconds(2);
+
+        let single_snapshot = RunSnapshot {
+            run_id: "run_single_table_schema_target".to_string(),
+            workflow_id: created.workflow.workflow_id.clone(),
+            workflow_version: created.workflow.version,
+            status: RunStatus::Succeeded,
+            trigger: RunTrigger {
+                kind: TriggerKind::Manual,
+            },
+            started_at: Some(started_at),
+            finished_at: Some(finished_at),
+            node_runs: vec![NodeRunSnapshot {
+                node_id: "table_output_schema".to_string(),
+                type_id: "table_output".to_string(),
+                status: NodeRunStatus::Succeeded,
+                attempt: 1,
+                started_at: Some(started_at),
+                finished_at: Some(finished_at),
+                last_output: Some(table_output_schema_payload(
+                    "outputs",
+                    "orders",
+                    "append",
+                    "output",
+                    "orders",
+                )),
+                log_count: 1,
+                error: None,
+            }],
+            logs: vec![],
+            error: None,
+        };
+
+        store
+            .persist_run_snapshot(&workspace.workspace_id, Some("usr_builder"), &single_snapshot)
+            .expect("single run snapshot persists");
+
+        let multi_started_at = started_at + Duration::minutes(1);
+        let multi_finished_at = multi_started_at + Duration::seconds(2);
+        let multi_snapshot = RunSnapshot {
+            run_id: "run_multi_table_schema_target".to_string(),
+            workflow_id: created.workflow.workflow_id.clone(),
+            workflow_version: created.workflow.version,
+            status: RunStatus::Succeeded,
+            trigger: RunTrigger {
+                kind: TriggerKind::Manual,
+            },
+            started_at: Some(multi_started_at),
+            finished_at: Some(multi_finished_at),
+            node_runs: vec![NodeRunSnapshot {
+                node_id: "table_output_schema_bundle".to_string(),
+                type_id: "table_output".to_string(),
+                status: NodeRunStatus::Succeeded,
+                attempt: 1,
+                started_at: Some(multi_started_at),
+                finished_at: Some(multi_finished_at),
+                last_output: Some(table_output_three_table_schema_payload("outputs", "append")),
+                log_count: 1,
+                error: None,
+            }],
+            logs: vec![],
+            error: None,
+        };
+
+        store
+            .persist_run_snapshot(&workspace.workspace_id, Some("usr_builder"), &multi_snapshot)
+            .expect("multi run snapshot persists");
+
+        let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb reopens");
+        let created_tables = duckdb
+            .prepare(
+                "select table_name
+                 from information_schema.tables
+                 where table_schema = 'outputs'
+                   and table_name in ('orders', 'order_lines', 'order_payments')
+                 order by table_name",
+            )
+            .expect("prepare table listing")
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("query table listing")
+            .collect::<duckdb::Result<Vec<_>>>()
+            .expect("collect table listing");
+
+        assert_eq!(
+            created_tables,
+            vec![
+                "order_lines".to_string(),
+                "order_payments".to_string(),
+                "orders".to_string()
+            ]
+        );
     }
 
     #[test]

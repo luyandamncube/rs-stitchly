@@ -1245,6 +1245,311 @@ fn validate_node_config(node: &WorkflowNode) -> Option<ValidationIssue> {
 
             None
         }
+        "table_schema" => {
+            if let Some(catalog) = node.config.get("catalog") {
+                match catalog.as_str() {
+                    Some(value) if !value.trim().is_empty() => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_table_schema_catalog",
+                            format!(
+                                "Node `{}` expects non-empty string `catalog` when provided.",
+                                node.node_id
+                            ),
+                            Some(format!("workflow.nodes.{}.config.catalog", node.node_id)),
+                        ));
+                    }
+                }
+            }
+
+            let schema_name = node.config.get("schema_name").and_then(Value::as_str);
+            if schema_name.map_or(true, |value| value.trim().is_empty()) {
+                return Some(issue(
+                    "invalid_table_schema_name",
+                    format!(
+                        "Node `{}` requires a non-empty string `schema_name` config field.",
+                        node.node_id
+                    ),
+                    Some(format!(
+                        "workflow.nodes.{}.config.schema_name",
+                        node.node_id
+                    )),
+                ));
+            }
+
+            let table_name = node.config.get("table_name").and_then(Value::as_str);
+            if table_name.map_or(true, |value| value.trim().is_empty()) {
+                return Some(issue(
+                    "invalid_table_schema_table_name",
+                    format!(
+                        "Node `{}` requires a non-empty string `table_name` config field.",
+                        node.node_id
+                    ),
+                    Some(format!("workflow.nodes.{}.config.table_name", node.node_id)),
+                ));
+            }
+
+            if let Some(output_alias) = node.config.get("output_alias") {
+                match output_alias.as_str() {
+                    Some(value) if !value.trim().is_empty() => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_table_schema_output_alias",
+                            format!(
+                                "Node `{}` expects non-empty string `output_alias` when provided.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.output_alias",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            let Some(columns) = node.config.get("columns").and_then(Value::as_array) else {
+                return Some(issue(
+                    "invalid_table_schema_columns",
+                    format!(
+                        "Node `{}` requires `columns` to be an array of column objects.",
+                        node.node_id
+                    ),
+                    Some(format!("workflow.nodes.{}.config.columns", node.node_id)),
+                ));
+            };
+
+            if columns.is_empty() {
+                return Some(issue(
+                    "invalid_table_schema_columns",
+                    format!(
+                        "Node `{}` requires at least one column definition.",
+                        node.node_id
+                    ),
+                    Some(format!("workflow.nodes.{}.config.columns", node.node_id)),
+                ));
+            }
+
+            let mut column_names = BTreeSet::new();
+            for (index, column) in columns.iter().enumerate() {
+                let Some(column_object) = column.as_object() else {
+                    return Some(issue(
+                        "invalid_table_schema_column",
+                        format!(
+                            "Node `{}` expects every column entry to be an object.",
+                            node.node_id
+                        ),
+                        Some(format!(
+                            "workflow.nodes.{}.config.columns.{}",
+                            node.node_id, index
+                        )),
+                    ));
+                };
+
+                let column_name = column_object.get("name").and_then(Value::as_str);
+                let Some(column_name) =
+                    column_name.map(str::trim).filter(|value| !value.is_empty())
+                else {
+                    return Some(issue(
+                        "invalid_table_schema_column_name",
+                        format!(
+                            "Node `{}` expects every column entry to include a non-empty string `name`.",
+                            node.node_id
+                        ),
+                        Some(format!(
+                            "workflow.nodes.{}.config.columns.{}.name",
+                            node.node_id, index
+                        )),
+                    ));
+                };
+
+                if !column_names.insert(column_name.to_string()) {
+                    return Some(issue(
+                        "duplicate_table_schema_column_name",
+                        format!(
+                            "Node `{}` defines duplicate column name `{}`.",
+                            node.node_id, column_name
+                        ),
+                        Some(format!(
+                            "workflow.nodes.{}.config.columns.{}.name",
+                            node.node_id, index
+                        )),
+                    ));
+                }
+
+                let column_type = column_object.get("type").and_then(Value::as_str);
+                if column_type
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .is_none()
+                {
+                    return Some(issue(
+                        "invalid_table_schema_column_type",
+                        format!(
+                            "Node `{}` expects every column entry to include a non-empty string `type`.",
+                            node.node_id
+                        ),
+                        Some(format!(
+                            "workflow.nodes.{}.config.columns.{}.type",
+                            node.node_id, index
+                        )),
+                    ));
+                }
+
+                for key in ["nullable", "primary_key"] {
+                    if let Some(value) = column_object.get(key) {
+                        if !value.is_boolean() {
+                            return Some(issue(
+                                "invalid_table_schema_column_flag",
+                                format!(
+                                    "Node `{}` expects boolean `{key}` when provided for every column.",
+                                    node.node_id
+                                ),
+                                Some(format!(
+                                    "workflow.nodes.{}.config.columns.{}.{}",
+                                    node.node_id, index, key
+                                )),
+                            ));
+                        }
+                    }
+                }
+
+                if let Some(default_value) = column_object.get("default") {
+                    if !default_value.is_string() {
+                        return Some(issue(
+                            "invalid_table_schema_column_default",
+                            format!(
+                                "Node `{}` expects optional string `default` for each column.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.columns.{}.default",
+                                node.node_id, index
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(primary_key) = node.config.get("primary_key") {
+                let Some(columns) = primary_key.as_array() else {
+                    return Some(issue(
+                        "invalid_table_schema_primary_key",
+                        format!(
+                            "Node `{}` expects `primary_key` to be an array of strings.",
+                            node.node_id
+                        ),
+                        Some(format!(
+                            "workflow.nodes.{}.config.primary_key",
+                            node.node_id
+                        )),
+                    ));
+                };
+
+                for (index, column) in columns.iter().enumerate() {
+                    let Some(column_name) = column
+                        .as_str()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                    else {
+                        return Some(issue(
+                            "invalid_table_schema_primary_key",
+                            format!(
+                                "Node `{}` expects every `primary_key` entry to be a non-empty string.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.primary_key.{}",
+                                node.node_id, index
+                            )),
+                        ));
+                    };
+
+                    if !column_names.contains(column_name) {
+                        return Some(issue(
+                            "invalid_table_schema_primary_key_column",
+                            format!(
+                                "Node `{}` references unknown primary key column `{}`.",
+                                node.node_id, column_name
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.primary_key.{}",
+                                node.node_id, index
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(checks) = node.config.get("checks") {
+                let Some(check_expressions) = checks.as_array() else {
+                    return Some(issue(
+                        "invalid_table_schema_checks",
+                        format!(
+                            "Node `{}` expects `checks` to be an array of strings.",
+                            node.node_id
+                        ),
+                        Some(format!("workflow.nodes.{}.config.checks", node.node_id)),
+                    ));
+                };
+
+                if check_expressions.iter().any(|value| {
+                    value
+                        .as_str()
+                        .map(str::trim)
+                        .filter(|expression| !expression.is_empty())
+                        .is_none()
+                }) {
+                    return Some(issue(
+                        "invalid_table_schema_checks",
+                        format!(
+                            "Node `{}` expects every `checks` entry to be a non-empty string.",
+                            node.node_id
+                        ),
+                        Some(format!("workflow.nodes.{}.config.checks", node.node_id)),
+                    ));
+                }
+            }
+
+            for (key, code) in [
+                ("create_mode", "invalid_table_schema_create_mode"),
+                ("if_target_exists", "invalid_table_schema_if_target_exists"),
+            ] {
+                if let Some(value) = node.config.get(key) {
+                    match value.as_str() {
+                        Some(text) if !text.trim().is_empty() => {}
+                        _ => {
+                            return Some(issue(
+                                code,
+                                format!(
+                                    "Node `{}` expects non-empty string `{key}` when provided.",
+                                    node.node_id
+                                ),
+                                Some(format!("workflow.nodes.{}.config.{key}", node.node_id)),
+                            ));
+                        }
+                    }
+                }
+            }
+
+            if let Some(value) = node.config.get("open_in_catalog") {
+                if !value.is_boolean() {
+                    return Some(issue(
+                        "invalid_table_schema_open_in_catalog",
+                        format!(
+                            "Node `{}` expects boolean `open_in_catalog` when provided.",
+                            node.node_id
+                        ),
+                        Some(format!(
+                            "workflow.nodes.{}.config.open_in_catalog",
+                            node.node_id
+                        )),
+                    ));
+                }
+            }
+
+            None
+        }
         "table_output" => {
             let target_schema = node.config.get("target_schema").and_then(Value::as_str);
             if target_schema.map_or(true, |value| value.trim().is_empty()) {
@@ -1291,7 +1596,7 @@ fn validate_node_config(node: &WorkflowNode) -> Option<ValidationIssue> {
 
             if let Some(input_shape) = node.config.get("input_shape") {
                 match input_shape.as_str() {
-                    Some("single_text_row" | "source_table") => {}
+                    Some("single_text_row" | "source_table" | "table_schema") => {}
                     _ => {
                         return Some(issue(
                             "invalid_table_output_input_shape",
@@ -1454,7 +1759,7 @@ fn validate_node_config(node: &WorkflowNode) -> Option<ValidationIssue> {
 }
 
 fn ports_are_compatible(
-    source_node: &WorkflowNode,
+    _source_node: &WorkflowNode,
     source_port: &node_registry::PortDefinition,
     target_node: &WorkflowNode,
     target_port: &node_registry::PortDefinition,
@@ -1465,8 +1770,6 @@ fn ports_are_compatible(
 
     target_node.type_id == "table_output"
         && target_port.port_id == "text"
-        && source_node.type_id == "table_input"
-        && source_port.port_id == "table"
         && source_port.data_type == workflow_schema::DataType::TableRef
 }
 
@@ -2053,6 +2356,75 @@ mod tests {
                 source_node_id: "table_input_runs".to_string(),
                 source_port_id: "table".to_string(),
                 target_node_id: "table_output_copy".to_string(),
+                target_port_id: "text".to_string(),
+            }],
+            metadata: Default::default(),
+        };
+
+        let validation = runtime.validate_workflow(&workflow);
+        assert!(validation.valid, "expected valid flow, got: {validation:?}");
+    }
+
+    #[test]
+    fn table_schema_can_connect_to_table_output() {
+        let runtime = RuntimeService::default();
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_table_schema_output".to_string(),
+            version: 1,
+            name: "Table Schema Output".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "table_schema".to_string(),
+                    type_id: "table_schema".to_string(),
+                    definition_version: 1,
+                    label: Some("Table Schema".to_string()),
+                    config: json!({
+                        "catalog": "workflow.duckdb",
+                        "schema_name": "output",
+                        "table_name": "orders",
+                        "output_alias": "orders_definition",
+                        "columns": [
+                            {
+                                "name": "order_id",
+                                "type": "bigint",
+                                "nullable": false,
+                                "primary_key": true
+                            },
+                            {
+                                "name": "customer_id",
+                                "type": "varchar",
+                                "nullable": false,
+                                "primary_key": false
+                            }
+                        ],
+                        "primary_key": ["order_id"],
+                        "checks": ["order_id > 0"],
+                        "create_mode": "create_if_missing",
+                        "if_target_exists": "keep_existing"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "table_output".to_string(),
+                    type_id: "table_output".to_string(),
+                    definition_version: 1,
+                    label: Some("Table Output".to_string()),
+                    config: json!({
+                        "target_schema": "outputs",
+                        "table_name": "news_brief",
+                        "input_shape": "table_schema",
+                        "write_mode": "append"
+                    }),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![WorkflowEdge {
+                edge_id: "edge_table_schema_table_to_table_output_text".to_string(),
+                source_node_id: "table_schema".to_string(),
+                source_port_id: "table".to_string(),
+                target_node_id: "table_output".to_string(),
                 target_port_id: "text".to_string(),
             }],
             metadata: Default::default(),

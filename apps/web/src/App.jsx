@@ -6,6 +6,7 @@ import {
   NavLink,
   Route,
   Routes,
+  useLocation,
   useNavigate,
   useParams
 } from 'react-router-dom';
@@ -111,6 +112,7 @@ const NODE_SHELF_GROUPS = [
       { typeId: 'text_input', label: 'Text Input', implemented: true },
       { typeId: 'json_input', label: 'JSON Input', implemented: false },
       { typeId: 'file_input', label: 'File Input', implemented: false },
+      { typeId: 'table_schema', label: 'Table Schema', implemented: true },
       { typeId: 'table_input', label: 'Table Input', implemented: true },
       { typeId: 'object_store_input', label: 'Object Store Input', implemented: false }
     ]
@@ -692,9 +694,11 @@ function CanvasWorkflowRoute({
   viewMode
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { workflowId } = useParams();
   const [resolvedWorkspace, setResolvedWorkspace] = useState(null);
   const [resolveState, setResolveState] = useState('loading');
+  const workspaceHintId = new URLSearchParams(location.search).get('workspaceId');
 
   useEffect(() => {
     let cancelled = false;
@@ -705,12 +709,20 @@ function CanvasWorkflowRoute({
         return;
       }
 
+      const hintedWorkspace = session.workspaces.find(
+        (workspace) => workspace.workspace_id === workspaceHintId
+      );
       const orderedWorkspaces = [
+        ...(hintedWorkspace ? [hintedWorkspace] : []),
         ...session.workspaces.filter(
-          (workspace) => workspace.workspace_id === session.active_workspace_id
+          (workspace) =>
+            workspace.workspace_id === session.active_workspace_id &&
+            workspace.workspace_id !== workspaceHintId
         ),
         ...session.workspaces.filter(
-          (workspace) => workspace.workspace_id !== session.active_workspace_id
+          (workspace) =>
+            workspace.workspace_id !== session.active_workspace_id &&
+            workspace.workspace_id !== workspaceHintId
         )
       ];
 
@@ -748,7 +760,7 @@ function CanvasWorkflowRoute({
     return () => {
       cancelled = true;
     };
-  }, [session.active_workspace_id, session.workspaces, workflowId]);
+  }, [session.active_workspace_id, session.workspaces, workflowId, workspaceHintId]);
 
   if (!workflowId) {
     return <Navigate replace to={getDefaultAppPath(session)} />;
@@ -771,7 +783,9 @@ function CanvasWorkflowRoute({
       onCanvasWorkflowMissing={() =>
         navigate(buildCanvasHomePath(resolvedWorkspace.slug), { replace: true })
       }
-      onCanvasOpenWorkflow={(nextWorkflowId) => navigate(buildWorkflowPath(nextWorkflowId))}
+      onCanvasOpenWorkflow={(nextWorkflowId, nextWorkspaceId) =>
+        navigate(buildWorkflowPath(nextWorkflowId, nextWorkspaceId))
+      }
       onLogout={onLogout}
       onRefreshSession={onRefreshSession}
       onToggleAttentionCollapsed={onToggleAttentionCollapsed}
@@ -816,9 +830,11 @@ function WorkspaceScreenRoute({
       activeWorkflowId={resolvedScreenId === 'canvas' ? null : undefined}
       isAttentionCollapsed={isAttentionCollapsed}
       onCanvasWorkflowMissing={null}
-      onCanvasOpenWorkflow={(nextWorkflowId) => navigate(buildWorkflowPath(nextWorkflowId))}
+      onCanvasOpenWorkflow={(nextWorkflowId, nextWorkspaceId) =>
+        navigate(buildWorkflowPath(nextWorkflowId, nextWorkspaceId))
+      }
       onCanvasWorkflowResolved={(resolvedWorkflowId) =>
-        navigate(buildWorkflowPath(resolvedWorkflowId), {
+        navigate(buildWorkflowPath(resolvedWorkflowId, activeWorkspace.workspace_id), {
           replace: true
         })
       }
@@ -891,7 +907,8 @@ function ProductShell({
       const workflow = buildBlankWorkflowDefinition();
       const response = await createWorkflow(activeWorkspace.workspace_id, workflow);
       const nextPath = buildWorkflowPath(
-        response.workflow.workflow_id
+        response.workflow.workflow_id,
+        activeWorkspace.workspace_id
       );
 
       window.open(nextPath, '_blank', 'noopener');
@@ -908,7 +925,7 @@ function ProductShell({
     workspaceId = activeWorkspace.workspace_id
   ) {
     await updateWorkflowState(workspaceId, workflowId).catch(() => {});
-    onCanvasOpenWorkflow?.(workflowId);
+    onCanvasOpenWorkflow?.(workflowId, workspaceId);
     setActiveCanvasMenuId(null);
   }
 
@@ -934,12 +951,21 @@ function ProductShell({
     await updateWorkflowState(activeWorkspace.workspace_id, response.workflow.workflow_id).catch(
       () => {}
     );
-    onCanvasOpenWorkflow?.(response.workflow.workflow_id);
+    onCanvasOpenWorkflow?.(response.workflow.workflow_id, activeWorkspace.workspace_id);
     return response.workflow;
   }
 
-  function handleCanvasOpenWorkspace(workspaceSlug) {
-    navigate(buildCanvasHomePath(workspaceSlug));
+  function handleCanvasOpenWorkspace(workspace, workflowId = null) {
+    if (!workspace) {
+      return;
+    }
+
+    if (workflowId) {
+      navigate(buildWorkflowPath(workflowId, workspace.workspace_id));
+    } else {
+      navigate(buildCanvasHomePath(workspace.slug));
+    }
+
     setActiveCanvasMenuId(null);
   }
 
@@ -1887,7 +1913,7 @@ function CanvasWorkspaceDirectoryPanel({
             <div className="canvas-workspace-panel__section-head">
               <button
                 className="canvas-workspace-panel__workspace"
-                onClick={() => onOpenWorkspace?.(workspace.slug)}
+                onClick={() => onOpenWorkspace?.(workspace, workflows[0]?.workflow_id ?? null)}
                 type="button"
               >
                 <strong>
@@ -5327,7 +5353,7 @@ function WorkflowListScreen({ activeWorkspace }) {
         activeWorkspace.workspace_id,
         response.workflow.workflow_id
       ).catch(() => {});
-      navigate(buildWorkflowPath(response.workflow.workflow_id));
+      navigate(buildWorkflowPath(response.workflow.workflow_id, activeWorkspace.workspace_id));
     } catch (error) {
       setWorkflowState((current) => ({
         ...current,
@@ -5341,7 +5367,7 @@ function WorkflowListScreen({ activeWorkspace }) {
 
   async function handleOpenWorkflow(workflowId) {
     await updateWorkflowState(activeWorkspace.workspace_id, workflowId).catch(() => {});
-    navigate(buildWorkflowPath(workflowId));
+    navigate(buildWorkflowPath(workflowId, activeWorkspace.workspace_id));
   }
 
   function startRename(workflow) {
@@ -6601,8 +6627,13 @@ function buildCanvasHomePath(workspaceSlug) {
   return `/w/${workspaceSlug}/canvas`;
 }
 
-function buildWorkflowPath(workflowId) {
-  return `/flow/${workflowId}`;
+function buildWorkflowPath(workflowId, workspaceId = null) {
+  const basePath = `/flow/${workflowId}`;
+  if (!workspaceId) {
+    return basePath;
+  }
+
+  return `${basePath}?workspaceId=${encodeURIComponent(workspaceId)}`;
 }
 
 function readStoredViewMode() {

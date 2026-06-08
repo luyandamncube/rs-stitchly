@@ -9,7 +9,6 @@ import WorkflowCanvas from './WorkflowCanvas'
 
 function CanvasHarness({
   activeRunSnapshot = null,
-  onNodeOpen = () => {},
   onNodeTypeDrop = () => {},
   workflowOverride = null
 }) {
@@ -22,7 +21,6 @@ function CanvasHarness({
     <WorkflowCanvas
       activeRunSnapshot={activeRunSnapshot}
       nodeDefinitions={nodeDefinitionFixture.node_definitions}
-      onNodeOpen={onNodeOpen}
       onNodeTypeDrop={onNodeTypeDrop}
       onSelectionChange={setSelectedNodeId}
       onWorkflowChange={setWorkflow}
@@ -58,6 +56,14 @@ function getTableOutputNode() {
 
 function getTableInputNode() {
   const node = screen.getByText('Table Input').closest('.workflow-node-card')
+
+  expect(node).not.toBeNull()
+
+  return node
+}
+
+function getTableSchemaNode() {
+  const node = screen.getByText('Table Schema').closest('.workflow-node-card')
 
   expect(node).not.toBeNull()
 
@@ -102,6 +108,15 @@ function buildTableOutputWorkflow() {
   return workflow
 }
 
+function buildTableSchemaOutputWorkflow() {
+  const workflow = buildTableOutputWorkflow()
+  const tableOutputNode = workflow.nodes.find((node) => node.node_id === 'table_output_news_brief')
+
+  tableOutputNode.config.input_shape = 'table_schema'
+
+  return workflow
+}
+
 function buildTableInputWorkflow() {
   const workflow = cloneWorkflow(workflowFixture)
 
@@ -130,6 +145,90 @@ function buildTableInputWorkflow() {
       y: 320
     }
   })
+
+  return workflow
+}
+
+function buildTableSchemaWorkflow() {
+  const workflow = cloneWorkflow(workflowFixture)
+
+  workflow.nodes.push({
+    node_id: 'table_schema_orders',
+    type_id: 'table_schema',
+    definition_version: 1,
+    label: 'Table Schema',
+    config: {
+      catalog: 'workflow.duckdb',
+      checks: ['total_amount >= 0'],
+      columns: [
+        {
+          name: 'order_id',
+          nullable: false,
+          primary_key: true,
+          type: 'bigint'
+        }
+      ],
+      create_mode: 'create_if_missing',
+      execution: {
+        wait_after_seconds: 0,
+        wait_before_seconds: 0
+      },
+      if_target_exists: 'keep_existing',
+      open_in_catalog: false,
+      output_alias: 'orders_definition',
+      primary_key: ['order_id'],
+      schema_name: 'tables',
+      table_name: 'orders'
+    },
+    position: {
+      x: 120,
+      y: 320
+    }
+  })
+
+  return workflow
+}
+
+function buildMultiTableSchemaWorkflow() {
+  const workflow = buildTableSchemaWorkflow()
+  const tableSchemaNode = workflow.nodes.find((node) => node.node_id === 'table_schema_orders')
+
+  tableSchemaNode.config.tables = [
+    {
+      schema_name: 'tables',
+      table_name: 'orders',
+      output_alias: 'orders_definition',
+      create_mode: 'create_if_missing',
+      columns: [
+        {
+          name: 'order_id',
+          nullable: false,
+          primary_key: true,
+          type: 'bigint'
+        }
+      ]
+    },
+    {
+      schema_name: 'tables',
+      table_name: 'order_lines',
+      output_alias: 'order_lines_definition',
+      create_mode: 'create_if_missing',
+      columns: [
+        {
+          name: 'line_id',
+          nullable: false,
+          primary_key: true,
+          type: 'bigint'
+        },
+        {
+          name: 'order_id',
+          nullable: false,
+          primary_key: false,
+          type: 'bigint'
+        }
+      ]
+    }
+  ]
 
   return workflow
 }
@@ -202,14 +301,15 @@ describe('WorkflowCanvas', () => {
     expect(screen.getByText('Text Input')).toBeInTheDocument()
   })
 
-  it('opens the node inspector on double click', () => {
-    const onNodeOpen = vi.fn()
+  it('keeps the node selected on double click without opening a separate inspector', () => {
+    render(<CanvasHarness />)
 
-    render(<CanvasHarness onNodeOpen={onNodeOpen} />)
+    const sendEmailNode = getSendEmailNode()
 
-    fireEvent.doubleClick(getSendEmailNode())
+    fireEvent.click(sendEmailNode)
+    fireEvent.doubleClick(sendEmailNode)
 
-    expect(onNodeOpen).toHaveBeenCalledWith('send_email_notification')
+    expect(sendEmailNode).toHaveClass('is-selected')
   })
 
   it('emits a node drop event when a shelf item is dragged onto the canvas', () => {
@@ -334,6 +434,14 @@ describe('WorkflowCanvas', () => {
     expect(within(tableOutputNode).getByText('Last write')).toBeInTheDocument()
   })
 
+  it('renders the table output node with the schema bootstrap label', () => {
+    render(<CanvasHarness workflowOverride={buildTableSchemaOutputWorkflow()} />)
+
+    const tableOutputNode = getTableOutputNode()
+
+    expect(within(tableOutputNode).getByText('Schema bootstrap')).toBeInTheDocument()
+  })
+
   it('renders the table input node with source and catalog details', () => {
     render(<CanvasHarness workflowOverride={buildTableInputWorkflow()} />)
 
@@ -343,5 +451,29 @@ describe('WorkflowCanvas', () => {
     expect(within(tableInputNode).getByText('runs.workflow_runs')).toBeInTheDocument()
     expect(within(tableInputNode).getByText('All columns')).toBeInTheDocument()
     expect(within(tableInputNode).getByText('workflow.duckdb')).toBeInTheDocument()
+  })
+
+  it('renders the table schema node with workflow card styling instead of the generic schema fallback', () => {
+    const { container } = render(<CanvasHarness workflowOverride={buildTableSchemaWorkflow()} />)
+
+    const tableSchemaNode = getTableSchemaNode()
+
+    expect(tableSchemaNode).toHaveClass('workflow-node-card--table-schema')
+    expect(within(tableSchemaNode).getByText('orders')).toBeInTheDocument()
+    expect(within(tableSchemaNode).getByText('1 col')).toBeInTheDocument()
+    expect(within(tableSchemaNode).getByText('create_if_missing')).toBeInTheDocument()
+    expect(within(tableSchemaNode).getByText('orders_definition')).toBeInTheDocument()
+    expect(container.querySelector('[data-id="table_schema_orders"] .schema-node')).toBeNull()
+  })
+
+  it('renders multi-table schema nodes as table bundles instead of a fake schema destination', () => {
+    render(<CanvasHarness workflowOverride={buildMultiTableSchemaWorkflow()} />)
+
+    const tableSchemaNode = getTableSchemaNode()
+
+    expect(within(tableSchemaNode).getByText('2 tables')).toBeInTheDocument()
+    expect(within(tableSchemaNode).getByText('3 cols')).toBeInTheDocument()
+    expect(within(tableSchemaNode).getByText('orders +1 more')).toBeInTheDocument()
+    expect(within(tableSchemaNode).queryByText(/^tables$/)).toBeNull()
   })
 })

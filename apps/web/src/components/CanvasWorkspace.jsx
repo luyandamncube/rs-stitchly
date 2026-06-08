@@ -44,6 +44,7 @@ import {
   extractWorkspaceConnectionUpdate,
   WORKSPACE_CONNECTIONS_UPDATED_EVENT
 } from '../lib/workspaceConnectionsSync';
+import { buildStarterWorkflowDefinition } from '../lib/workflowTemplates';
 import { cloneWorkflow, updateNodeConfig, updateNodeLabel } from '../lib/workflow';
 
 const CANVAS_DEBUG_COLLAPSE_STORAGE_KEY = 'stitchly.canvas.debug-panel-collapsed.v1';
@@ -97,8 +98,6 @@ export default function CanvasWorkspace({
   });
   const [events, setEvents] = useState([]);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
-  const [configDraft, setConfigDraft] = useState('{}');
-  const [configError, setConfigError] = useState('');
   const [backendStatus, setBackendStatus] = useState('connecting');
   const [busyState, setBusyState] = useState({ cancel: false, validate: false, run: false });
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -244,17 +243,6 @@ export default function CanvasWorkspace({
       );
     };
   }, [workspaceId]);
-
-  useEffect(() => {
-    if (!selectedNode) {
-      setConfigDraft('{}');
-      setConfigError('');
-      return;
-    }
-
-    setConfigDraft(JSON.stringify(selectedNode.config, null, 2));
-    setConfigError('');
-  }, [selectedNode]);
 
   useEffect(() => {
     if (isWorkflowTitleEditing) {
@@ -422,7 +410,7 @@ export default function CanvasWorkspace({
             } else {
               workflowResponse = await createWorkflow(
                 workspaceId,
-                buildCanvasStarterWorkflow()
+                buildStarterWorkflowDefinition()
               );
             }
           }
@@ -845,20 +833,6 @@ export default function CanvasWorkspace({
     }
   }
 
-  function handleApplyConfig() {
-    if (!selectedNode) {
-      return;
-    }
-
-    try {
-      const parsed = JSON.parse(configDraft);
-      applyWorkflowChange(updateNodeConfig(workflow, selectedNode.node_id, parsed));
-      setConfigError('');
-    } catch (error) {
-      setConfigError(error.message);
-    }
-  }
-
   function handleReset() {
     closeStreamRef.current?.();
     const nextWorkflow = buildCanvasStarterWorkflow();
@@ -925,7 +899,7 @@ export default function CanvasWorkspace({
     }
 
     if (sectionId === 'nodes') {
-      setFloatingCard(selectedNodeId ? { type: 'node-inspector', nodeId: selectedNodeId } : null);
+      setFloatingCard(null);
       return;
     }
 
@@ -942,35 +916,24 @@ export default function CanvasWorkspace({
     });
   }
 
-  function openNodeInspector(nodeId) {
+  function focusNodePanel(nodeId) {
+    if (!nodeId) {
+      return;
+    }
+
     setSelectedNodeId(nodeId);
     setActiveSection('nodes');
     setDrawerOpen(true);
-    setFloatingCard({ type: 'node-inspector', nodeId });
+    setFloatingCard(null);
   }
 
   function handleCanvasSelection(nodeId) {
     if (!nodeId) {
       setSelectedNodeId(null);
-      if (floatingCard?.type === 'node-inspector') {
-        setFloatingCard(null);
-      }
       return;
     }
 
     setSelectedNodeId(nodeId);
-
-    if (floatingCard?.type === 'node-inspector') {
-      setFloatingCard({ type: 'node-inspector', nodeId });
-    }
-  }
-
-  function handleCanvasNodeOpen(nodeId) {
-    if (!nodeId) {
-      return;
-    }
-
-    openNodeInspector(nodeId);
   }
 
   function openProblemDetail(problemId) {
@@ -1019,7 +982,7 @@ export default function CanvasWorkspace({
     }
 
     if (result.kind === 'workflow-node') {
-      openNodeInspector(result.nodeId);
+      focusNodePanel(result.nodeId);
       return;
     }
 
@@ -1049,16 +1012,12 @@ export default function CanvasWorkspace({
   }
 
   function closeFloatingCard() {
-    if (floatingCard?.type === 'node-inspector') {
-      setSelectedNodeId(null);
-    }
-
     setFloatingCard(null);
   }
 
   function focusProblemTarget(problem) {
     if (problem?.target?.nodeId) {
-      openNodeInspector(problem.target.nodeId);
+      focusNodePanel(problem.target.nodeId);
     }
   }
 
@@ -1089,7 +1048,6 @@ export default function CanvasWorkspace({
           applyWorkflowChange(nextState.workflow);
           setSelectedNodeId(nextState.selectedNodeId);
         }}
-        onNodeOpen={handleCanvasNodeOpen}
         onSelectionChange={handleCanvasSelection}
         onViewportActionsReady={setCanvasViewportActions}
         onViewportChange={setCanvasViewport}
@@ -1098,7 +1056,7 @@ export default function CanvasWorkspace({
         workflow={workflow}
       />
 
-      {selectedNode && !floatingCard ? (
+      {selectedNode ? (
         <CanvasNodeManagementPanel
           definition={selectedDefinition}
           node={selectedNode}
@@ -1233,59 +1191,6 @@ export default function CanvasWorkspace({
             />
 
             <div className="floating-card__body">
-              {floatingCard.type === 'node-inspector' ? (
-                <div className="card-stack">
-                  <CardMetricGrid
-                    metrics={[
-                      { label: 'Node', value: selectedNode?.node_id ?? 'None' },
-                      { label: 'Type', value: selectedDefinition?.display_name ?? 'Unknown' },
-                      { label: 'Category', value: humanizeToken(selectedDefinition?.category) },
-                      { label: 'Ports', value: `${selectedDefinition?.inputs?.length ?? 0}/${selectedDefinition?.outputs?.length ?? 0}` }
-                    ]}
-                  />
-
-                  <label className="shell-field">
-                    <span>Label</span>
-                    <input
-                      value={selectedNode?.label ?? ''}
-                      onChange={(event) => {
-                        if (!selectedNode) {
-                          return;
-                        }
-
-                        applyWorkflowChange(
-                          updateNodeLabel(workflow, selectedNode.node_id, event.target.value)
-                        );
-                      }}
-                    />
-                  </label>
-
-                  <label className="shell-field">
-                    <span>Config JSON</span>
-                    <textarea
-                      rows={9}
-                      value={configDraft}
-                      onChange={(event) => setConfigDraft(event.target.value)}
-                    />
-                  </label>
-
-                  {configError ? <p className="shell-error-text">{configError}</p> : null}
-
-                  <div className="drawer-action-grid">
-                    <button className="accent-button" onClick={handleApplyConfig} type="button">
-                      Apply Config
-                    </button>
-                    <button
-                      className="secondary-button"
-                      onClick={() => setConfigDraft(JSON.stringify(selectedNode?.config ?? {}, null, 2))}
-                      type="button"
-                    >
-                      Reset Draft
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-
               {floatingCard.type === 'run-detail' ? (
                 <div className="card-stack">
                   <CardMetricGrid
@@ -1342,7 +1247,7 @@ export default function CanvasWorkspace({
                             subtitle={summarizeNodeRunDetail(nodeRun)}
                             title={nodeRun.node_id}
                             badge={humanizeToken(nodeRun.status)}
-                            onClick={() => openNodeInspector(nodeRun.node_id)}
+                            onClick={() => focusNodePanel(nodeRun.node_id)}
                           />
                         ))}
                       </div>
@@ -1405,7 +1310,7 @@ export default function CanvasWorkspace({
 
                   {activeProblem?.target?.nodeId ? (
                     <button className="accent-button" onClick={() => focusProblemTarget(activeProblem)} type="button">
-                      Open Node Inspector
+                      Focus Node
                     </button>
                   ) : null}
                 </div>
@@ -1628,6 +1533,18 @@ function CanvasNodeManagementPanel({
     );
   }
 
+  if (node?.type_id === 'table_schema') {
+    return (
+      <CanvasTableSchemaManagementPanel
+        definition={definition}
+        node={node}
+        onNodeConfigChange={onNodeConfigChange}
+        onNodeLabelChange={onNodeLabelChange}
+        workflowSyncState={workflowSyncState}
+      />
+    );
+  }
+
   if (node?.type_id === 'table_output') {
     return (
       <CanvasTableOutputManagementPanel
@@ -1635,6 +1552,7 @@ function CanvasNodeManagementPanel({
         node={node}
         onNodeConfigChange={onNodeConfigChange}
         onNodeLabelChange={onNodeLabelChange}
+        workflow={workflow}
         workflowSyncState={workflowSyncState}
       />
     );
@@ -1747,6 +1665,166 @@ function CanvasNodeManagementPanel({
   );
 }
 
+function CanvasNodePanelSelect({
+  id,
+  onChange,
+  options = [],
+  value = ''
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const rootRef = useRef(null);
+  const listboxId = `${id}-listbox`;
+  const activeOption =
+    options.find((option) => option.value === value) ??
+    (value
+      ? {
+          label: value,
+          value
+        }
+      : options[0] ?? {
+          label: 'Select',
+          value: ''
+        });
+
+  useEffect(() => {
+    if (!isOpen) {
+      return undefined;
+    }
+
+    function handlePointerDown(event) {
+      if (rootRef.current?.contains(event.target)) {
+        return;
+      }
+
+      setIsOpen(false);
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+      }
+    }
+
+    window.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen]);
+
+  return (
+    <div
+      className={`canvas-node-panel__select-wrap${isOpen ? ' is-open' : ''}`}
+      ref={rootRef}
+    >
+      <button
+        aria-controls={listboxId}
+        aria-expanded={isOpen}
+        aria-haspopup="listbox"
+        className="canvas-node-panel__select"
+        id={id}
+        onClick={() => setIsOpen((current) => !current)}
+        type="button"
+        value={activeOption.value}
+      >
+        <span className="canvas-node-panel__select-label">{activeOption.label}</span>
+        <span className="canvas-node-panel__caret" aria-hidden="true" />
+      </button>
+
+      {isOpen ? (
+        <div
+          aria-labelledby={id}
+          className="canvas-node-panel__select-panel"
+          id={listboxId}
+          role="listbox"
+        >
+          {options.map((option) => {
+            const isSelected = option.value === activeOption.value;
+
+            return (
+              <button
+                aria-selected={isSelected}
+                className={`canvas-node-panel__select-option${
+                  isSelected ? ' is-selected' : ''
+                }`}
+                key={option.value}
+                onClick={() => {
+                  onChange?.(option.value);
+                  setIsOpen(false);
+                }}
+                role="option"
+                type="button"
+              >
+                <span>{option.label}</span>
+                <span
+                  aria-hidden="true"
+                  className="canvas-node-panel__select-option-check"
+                >
+                  {isSelected ? '✓' : ''}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function CanvasTableShapeSection({
+  ariaLabel = 'Result table shape',
+  groups = [],
+  label = 'Result table shape'
+}) {
+  return (
+    <div className="canvas-node-panel__field">
+      <div className="canvas-node-panel__field-head">
+        <label>{label}</label>
+      </div>
+
+      <div
+        aria-label={ariaLabel}
+        className="canvas-node-panel__shape-groups"
+      >
+        {groups.length ? (
+          groups.map((group, index) => (
+            <details
+              className="canvas-node-panel__shape-group"
+              key={group.name}
+              open={groups.length === 1 || index === 0}
+            >
+              <summary className="canvas-node-panel__shape-group-summary">
+                <span>{group.name}</span>
+                <strong>
+                  {group.columns.length} col{group.columns.length === 1 ? '' : 's'}
+                </strong>
+              </summary>
+
+              <div className="canvas-node-panel__code">
+                {group.columns.map((column) => (
+                  <div className="canvas-node-panel__code-line" key={`${group.name}:${column.name}`}>
+                    <span>{column.name}</span>
+                    <strong>{column.definition}</strong>
+                  </div>
+                ))}
+              </div>
+            </details>
+          ))
+        ) : (
+          <div className="canvas-node-panel__code">
+            <div className="canvas-node-panel__code-line">
+              <span>Awaiting schema</span>
+              <strong>Connect a table schema input</strong>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function CanvasSendEmailManagementPanel({
   definition,
   node,
@@ -1842,26 +1920,21 @@ function CanvasSendEmailManagementPanel({
               i
             </span>
           </div>
-          <div className="canvas-node-panel__select-wrap">
-            <select
-              id="canvas-send-email-body-mode"
-              className="canvas-node-panel__select"
-              onChange={(event) =>
-                onNodeConfigChange?.((currentConfig) =>
-                  applySendEmailConfigUpdate(currentConfig, {
-                    body_mode: event.target.value
-                  })
-                )
-              }
-              value={config.body_mode}
-            >
-              <option value="input">From input</option>
-              <option value="custom">Custom text</option>
-            </select>
-            <span className="canvas-node-panel__caret" aria-hidden="true">
-              ⌄
-            </span>
-          </div>
+          <CanvasNodePanelSelect
+            id="canvas-send-email-body-mode"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applySendEmailConfigUpdate(currentConfig, {
+                  body_mode: nextValue
+                })
+              )
+            }
+            options={[
+              { label: 'From input', value: 'input' },
+              { label: 'Custom text', value: 'custom' }
+            ]}
+            value={config.body_mode}
+          />
         </div>
 
         {config.body_mode === 'custom' ? (
@@ -1889,29 +1962,18 @@ function CanvasSendEmailManagementPanel({
           <div className="canvas-node-panel__field-head">
             <label htmlFor="canvas-send-email-connection">Connection</label>
           </div>
-          <div className="canvas-node-panel__select-wrap">
-            <select
-              id="canvas-send-email-connection"
-              className="canvas-node-panel__select"
-              onChange={(event) =>
-                onNodeConfigChange?.((currentConfig) =>
-                  applySendEmailConfigUpdate(currentConfig, {
-                    connection_id: event.target.value
-                  })
-                )
-              }
-              value={config.connection_id}
-            >
-              {connectionOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <span className="canvas-node-panel__caret" aria-hidden="true">
-              ⌄
-            </span>
-          </div>
+          <CanvasNodePanelSelect
+            id="canvas-send-email-connection"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applySendEmailConfigUpdate(currentConfig, {
+                  connection_id: nextValue
+                })
+              )
+            }
+            options={connectionOptions}
+            value={config.connection_id}
+          />
         </div>
 
         <div className="canvas-node-panel__field">
@@ -2058,27 +2120,22 @@ function CanvasTextInputManagementPanel({
               i
             </span>
           </div>
-          <div className="canvas-node-panel__select-wrap">
-            <select
-              id="canvas-text-input-trim-mode"
-              className="canvas-node-panel__select"
-              onChange={(event) =>
-                onNodeConfigChange?.((currentConfig) =>
-                  applyTextInputConfigUpdate(currentConfig, {
-                    trim_mode: event.target.value
-                  })
-                )
-              }
-              value={config.trim_mode}
-            >
-              <option value="automatic">Automatic</option>
-              <option value="trim">Trim edges</option>
-              <option value="exact">Keep exact</option>
-            </select>
-            <span className="canvas-node-panel__caret" aria-hidden="true">
-              ⌄
-            </span>
-          </div>
+          <CanvasNodePanelSelect
+            id="canvas-text-input-trim-mode"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyTextInputConfigUpdate(currentConfig, {
+                  trim_mode: nextValue
+                })
+              )
+            }
+            options={[
+              { label: 'Automatic', value: 'automatic' },
+              { label: 'Trim edges', value: 'trim' },
+              { label: 'Keep exact', value: 'exact' }
+            ]}
+            value={config.trim_mode}
+          />
         </div>
 
         <div className="canvas-node-panel__toggle-row">
@@ -2233,58 +2290,36 @@ function CanvasTableInputManagementPanel({
           <div className="canvas-node-panel__field-head">
             <label htmlFor="canvas-table-input-schema">Schema</label>
           </div>
-          <div className="canvas-node-panel__select-wrap">
-            <select
-              id="canvas-table-input-schema"
-              className="canvas-node-panel__select"
-              onChange={(event) =>
-                onNodeConfigChange?.((currentConfig) =>
-                  applyTableInputConfigUpdate(currentConfig, {
-                    schema_name: event.target.value
-                  })
-                )
-              }
-              value={config.schema_name}
-            >
-              {schemaOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <span className="canvas-node-panel__caret" aria-hidden="true">
-              ⌄
-            </span>
-          </div>
+          <CanvasNodePanelSelect
+            id="canvas-table-input-schema"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyTableInputConfigUpdate(currentConfig, {
+                  schema_name: nextValue
+                })
+              )
+            }
+            options={schemaOptions}
+            value={config.schema_name}
+          />
         </div>
 
         <div className="canvas-node-panel__field">
           <div className="canvas-node-panel__field-head">
             <label htmlFor="canvas-table-input-table">Source table</label>
           </div>
-          <div className="canvas-node-panel__select-wrap">
-            <select
-              id="canvas-table-input-table"
-              className="canvas-node-panel__select"
-              onChange={(event) =>
-                onNodeConfigChange?.((currentConfig) =>
-                  applyTableInputConfigUpdate(currentConfig, {
-                    table_name: event.target.value
-                  })
-                )
-              }
-              value={config.table_name}
-            >
-              {tableOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <span className="canvas-node-panel__caret" aria-hidden="true">
-              ⌄
-            </span>
-          </div>
+          <CanvasNodePanelSelect
+            id="canvas-table-input-table"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyTableInputConfigUpdate(currentConfig, {
+                  table_name: nextValue
+                })
+              )
+            }
+            options={tableOptions}
+            value={config.table_name}
+          />
         </div>
 
         <div className="canvas-node-panel__field">
@@ -2349,27 +2384,22 @@ function CanvasTableInputManagementPanel({
           <div className="canvas-node-panel__field-head">
             <label htmlFor="canvas-table-input-row-limit">Row limit</label>
           </div>
-          <div className="canvas-node-panel__select-wrap">
-            <select
-              id="canvas-table-input-row-limit"
-              className="canvas-node-panel__select"
-              onChange={(event) =>
-                onNodeConfigChange?.((currentConfig) =>
-                  applyTableInputConfigUpdate(currentConfig, {
-                    row_limit: event.target.value
-                  })
-                )
-              }
-              value={rowLimitValue}
-            >
-              <option value="none">No limit</option>
-              <option value="100">100 rows</option>
-              <option value="1000">1000 rows</option>
-            </select>
-            <span className="canvas-node-panel__caret" aria-hidden="true">
-              ⌄
-            </span>
-          </div>
+          <CanvasNodePanelSelect
+            id="canvas-table-input-row-limit"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyTableInputConfigUpdate(currentConfig, {
+                  row_limit: nextValue
+                })
+              )
+            }
+            options={[
+              { label: 'No limit', value: 'none' },
+              { label: '100 rows', value: '100' },
+              { label: '1000 rows', value: '1000' }
+            ]}
+            value={rowLimitValue}
+          />
         </div>
 
         <div className="canvas-node-panel__field">
@@ -2458,17 +2488,228 @@ function CanvasTableInputManagementPanel({
   );
 }
 
-function CanvasTableOutputManagementPanel({
+function CanvasTableSchemaManagementPanel({
   definition,
   node,
   onNodeConfigChange,
   onNodeLabelChange,
   workflowSyncState = 'local'
 }) {
+  const config = normalizeTableSchemaPanelConfig(node);
+  const [draft, setDraft] = useState(() => formatTableSchemaAuthoringConfig(config));
+  const [draftFeedback, setDraftFeedback] = useState(null);
+  const destinationLabel =
+    config.tables.length === 1 ? config.table_name : `${config.tables.length} tables declared`;
+  const primaryKeySummary =
+    config.tables.length === 1
+      ? config.primary_key.length > 0
+        ? config.primary_key.join(', ')
+        : 'None'
+      : `${config.tables.filter((table) => table.primary_key.length > 0).length} keyed`;
+  const resultShapeGroups = buildTableSchemaResultShapeGroups(config);
+  const totalColumnCount = config.tables.reduce(
+    (count, table) => count + table.columns.length,
+    0
+  );
+
+  useEffect(() => {
+    setDraft(formatTableSchemaAuthoringConfig(config));
+  }, [node]);
+
+  useEffect(() => {
+    setDraftFeedback(null);
+  }, [node?.node_id]);
+
+  function handleDraftChange(nextDraft) {
+    setDraft(nextDraft);
+    setDraftFeedback(buildTableSchemaDraftFeedback(nextDraft, node?.config ?? {}));
+  }
+
+  function handleFormat() {
+    try {
+      const parsedConfig = parseTableSchemaAuthoringConfigText(draft, node?.config ?? {});
+      setDraft(formatTableSchemaAuthoringConfig(parsedConfig));
+      setDraftFeedback({
+        tone: 'success',
+        message: `Formatted schema JSON for ${buildTableSchemaFeedbackTarget(parsedConfig)}.`
+      });
+    } catch (error) {
+      setDraftFeedback({
+        tone: 'error',
+        message: error.message
+      });
+    }
+  }
+
+  function handleApply() {
+    try {
+      const parsedConfig = parseTableSchemaAuthoringConfigText(draft, node?.config ?? {});
+      onNodeConfigChange?.(parsedConfig);
+      setDraft(formatTableSchemaAuthoringConfig(parsedConfig));
+      setDraftFeedback({
+        tone: 'success',
+        message: `Applied schema JSON to ${buildTableSchemaFeedbackTarget(parsedConfig)}.`
+      });
+    } catch (error) {
+      setDraftFeedback({
+        tone: 'error',
+        message: error.message
+      });
+    }
+  }
+
+  return (
+    <aside className="canvas-node-panel" aria-label="Node management panel">
+      <header className="canvas-node-panel__header">
+        <div className="canvas-node-panel__title-group">
+          <span className="canvas-node-panel__title-icon" aria-hidden="true">
+            []
+          </span>
+          <div className="canvas-node-panel__title-copy">
+            <strong>{node?.label ?? definition?.display_name ?? 'Table Schema'}</strong>
+            <code className="canvas-node-panel__title-subtitle">
+              {node?.node_id ?? 'table_schema'}
+            </code>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__header-meta">
+          <span className="canvas-node-panel__meta-dot" aria-hidden="true" />
+          <span>{definition?.outputs?.length === 1 ? '1 output' : `${definition?.outputs?.length ?? 0} outputs`}</span>
+        </div>
+      </header>
+
+      <section className="canvas-node-panel__section">
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-table-schema-label">Label</label>
+          </div>
+          <input
+            id="canvas-table-schema-label"
+            className="canvas-node-panel__input"
+            onChange={(event) => onNodeLabelChange?.(event.target.value)}
+            type="text"
+            value={node?.label ?? ''}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-table-schema-json">Schema JSON</label>
+            <span className="canvas-node-panel__hint" aria-hidden="true">
+              i
+            </span>
+          </div>
+          <textarea
+            id="canvas-table-schema-json"
+            className="canvas-node-panel__textarea canvas-node-panel__textarea--code"
+            onChange={(event) => handleDraftChange(event.target.value)}
+            rows={14}
+            value={draft}
+          />
+        </div>
+
+        {draftFeedback ? (
+          <section
+            aria-live="polite"
+            className={`card-callout${draftFeedback.tone === 'error' ? ' card-callout--error' : ''}`}
+          >
+            <p>{draftFeedback.message}</p>
+          </section>
+        ) : null}
+
+        <div className="drawer-action-grid canvas-node-panel__button-grid">
+          <button
+            className="canvas-node-panel__button canvas-node-panel__button--secondary"
+            onClick={handleFormat}
+            type="button"
+          >
+            Format JSON
+          </button>
+          <button
+            className="canvas-node-panel__button canvas-node-panel__button--primary"
+            onClick={handleApply}
+            type="button"
+          >
+            Apply Schema
+          </button>
+        </div>
+
+        <CanvasTableShapeSection
+          ariaLabel="Result table shape"
+          groups={resultShapeGroups}
+          label="Result table shape"
+        />
+      </section>
+
+      <CanvasNodeExecutionTimingSection
+        nodeId={node?.node_id ?? 'table_schema'}
+        onTimingChange={(patch) =>
+          onNodeConfigChange?.((currentConfig) =>
+            applyTableSchemaConfigUpdate(
+              currentConfig,
+              buildExecutionTimingConfigPatch(currentConfig, patch)
+            )
+          )
+        }
+        timing={config.execution}
+      />
+
+      <footer className="canvas-node-panel__footer">
+        <p className="canvas-node-panel__footer-eyebrow">Declared tables</p>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Tables</span>
+          <strong>{destinationLabel}</strong>
+        </div>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Columns</span>
+          <strong>{String(totalColumnCount)}</strong>
+        </div>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>{config.tables.length === 1 ? 'Primary key' : 'Keys'}</span>
+          <strong>{primaryKeySummary}</strong>
+        </div>
+
+        <button className="canvas-node-panel__action" type="button">
+          <span aria-hidden="true">→</span>
+          <span>{workflowSyncStateLabel(workflowSyncState)}</span>
+        </button>
+      </footer>
+    </aside>
+  );
+}
+
+function CanvasTableOutputManagementPanel({
+  definition,
+  node,
+  onNodeConfigChange,
+  onNodeLabelChange,
+  workflow,
+  workflowSyncState = 'local'
+}) {
   const config = normalizeTableOutputPanelConfig(node);
   const schemaOptions = buildTableOutputSchemaOptions(config.target_schema);
-  const resultShape = buildTableOutputResultShape(config);
+  const resultShape = buildTableOutputResultShape(config, workflow, node?.node_id);
+  const resultShapeGroups =
+    config.input_shape === 'table_schema'
+      ? buildTableOutputResultShapeGroups(config, workflow, node?.node_id)
+      : [];
   const destination = `${resolveTableOutputDisplayValue(config.target_schema, 'outputs', '[select schema]')}.${resolveTableOutputDisplayValue(config.table_name, 'news_brief', '[select table]')}`;
+  const destinationLabel =
+    config.input_shape === 'table_schema'
+      ? buildTableOutputSchemaBootstrapDestinationLabel(
+          config,
+          workflow,
+          node?.node_id
+        )
+      : destination;
+  const schemaBootstrapSummary =
+    resultShapeGroups.length > 0
+      ? `${resultShapeGroups.length} table${resultShapeGroups.length === 1 ? '' : 's'}`
+      : 'Awaiting schema';
 
   return (
     <aside className="canvas-node-panel" aria-label="Node management panel">
@@ -2512,49 +2753,40 @@ function CanvasTableOutputManagementPanel({
               i
             </span>
           </div>
-          <div className="canvas-node-panel__select-wrap">
-            <select
-              id="canvas-table-output-schema"
-              className="canvas-node-panel__select"
-              onChange={(event) =>
-                onNodeConfigChange?.((currentConfig) =>
-                  applyTableOutputConfigUpdate(currentConfig, {
-                    target_schema: event.target.value
-                  })
-                )
-              }
-              value={config.target_schema}
-            >
-              {schemaOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <span className="canvas-node-panel__caret" aria-hidden="true">
-              ⌄
-            </span>
-          </div>
-        </div>
-
-        <div className="canvas-node-panel__field">
-          <div className="canvas-node-panel__field-head">
-            <label htmlFor="canvas-table-output-table">Target table</label>
-          </div>
-          <input
-            id="canvas-table-output-table"
-            className="canvas-node-panel__input"
-            onChange={(event) =>
+          <CanvasNodePanelSelect
+            id="canvas-table-output-schema"
+            onChange={(nextValue) =>
               onNodeConfigChange?.((currentConfig) =>
                 applyTableOutputConfigUpdate(currentConfig, {
-                  table_name: event.target.value
+                  target_schema: nextValue
                 })
               )
             }
-            type="text"
-            value={config.table_name}
+            options={schemaOptions}
+            value={config.target_schema}
           />
         </div>
+
+        {config.input_shape === 'table_schema' ? null : (
+          <div className="canvas-node-panel__field">
+            <div className="canvas-node-panel__field-head">
+              <label htmlFor="canvas-table-output-table">Target table</label>
+            </div>
+            <input
+              id="canvas-table-output-table"
+              className="canvas-node-panel__input"
+              onChange={(event) =>
+                onNodeConfigChange?.((currentConfig) =>
+                  applyTableOutputConfigUpdate(currentConfig, {
+                    table_name: event.target.value
+                  })
+                )
+              }
+              type="text"
+              value={config.table_name}
+            />
+          </div>
+        )}
 
         <div className="canvas-node-panel__field">
           <div className="canvas-node-panel__field-head">
@@ -2563,52 +2795,43 @@ function CanvasTableOutputManagementPanel({
               i
             </span>
           </div>
-          <div className="canvas-node-panel__select-wrap">
-            <select
-              id="canvas-table-output-mode"
-              className="canvas-node-panel__select"
-              onChange={(event) =>
-                onNodeConfigChange?.((currentConfig) =>
-                  applyTableOutputConfigUpdate(currentConfig, {
-                    write_mode: event.target.value
-                  })
-                )
-              }
-              value={config.write_mode}
-            >
-              <option value="append">Append rows</option>
-              <option value="replace">Replace table</option>
-            </select>
-            <span className="canvas-node-panel__caret" aria-hidden="true">
-              ⌄
-            </span>
-          </div>
+          <CanvasNodePanelSelect
+            id="canvas-table-output-mode"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyTableOutputConfigUpdate(currentConfig, {
+                  write_mode: nextValue
+                })
+              )
+            }
+            options={[
+              { label: 'Append rows', value: 'append' },
+              { label: 'Replace table', value: 'replace' }
+            ]}
+            value={config.write_mode}
+          />
         </div>
 
         <div className="canvas-node-panel__field">
           <div className="canvas-node-panel__field-head">
             <label htmlFor="canvas-table-output-shape">Input shape</label>
           </div>
-          <div className="canvas-node-panel__select-wrap">
-            <select
-              id="canvas-table-output-shape"
-              className="canvas-node-panel__select"
-              onChange={(event) =>
-                onNodeConfigChange?.((currentConfig) =>
-                  applyTableOutputConfigUpdate(currentConfig, {
-                    input_shape: event.target.value
-                  })
-                )
-              }
-              value={config.input_shape}
-            >
-              <option value="single_text_row">Single text row</option>
-              <option value="source_table">Source table</option>
-            </select>
-            <span className="canvas-node-panel__caret" aria-hidden="true">
-              ⌄
-            </span>
-          </div>
+          <CanvasNodePanelSelect
+            id="canvas-table-output-shape"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyTableOutputConfigUpdate(currentConfig, {
+                  input_shape: nextValue
+                })
+              )
+            }
+            options={[
+              { label: 'Single text row', value: 'single_text_row' },
+              { label: 'Source table', value: 'source_table' },
+              { label: 'Schema bootstrap', value: 'table_schema' }
+            ]}
+            value={config.input_shape}
+          />
         </div>
 
         {config.input_shape === 'single_text_row' ? (
@@ -2632,19 +2855,27 @@ function CanvasTableOutputManagementPanel({
           </div>
         ) : null}
 
-        <div className="canvas-node-panel__field">
-          <div className="canvas-node-panel__field-head">
-            <label>Result table shape</label>
+        {config.input_shape === 'table_schema' ? (
+          <CanvasTableShapeSection
+            ariaLabel="Result table shape"
+            groups={resultShapeGroups}
+            label="Result table shape"
+          />
+        ) : (
+          <div className="canvas-node-panel__field">
+            <div className="canvas-node-panel__field-head">
+              <label>Result table shape</label>
+            </div>
+            <div className="canvas-node-panel__code" aria-label="Result table shape">
+              {resultShape.map((column) => (
+                <div className="canvas-node-panel__code-line" key={column.name}>
+                  <span>{column.name}</span>
+                  <strong>{column.type}</strong>
+                </div>
+              ))}
+            </div>
           </div>
-          <div className="canvas-node-panel__code" aria-label="Result table shape">
-            {resultShape.map((column) => (
-              <div className="canvas-node-panel__code-line" key={column.name}>
-                <span>{column.name}</span>
-                <strong>{column.type}</strong>
-              </div>
-            ))}
-          </div>
-        </div>
+        )}
 
         <div className="canvas-node-panel__toggle-row">
           <label className="canvas-node-panel__checkbox">
@@ -2719,12 +2950,18 @@ function CanvasTableOutputManagementPanel({
 
         <div className="canvas-node-panel__footer-row">
           <span>Rows per run</span>
-          <strong>{config.input_shape === 'source_table' ? 'Table copy' : '1 row'}</strong>
+          <strong>
+            {config.input_shape === 'table_schema'
+              ? schemaBootstrapSummary
+              : config.input_shape === 'source_table'
+                ? 'Table copy'
+                : '1 row'}
+          </strong>
         </div>
 
         <div className="canvas-node-panel__footer-row">
           <span>Destination</span>
-          <strong>{destination}</strong>
+          <strong>{destinationLabel}</strong>
         </div>
 
         <button className="canvas-node-panel__action" type="button">
@@ -3418,10 +3655,6 @@ function toneFromStatus(status) {
 }
 
 function cardEyebrowFor(type) {
-  if (type === 'node-inspector') {
-    return 'Node Inspector';
-  }
-
   if (type === 'run-control') {
     return 'Run Control';
   }
@@ -3437,11 +3670,7 @@ function cardEyebrowFor(type) {
   return 'Context';
 }
 
-function cardTitleFor({ floatingCard, activeProblem, activeRun, selectedNode }) {
-  if (floatingCard.type === 'node-inspector') {
-    return selectedNode?.label ?? selectedNode?.node_id ?? 'Node';
-  }
-
+function cardTitleFor({ floatingCard, activeProblem, activeRun }) {
   if (floatingCard.type === 'run-control') {
     return 'Validate + Execute';
   }
@@ -3754,7 +3983,12 @@ function buildCanvasNodeManagementModel(node, definition) {
     title: node?.label ?? definition?.display_name ?? humanizeToken(node?.type_id ?? 'node'),
     subtitle: node?.node_id ?? definition?.type_id ?? humanizeToken(node?.type_id ?? 'node'),
     meta: portCount ? `${portCount} port${portCount === 1 ? '' : 's'}` : 'Selected',
-    icon: nodeTypeId === 'send_email' ? '@' : 'T',
+    icon:
+      nodeTypeId === 'send_email'
+        ? '@'
+        : nodeTypeId === 'table_input' || nodeTypeId === 'table_output' || nodeTypeId === 'table_schema'
+          ? '[]'
+          : 'T',
     footerEyebrow: 'Run selected node',
     footerMetricLabel: 'Estimated load',
     footerMetricValue: '24 units',
@@ -3822,6 +4056,20 @@ const DEFAULT_TABLE_INPUT_CATALOG = 'workflow.duckdb';
 const DEFAULT_TABLE_INPUT_SCHEMA = 'runs';
 const DEFAULT_TABLE_INPUT_TABLE_NAME = 'workflow_runs';
 const DEFAULT_TABLE_INPUT_OUTPUT_ALIAS = 'workflow_runs';
+const DEFAULT_TABLE_SCHEMA_CATALOG = 'workflow.duckdb';
+const DEFAULT_TABLE_SCHEMA_SCHEMA = 'tables';
+const DEFAULT_TABLE_SCHEMA_TABLE_NAME = 'orders_fact';
+const DEFAULT_TABLE_SCHEMA_OUTPUT_ALIAS = 'orders_fact_definition';
+const DEFAULT_TABLE_SCHEMA_CREATE_MODE = 'create_if_missing';
+const DEFAULT_TABLE_SCHEMA_IF_TARGET_EXISTS = 'keep_existing';
+const DEFAULT_TABLE_SCHEMA_COLUMNS = [
+  {
+    name: 'order_id',
+    nullable: false,
+    primary_key: true,
+    type: 'bigint'
+  }
+];
 const TABLE_OUTPUT_SCHEMA_CHOICES = [
   { label: 'outputs', value: 'outputs' },
   { label: 'tables', value: 'tables' },
@@ -3925,6 +4173,75 @@ function normalizeTableInputPanelConfig(node) {
   };
 }
 
+function normalizeTableSchemaPanelConfig(node) {
+  const config = node?.config ?? {};
+  const tables = normalizeStoredTableSchemaDefinitions(config);
+  const primaryTable = tables[0];
+
+  return {
+    catalog: normalizeTableSchemaTextValue(config.catalog, DEFAULT_TABLE_SCHEMA_CATALOG),
+    checks: primaryTable.checks,
+    columns: primaryTable.columns,
+    create_mode: primaryTable.create_mode,
+    execution: normalizeNodeExecutionTimingConfig(config),
+    if_target_exists: primaryTable.if_target_exists,
+    open_in_catalog:
+      typeof config.open_in_catalog === 'boolean' ? config.open_in_catalog : false,
+    output_alias: primaryTable.output_alias,
+    primary_key: primaryTable.primary_key,
+    schema_name: primaryTable.schema_name,
+    table_name: primaryTable.table_name,
+    tables
+  };
+}
+
+function normalizeStoredTableSchemaDefinitions(config = {}) {
+  if (Array.isArray(config.tables) && config.tables.length > 0) {
+    return config.tables.map((tableConfig, index) =>
+      normalizeStoredTableSchemaDefinition(tableConfig, index)
+    );
+  }
+
+  return [normalizeStoredTableSchemaDefinition(config, 0)];
+}
+
+function normalizeStoredTableSchemaDefinition(config = {}, index = 0) {
+  const schemaName = normalizeNodeConfigTextField(
+    config,
+    'schema_name',
+    DEFAULT_TABLE_SCHEMA_SCHEMA
+  );
+  const tableName = normalizeNodeConfigTextField(
+    config,
+    'table_name',
+    index === 0 ? DEFAULT_TABLE_SCHEMA_TABLE_NAME : `table_${index + 1}`
+  );
+  const primaryKey = normalizeTableSchemaPrimaryKeyNames(config.primary_key);
+  const columns = normalizeStoredTableSchemaColumns(config.columns, primaryKey);
+
+  return {
+    checks: normalizeTableSchemaChecks(config.checks),
+    columns,
+    create_mode: normalizeTableSchemaTextValue(
+      config.create_mode,
+      DEFAULT_TABLE_SCHEMA_CREATE_MODE
+    ),
+    if_target_exists: normalizeTableSchemaTextValue(
+      config.if_target_exists,
+      DEFAULT_TABLE_SCHEMA_IF_TARGET_EXISTS
+    ),
+    output_alias: normalizeTableSchemaTextValue(
+      config.output_alias,
+      deriveTableSchemaOutputAlias(tableName)
+    ),
+    primary_key: columns
+      .filter((column) => column.primary_key)
+      .map((column) => column.name),
+    schema_name: schemaName,
+    table_name: tableName
+  };
+}
+
 function normalizeTableOutputPanelConfig(node) {
   const config = node?.config ?? {};
 
@@ -3935,7 +4252,9 @@ function normalizeTableOutputPanelConfig(node) {
     include_written_at:
       typeof config.include_written_at === 'boolean' ? config.include_written_at : true,
     input_shape:
-      config.input_shape === 'single_text_row' || config.input_shape === 'source_table'
+      config.input_shape === 'single_text_row' ||
+      config.input_shape === 'source_table' ||
+      config.input_shape === 'table_schema'
         ? config.input_shape
         : DEFAULT_TABLE_OUTPUT_INPUT_SHAPE,
     open_in_catalog:
@@ -4062,6 +4381,16 @@ function applyTableInputConfigUpdate(currentConfig = {}, patch = {}) {
   };
 }
 
+function applyTableSchemaConfigUpdate(currentConfig = {}, patch = {}) {
+  const next = {
+    ...normalizeTableSchemaPanelConfig({ config: currentConfig }),
+    ...currentConfig,
+    ...patch
+  };
+
+  return normalizeTableSchemaPanelConfig({ config: next });
+}
+
 function applyTableOutputConfigUpdate(currentConfig = {}, patch = {}) {
   const next = {
     ...normalizeTableOutputPanelConfig({ config: currentConfig }),
@@ -4077,7 +4406,9 @@ function applyTableOutputConfigUpdate(currentConfig = {}, patch = {}) {
     include_written_at:
       typeof next.include_written_at === 'boolean' ? next.include_written_at : true,
     input_shape:
-      next.input_shape === 'single_text_row' || next.input_shape === 'source_table'
+      next.input_shape === 'single_text_row' ||
+      next.input_shape === 'source_table' ||
+      next.input_shape === 'table_schema'
         ? next.input_shape
         : DEFAULT_TABLE_OUTPUT_INPUT_SHAPE,
     open_in_catalog:
@@ -4201,6 +4532,67 @@ function normalizeTableInputSelectedColumns(value) {
   return [];
 }
 
+function normalizeTableSchemaPrimaryKeyNames(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return dedupeTableSchemaNames(
+    value
+      .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+      .filter((entry) => entry.length > 0)
+  );
+}
+
+function normalizeTableSchemaChecks(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+    .filter((entry) => entry.length > 0);
+}
+
+function normalizeStoredTableSchemaColumns(value, primaryKey = []) {
+  const sourceColumns = Array.isArray(value) && value.length > 0 ? value : DEFAULT_TABLE_SCHEMA_COLUMNS;
+  const primaryKeySet = new Set(primaryKey.map((entry) => entry.toLowerCase()));
+
+  return sourceColumns.map((column, index) => {
+    const name =
+      typeof column?.name === 'string' && column.name.trim()
+        ? column.name.trim()
+        : `column_${index + 1}`;
+    const primary_key = column?.primary_key === true || primaryKeySet.has(name.toLowerCase());
+    const nullable =
+      typeof column?.nullable === 'boolean' ? column.nullable : !primary_key;
+    const normalizedColumn = {
+      name,
+      nullable,
+      primary_key,
+      type:
+        typeof column?.type === 'string' && column.type.trim()
+          ? column.type.trim()
+          : 'text'
+    };
+
+    if (typeof column?.default === 'string') {
+      normalizedColumn.default = column.default;
+    }
+
+    return normalizedColumn;
+  });
+}
+
+function normalizeTableSchemaTextValue(value, fallback) {
+  if (typeof value !== 'string') {
+    return fallback;
+  }
+
+  const normalized = value.trim();
+  return normalized || fallback;
+}
+
 function hasNodeConfigField(config, key) {
   return Boolean(config) && Object.prototype.hasOwnProperty.call(config, key);
 }
@@ -4229,6 +4621,536 @@ function buildTableInputSchemaOptions(activeSchema) {
   }
 
   return options;
+}
+
+function parseTableSchemaAuthoringConfigText(draftText, currentConfig = {}) {
+  const parsed = JSON.parse(draftText);
+  return parseTableSchemaAuthoringConfig(parsed, currentConfig);
+}
+
+function parseTableSchemaAuthoringConfig(value, currentConfig = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Schema JSON must be an object.');
+  }
+
+  if (
+    hasNodeConfigField(value, 'tables') &&
+    (hasNodeConfigField(value, 'table') ||
+      hasNodeConfigField(value, 'schema_name') ||
+      hasNodeConfigField(value, 'table_name'))
+  ) {
+    throw new Error(
+      'Schema JSON should use either `tables`, `table`, or canonical `schema_name` / `table_name`, not a mix.'
+    );
+  }
+
+  if (
+    hasNodeConfigField(value, 'table') &&
+    (hasNodeConfigField(value, 'schema_name') || hasNodeConfigField(value, 'table_name'))
+  ) {
+    throw new Error(
+      'Schema JSON should use either `table` or `schema_name` / `table_name`, not both.'
+    );
+  }
+
+  if (hasNodeConfigField(value, 'tables')) {
+    return buildCanonicalTableSchemaConfigFromAuthoringTables(value, currentConfig);
+  }
+
+  if (hasNodeConfigField(value, 'table')) {
+    return buildCanonicalTableSchemaConfigFromAuthoring(value, currentConfig);
+  }
+
+  if (hasNodeConfigField(value, 'schema_name') || hasNodeConfigField(value, 'table_name')) {
+    return applyTableSchemaConfigUpdate(currentConfig, value);
+  }
+
+  throw new Error(
+    'Schema JSON expects `tables`, `table`, or canonical `schema_name` and `table_name` fields.'
+  );
+}
+
+function buildCanonicalTableSchemaConfigFromAuthoring(value, currentConfig = {}) {
+  const table = parseTableSchemaAuthoringTableDefinition(value, 0);
+
+  return buildCanonicalTableSchemaConfigFromDefinitions(
+    [table],
+    {
+      catalog:
+        readOptionalTableSchemaStringField(value, 'catalog') ??
+        DEFAULT_TABLE_SCHEMA_CATALOG,
+      currentConfig,
+      open_in_catalog: parseOptionalTableSchemaBooleanField(
+        value,
+        'open_in_catalog',
+        false
+      )
+    }
+  );
+}
+
+function buildCanonicalTableSchemaConfigFromAuthoringTables(value, currentConfig = {}) {
+  if (!Array.isArray(value.tables) || value.tables.length === 0) {
+    throw new Error('Schema JSON expects `tables` to be a non-empty array.');
+  }
+
+  const tables = value.tables.map((tableConfig, index) =>
+    parseTableSchemaAuthoringTableDefinition(tableConfig, index, {
+      defaultCreateMode:
+        readOptionalTableSchemaStringField(value, 'create_mode') ??
+        DEFAULT_TABLE_SCHEMA_CREATE_MODE,
+      defaultIfTargetExists:
+        readOptionalTableSchemaStringField(value, 'if_target_exists') ??
+        DEFAULT_TABLE_SCHEMA_IF_TARGET_EXISTS
+    })
+  );
+
+  return buildCanonicalTableSchemaConfigFromDefinitions(
+    tables,
+    {
+      catalog:
+        readOptionalTableSchemaStringField(value, 'catalog') ??
+        DEFAULT_TABLE_SCHEMA_CATALOG,
+      currentConfig,
+      open_in_catalog: parseOptionalTableSchemaBooleanField(
+        value,
+        'open_in_catalog',
+        false
+      )
+    }
+  );
+}
+
+function buildCanonicalTableSchemaConfigFromDefinitions(
+  tables,
+  { catalog, currentConfig = {}, open_in_catalog = false }
+) {
+  const primaryTable = tables[0];
+
+  return {
+    catalog:
+      typeof catalog === 'string' && catalog.trim()
+        ? catalog.trim()
+        : DEFAULT_TABLE_SCHEMA_CATALOG,
+    checks: primaryTable.checks,
+    columns: primaryTable.columns,
+    create_mode: primaryTable.create_mode,
+    execution: normalizeNodeExecutionTimingConfig(currentConfig),
+    if_target_exists: primaryTable.if_target_exists,
+    open_in_catalog,
+    output_alias: primaryTable.output_alias,
+    primary_key: primaryTable.primary_key,
+    schema_name: primaryTable.schema_name,
+    table_name: primaryTable.table_name,
+    tables
+  };
+}
+
+function parseTableSchemaAuthoringTableDefinition(
+  value,
+  index,
+  {
+    defaultCreateMode = DEFAULT_TABLE_SCHEMA_CREATE_MODE,
+    defaultIfTargetExists = DEFAULT_TABLE_SCHEMA_IF_TARGET_EXISTS
+  } = {}
+) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`Schema JSON table ${index + 1} must be an object.`);
+  }
+
+  if (
+    hasNodeConfigField(value, 'table') &&
+    (hasNodeConfigField(value, 'schema_name') || hasNodeConfigField(value, 'table_name'))
+  ) {
+    throw new Error(
+      `Schema JSON table ${index + 1} should use either \`table\` or \`schema_name\` / \`table_name\`, not both.`
+    );
+  }
+
+  const tableReference = hasNodeConfigField(value, 'table')
+    ? parseTableSchemaReference(value.table)
+    : parseCanonicalTableSchemaReference(
+        value,
+        `Schema JSON table ${index + 1}`
+      );
+  const columns = parseTableSchemaAuthoringColumns(value.columns, value.primary_key);
+
+  return {
+    checks: parseTableSchemaChecksForAuthoring(value.checks),
+    columns,
+    create_mode:
+      readOptionalTableSchemaStringField(value, 'create_mode') ?? defaultCreateMode,
+    if_target_exists:
+      readOptionalTableSchemaStringField(value, 'if_target_exists') ??
+      defaultIfTargetExists,
+    output_alias:
+      readOptionalTableSchemaStringField(value, 'alias') ??
+      readOptionalTableSchemaStringField(value, 'output_alias') ??
+      deriveTableSchemaOutputAlias(tableReference.table_name),
+    primary_key: columns.filter((column) => column.primary_key).map((column) => column.name),
+    schema_name: tableReference.schema_name,
+    table_name: tableReference.table_name
+  };
+}
+
+function parseCanonicalTableSchemaReference(value, label) {
+  const schema_name = readRequiredTableSchemaStringField(value, 'schema_name', label);
+  const table_name = readRequiredTableSchemaStringField(value, 'table_name', label);
+
+  return {
+    schema_name,
+    table_name
+  };
+}
+
+function parseTableSchemaReference(value) {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error('Schema JSON expects `table` to be a non-empty table name string.');
+  }
+
+  const parts = value
+    .split('.')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+  if (parts.length === 1) {
+    return {
+      schema_name: DEFAULT_TABLE_SCHEMA_SCHEMA,
+      table_name: parts[0]
+    };
+  }
+
+  if (parts.length === 2) {
+    return {
+      schema_name: parts[0],
+      table_name: parts[1]
+    };
+  }
+
+  throw new Error(
+    'Schema JSON expects `table` as a table name, with optional legacy `schema.table` form.'
+  );
+}
+
+function parseTableSchemaAuthoringColumns(value, primaryKeyValue) {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error('Schema JSON expects `columns` to be a non-empty array.');
+  }
+
+  const declaredPrimaryKey = parseTableSchemaPrimaryKeyDeclaration(primaryKeyValue);
+  const columns = value.map((column, index) =>
+    parseTableSchemaAuthoringColumn(column, index, declaredPrimaryKey)
+  );
+  const seenNames = new Set();
+
+  columns.forEach((column) => {
+    const dedupeKey = column.name.toLowerCase();
+    if (seenNames.has(dedupeKey)) {
+      throw new Error(`Schema JSON has duplicate column name \`${column.name}\`.`);
+    }
+    seenNames.add(dedupeKey);
+  });
+
+  declaredPrimaryKey.forEach((columnName) => {
+    if (!seenNames.has(columnName.toLowerCase())) {
+      throw new Error(
+        `Schema JSON primary key column \`${columnName}\` does not exist in \`columns\`.`
+      );
+    }
+  });
+
+  return columns;
+}
+
+function parseTableSchemaAuthoringColumn(column, index, declaredPrimaryKey) {
+  if (!column || typeof column !== 'object' || Array.isArray(column)) {
+    throw new Error(`Schema JSON column ${index + 1} must be an object.`);
+  }
+
+  const name = readRequiredTableSchemaStringField(column, 'name', `column ${index + 1}`);
+  const type = readRequiredTableSchemaStringField(column, 'type', `column ${name}`);
+  const hasRequired = hasNodeConfigField(column, 'required');
+  const hasNullable = hasNodeConfigField(column, 'nullable');
+  const hasPrimaryKey = hasNodeConfigField(column, 'primary_key');
+  const hasPk = hasNodeConfigField(column, 'pk');
+
+  if (hasRequired && typeof column.required !== 'boolean') {
+    throw new Error(`Schema JSON column \`${name}\` expects boolean \`required\`.`);
+  }
+
+  if (hasNullable && typeof column.nullable !== 'boolean') {
+    throw new Error(`Schema JSON column \`${name}\` expects boolean \`nullable\`.`);
+  }
+
+  if (
+    hasRequired &&
+    hasNullable &&
+    column.nullable !== !column.required
+  ) {
+    throw new Error(
+      `Schema JSON column \`${name}\` cannot mix conflicting \`required\` and \`nullable\` values.`
+    );
+  }
+
+  if (hasPrimaryKey && typeof column.primary_key !== 'boolean') {
+    throw new Error(`Schema JSON column \`${name}\` expects boolean \`primary_key\`.`);
+  }
+
+  if (hasPk && typeof column.pk !== 'boolean') {
+    throw new Error(`Schema JSON column \`${name}\` expects boolean \`pk\`.`);
+  }
+
+  if (hasPrimaryKey && hasPk && column.primary_key !== column.pk) {
+    throw new Error(
+      `Schema JSON column \`${name}\` cannot mix conflicting \`primary_key\` and \`pk\` values.`
+    );
+  }
+
+  const primary_key =
+    (hasPk ? column.pk : hasPrimaryKey ? column.primary_key : false) ||
+    declaredPrimaryKey.has(name.toLowerCase());
+  const nullable = hasRequired ? !column.required : hasNullable ? column.nullable : !primary_key;
+
+  if (primary_key && nullable) {
+    throw new Error(`Schema JSON column \`${name}\` cannot be nullable and primary key.`);
+  }
+
+  const normalizedColumn = {
+    name,
+    nullable,
+    primary_key,
+    type
+  };
+
+  if (hasNodeConfigField(column, 'default')) {
+    if (typeof column.default !== 'string' || !column.default.trim()) {
+      throw new Error(`Schema JSON column \`${name}\` expects string \`default\` when provided.`);
+    }
+
+    normalizedColumn.default = column.default;
+  }
+
+  return normalizedColumn;
+}
+
+function parseTableSchemaPrimaryKeyDeclaration(value) {
+  if (value == null) {
+    return new Set();
+  }
+
+  if (!Array.isArray(value)) {
+    throw new Error(
+      'Schema JSON expects `primary_key` to be an array of column names when provided.'
+    );
+  }
+
+  const primaryKeyColumns = value.map((entry, index) => {
+    if (typeof entry !== 'string' || !entry.trim()) {
+      throw new Error(
+        `Schema JSON primary key entry ${index + 1} must be a non-empty string.`
+      );
+    }
+
+    return entry.trim();
+  });
+
+  return new Set(primaryKeyColumns.map((entry) => entry.toLowerCase()));
+}
+
+function parseTableSchemaChecksForAuthoring(value) {
+  if (value == null) {
+    return [];
+  }
+
+  if (!Array.isArray(value)) {
+    throw new Error('Schema JSON expects `checks` to be an array of strings when provided.');
+  }
+
+  return value.map((entry, index) => {
+    if (typeof entry !== 'string' || !entry.trim()) {
+      throw new Error(`Schema JSON check ${index + 1} must be a non-empty string.`);
+    }
+
+    return entry.trim();
+  });
+}
+
+function parseOptionalTableSchemaBooleanField(source, key, fallback) {
+  if (!hasNodeConfigField(source, key)) {
+    return fallback;
+  }
+
+  if (typeof source[key] !== 'boolean') {
+    throw new Error(`Schema JSON expects boolean \`${key}\` when provided.`);
+  }
+
+  return source[key];
+}
+
+function readOptionalTableSchemaStringField(source, key) {
+  if (!hasNodeConfigField(source, key) || source[key] == null) {
+    return null;
+  }
+
+  if (typeof source[key] !== 'string' || !source[key].trim()) {
+    throw new Error(`Schema JSON expects non-empty string \`${key}\` when provided.`);
+  }
+
+  return source[key].trim();
+}
+
+function readRequiredTableSchemaStringField(source, key, label) {
+  if (typeof source[key] !== 'string' || !source[key].trim()) {
+    throw new Error(`Schema JSON ${label} expects non-empty string \`${key}\`.`);
+  }
+
+  return source[key].trim();
+}
+
+function formatTableSchemaAuthoringConfig(config) {
+  const normalizedConfig = normalizeTableSchemaPanelConfig({ config });
+  const formatted =
+    normalizedConfig.tables.length > 1
+      ? {
+          ...(normalizedConfig.catalog !== DEFAULT_TABLE_SCHEMA_CATALOG
+            ? { catalog: normalizedConfig.catalog }
+            : {}),
+          tables: normalizedConfig.tables.map((table) =>
+            formatTableSchemaAuthoringTableDefinition(table)
+          ),
+          ...(normalizedConfig.open_in_catalog ? { open_in_catalog: true } : {})
+        }
+      : {
+          ...formatTableSchemaAuthoringTableDefinition(normalizedConfig.tables[0]),
+          ...(normalizedConfig.catalog !== DEFAULT_TABLE_SCHEMA_CATALOG
+            ? { catalog: normalizedConfig.catalog }
+            : {}),
+          ...(normalizedConfig.open_in_catalog ? { open_in_catalog: true } : {})
+        };
+
+  return JSON.stringify(formatted, null, 2);
+}
+
+function formatTableSchemaAuthoringTableDefinition(table) {
+  return {
+    table: table.table_name,
+    ...(table.output_alias !== table.table_name
+      ? { alias: table.output_alias }
+      : {}),
+    columns: table.columns.map((column) => ({
+      name: column.name,
+      type: column.type,
+      ...(!column.nullable ? { required: true } : {}),
+      ...(column.primary_key ? { pk: true } : {}),
+      ...(typeof column.default === 'string' ? { default: column.default } : {})
+    })),
+    ...(table.checks.length > 0 ? { checks: table.checks } : {}),
+    ...(table.create_mode !== DEFAULT_TABLE_SCHEMA_CREATE_MODE
+      ? { create_mode: table.create_mode }
+      : {}),
+    ...(table.if_target_exists !== DEFAULT_TABLE_SCHEMA_IF_TARGET_EXISTS
+      ? { if_target_exists: table.if_target_exists }
+      : {})
+  };
+}
+
+function buildTableSchemaDraftFeedback(draftText, currentConfig = {}) {
+  try {
+    const parsedConfig = parseTableSchemaAuthoringConfigText(draftText, currentConfig);
+    return {
+      tone: 'success',
+      message: buildTableSchemaLintSummary(parsedConfig)
+    };
+  } catch (error) {
+    return {
+      tone: 'error',
+      message:
+        error instanceof Error ? error.message : 'Schema JSON could not be parsed.'
+    };
+  }
+}
+
+function buildTableSchemaLintSummary(config) {
+  const normalizedConfig = normalizeTableSchemaPanelConfig({ config });
+  if (normalizedConfig.tables.length > 1) {
+    const totalColumns = normalizedConfig.tables.reduce(
+      (count, table) => count + table.columns.length,
+      0
+    );
+
+    return `Schema JSON looks valid for ${normalizedConfig.tables.length} tables with ${totalColumns} total columns.`;
+  }
+
+  const primaryKeySummary =
+    normalizedConfig.primary_key.length > 0
+      ? normalizedConfig.primary_key.join(', ')
+      : 'none';
+
+  return `Schema JSON looks valid for ${normalizedConfig.table_name} with ${normalizedConfig.columns.length} column${normalizedConfig.columns.length === 1 ? '' : 's'}; primary key: ${primaryKeySummary}.`;
+}
+
+function buildTableSchemaFeedbackTarget(config) {
+  const normalizedConfig = normalizeTableSchemaPanelConfig({ config });
+
+  if (normalizedConfig.tables.length === 1) {
+    return normalizedConfig.table_name;
+  }
+
+  return `${normalizedConfig.tables.length} tables`;
+}
+
+function buildTableSchemaColumnDefinition(column) {
+  const parts = [column.type];
+
+  if (!column.nullable) {
+    parts.push('NOT NULL');
+  }
+
+  if (column.primary_key) {
+    parts.push('PK');
+  }
+
+  if (typeof column.default === 'string') {
+    parts.push(`DEFAULT ${column.default}`);
+  }
+
+  return parts.join(' · ');
+}
+
+function buildTableSchemaResultShapeGroups(config) {
+  return config.tables.map((table) => ({
+    columns: table.columns.map((column) => ({
+      definition: buildTableSchemaColumnDefinition(column),
+      name: column.name
+    })),
+    name: table.table_name
+  }));
+}
+
+function deriveTableSchemaOutputAlias(tableName) {
+  const normalized =
+    typeof tableName === 'string' && tableName.trim()
+      ? tableName.trim()
+      : DEFAULT_TABLE_SCHEMA_OUTPUT_ALIAS;
+
+  return normalized || DEFAULT_TABLE_SCHEMA_OUTPUT_ALIAS;
+}
+
+function dedupeTableSchemaNames(entries) {
+  const seen = new Set();
+  const deduped = [];
+
+  entries.forEach((entry) => {
+    const normalizedKey = entry.toLowerCase();
+    if (seen.has(normalizedKey)) {
+      return;
+    }
+
+    seen.add(normalizedKey);
+    deduped.push(entry);
+  });
+
+  return deduped;
 }
 
 function buildTableInputTableOptions(activeSchema, activeTableName) {
@@ -4311,7 +5233,23 @@ function buildTableOutputSchemaOptions(activeSchema) {
   return options;
 }
 
-function buildTableOutputResultShape(config) {
+function buildTableOutputResultShape(config, workflow = null, nodeId = null) {
+  if (config?.input_shape === 'table_schema') {
+    const groups = buildTableOutputResultShapeGroups(config, workflow, nodeId);
+
+    return groups.length > 0
+      ? groups[0].columns.map((column) => ({
+          name: column.name,
+          type: column.definition
+        }))
+      : [
+          {
+            name: 'declared tables',
+            type: 'schema bootstrap'
+          }
+        ];
+  }
+
   if (config?.input_shape === 'source_table') {
     return [
       {
@@ -4364,6 +5302,107 @@ function buildTableOutputResultShape(config) {
   return columns;
 }
 
+function buildTableOutputResultShapeGroups(config, workflow = null, nodeId = null) {
+  if (config?.input_shape !== 'table_schema') {
+    return [];
+  }
+
+  const schemaTables = resolveConnectedTableSchemaDefinitions(workflow, nodeId);
+  const fallbackTables = schemaTables.length > 0
+    ? schemaTables
+    : [
+        {
+          checks: [],
+          columns: [],
+          create_mode: DEFAULT_TABLE_SCHEMA_CREATE_MODE,
+          if_target_exists: DEFAULT_TABLE_SCHEMA_IF_TARGET_EXISTS,
+          output_alias: 'declared tables',
+          primary_key: [],
+          schema_name: resolveTableOutputDisplayValue(
+            config?.target_schema,
+            DEFAULT_TABLE_OUTPUT_SCHEMA
+          ),
+          table_name: 'declared tables'
+        }
+      ];
+
+  return fallbackTables.map((table) => {
+    const schemaColumns = table.columns.map((column) => ({
+      definition: buildTableSchemaColumnDefinition(column),
+      name: column.name
+    }));
+    const nextColumns = [...schemaColumns];
+
+    if (!nextColumns.some((column) => column.name === 'run_id') && config?.include_run_id) {
+      nextColumns.push({
+        definition: 'varchar',
+        name: 'run_id'
+      });
+    }
+
+    if (
+      !nextColumns.some((column) => column.name === 'written_at') &&
+      config?.include_written_at
+    ) {
+      nextColumns.push({
+        definition: 'varchar',
+        name: 'written_at'
+      });
+    }
+
+    return {
+      columns: nextColumns,
+      name: `${resolveTableOutputDisplayValue(
+        config?.target_schema,
+        DEFAULT_TABLE_OUTPUT_SCHEMA
+      )}.${table.table_name}`
+    };
+  });
+}
+
+function buildTableOutputSchemaBootstrapDestinationLabel(
+  config,
+  workflow = null,
+  nodeId = null
+) {
+  const groups = buildTableOutputResultShapeGroups(config, workflow, nodeId);
+  if (!groups.length) {
+    return `${resolveTableOutputDisplayValue(
+      config?.target_schema,
+      DEFAULT_TABLE_OUTPUT_SCHEMA
+    )} (awaiting tables)`;
+  }
+
+  if (groups.length === 1) {
+    return groups[0].name;
+  }
+
+  return `${resolveTableOutputDisplayValue(
+    config?.target_schema,
+    DEFAULT_TABLE_OUTPUT_SCHEMA
+  )} (${groups.length} tables)`;
+}
+
+function resolveConnectedTableSchemaDefinitions(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return [];
+  }
+
+  const inputEdge = workflow.edges.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'text'
+  );
+  if (!inputEdge) {
+    return [];
+  }
+
+  const sourceNode = workflow.nodes.find((node) => node.node_id === inputEdge.source_node_id);
+  if (sourceNode?.type_id !== 'table_schema') {
+    return [];
+  }
+
+  return normalizeTableSchemaPanelConfig({ config: sourceNode.config ?? {} }).tables;
+}
+
 function resolveTableOutputDisplayValue(value, fallback, emptyLabel = fallback) {
   if (typeof value !== 'string') {
     return fallback;
@@ -4401,7 +5440,7 @@ function workflowSyncStateLabel(syncState) {
 function appendCanvasNode(workflow, typeId, options = {}) {
   const { position = null, selectedNodeId = null } = options;
 
-  if (!['text_input', 'table_input', 'table_output', 'send_email'].includes(typeId)) {
+  if (!['text_input', 'table_input', 'table_schema', 'table_output', 'send_email'].includes(typeId)) {
     return null;
   }
 
@@ -4423,6 +5462,8 @@ function appendCanvasNode(workflow, typeId, options = {}) {
         ? 'Text Input'
         : typeId === 'table_input'
           ? 'Table Input'
+        : typeId === 'table_schema'
+          ? 'Table Schema'
         : typeId === 'table_output'
           ? 'Table Output'
           : 'Send Email',
@@ -4453,6 +5494,35 @@ function appendCanvasNode(workflow, typeId, options = {}) {
               schema_name: DEFAULT_TABLE_INPUT_SCHEMA,
               selected_columns: [],
               table_name: DEFAULT_TABLE_INPUT_TABLE_NAME
+            }
+        : typeId === 'table_schema'
+          ? {
+              catalog: DEFAULT_TABLE_SCHEMA_CATALOG,
+              checks: [],
+              columns: DEFAULT_TABLE_SCHEMA_COLUMNS.map((column) => ({ ...column })),
+              create_mode: DEFAULT_TABLE_SCHEMA_CREATE_MODE,
+              execution: {
+                wait_after_seconds: 0,
+                wait_before_seconds: 0
+              },
+              if_target_exists: DEFAULT_TABLE_SCHEMA_IF_TARGET_EXISTS,
+              open_in_catalog: false,
+              output_alias: DEFAULT_TABLE_SCHEMA_OUTPUT_ALIAS,
+              primary_key: ['order_id'],
+              schema_name: DEFAULT_TABLE_SCHEMA_SCHEMA,
+              table_name: DEFAULT_TABLE_SCHEMA_TABLE_NAME,
+              tables: [
+                {
+                  checks: [],
+                  columns: DEFAULT_TABLE_SCHEMA_COLUMNS.map((column) => ({ ...column })),
+                  create_mode: DEFAULT_TABLE_SCHEMA_CREATE_MODE,
+                  if_target_exists: DEFAULT_TABLE_SCHEMA_IF_TARGET_EXISTS,
+                  output_alias: DEFAULT_TABLE_SCHEMA_OUTPUT_ALIAS,
+                  primary_key: ['order_id'],
+                  schema_name: DEFAULT_TABLE_SCHEMA_SCHEMA,
+                  table_name: DEFAULT_TABLE_SCHEMA_TABLE_NAME
+                }
+              ]
             }
         : typeId === 'table_output'
           ? {
@@ -4495,7 +5565,7 @@ function appendCanvasNode(workflow, typeId, options = {}) {
                 ? selectedNode.position.x + (typeId === 'text_input' ? -380 : 380)
                 : typeId === 'send_email' || typeId === 'table_output'
                   ? 520
-                  : typeId === 'table_input'
+                  : typeId === 'table_input' || typeId === 'table_schema'
                     ? 160
                   : 120
             ),

@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, time::Duration as StdDuration};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use node_registry::NodeDefinition;
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use thiserror::Error;
 use workflow_schema::{DataType, TypedValue, WorkflowNode};
 
@@ -45,6 +45,7 @@ impl RuntimeAdapters {
             "text_input" => execute_text_input(node),
             "text_transform" => execute_text_transform(node, inputs),
             "table_input" => execute_table_input(node),
+            "table_schema" => execute_table_schema(node),
             "preview_output" => execute_preview_output(node, inputs),
             "table_output" => execute_table_output(node, inputs),
             "send_email" => execute_send_email(node, inputs),
@@ -112,6 +113,59 @@ struct TableInputConfig {
     open_in_catalog: Option<bool>,
 }
 
+#[derive(Clone, Deserialize)]
+struct TableSchemaColumn {
+    name: String,
+    #[serde(rename = "type")]
+    column_type: String,
+    #[serde(default)]
+    nullable: Option<bool>,
+    #[serde(default)]
+    primary_key: Option<bool>,
+    #[serde(default)]
+    default: Option<String>,
+}
+
+#[derive(Clone, Deserialize)]
+struct TableSchemaTableConfig {
+    schema_name: String,
+    table_name: String,
+    #[serde(default)]
+    output_alias: Option<String>,
+    columns: Vec<TableSchemaColumn>,
+    #[serde(default)]
+    primary_key: Option<Vec<String>>,
+    #[serde(default)]
+    checks: Option<Vec<String>>,
+    #[serde(default)]
+    create_mode: Option<String>,
+    #[serde(default)]
+    if_target_exists: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct TableSchemaConfig {
+    #[serde(default)]
+    catalog: Option<String>,
+    schema_name: String,
+    table_name: String,
+    #[serde(default)]
+    output_alias: Option<String>,
+    columns: Vec<TableSchemaColumn>,
+    #[serde(default)]
+    primary_key: Option<Vec<String>>,
+    #[serde(default)]
+    checks: Option<Vec<String>>,
+    #[serde(default)]
+    create_mode: Option<String>,
+    #[serde(default)]
+    if_target_exists: Option<String>,
+    #[serde(default)]
+    open_in_catalog: Option<bool>,
+    #[serde(default)]
+    tables: Option<Vec<TableSchemaTableConfig>>,
+}
+
 #[derive(Deserialize)]
 struct TableOutputConfig {
     target_schema: String,
@@ -142,6 +196,7 @@ enum TableWriteMode {
 enum TableInputShape {
     SingleTextRow,
     SourceTable,
+    TableSchema,
 }
 
 #[derive(Deserialize)]
@@ -161,6 +216,10 @@ struct TableReferencePayload {
     _refresh_schema: bool,
     #[serde(default)]
     open_in_catalog: bool,
+    #[serde(default)]
+    schema_definition: Option<Value>,
+    #[serde(default)]
+    schema_definitions: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -336,6 +395,7 @@ fn execute_table_input(node: &WorkflowNode) -> Result<NodeExecutionResult, Adapt
     }
 
     let table_name = config.table_name.trim();
+
     if table_name.is_empty() {
         return Err(AdapterError::InvalidConfig {
             node_id: node.node_id.clone(),
@@ -407,6 +467,289 @@ fn execute_table_input(node: &WorkflowNode) -> Result<NodeExecutionResult, Adapt
     })
 }
 
+#[derive(Clone)]
+struct NormalizedTableSchemaDefinition {
+    schema_name: String,
+    table_name: String,
+    output_alias: String,
+    columns: Vec<Value>,
+    primary_key: Vec<String>,
+    checks: Vec<String>,
+    create_mode: String,
+    if_target_exists: String,
+}
+
+fn normalize_table_schema_columns(
+    node: &WorkflowNode,
+    columns: Vec<TableSchemaColumn>,
+) -> Result<Vec<Value>, AdapterError> {
+    columns
+        .into_iter()
+        .map(|column| {
+            let name = column.name.trim();
+            if name.is_empty() {
+                return Err(AdapterError::InvalidConfig {
+                    node_id: node.node_id.clone(),
+                    message: "every schema column requires a non-empty `name`.".to_string(),
+                });
+            }
+
+            let column_type = column.column_type.trim();
+            if column_type.is_empty() {
+                return Err(AdapterError::InvalidConfig {
+                    node_id: node.node_id.clone(),
+                    message: format!("schema column `{name}` requires a non-empty `type`."),
+                });
+            }
+
+            Ok(json!({
+                "name": name,
+                "type": column_type,
+                "nullable": column.nullable.unwrap_or(true),
+                "primary_key": column.primary_key.unwrap_or(false),
+                "default": column.default.as_deref().map(str::trim).filter(|value| !value.is_empty())
+            }))
+        })
+        .collect::<Result<Vec<_>, _>>()
+}
+
+fn normalize_table_schema_definition(
+    node: &WorkflowNode,
+    schema_name: String,
+    table_name: String,
+    output_alias: Option<String>,
+    columns: Vec<TableSchemaColumn>,
+    primary_key: Option<Vec<String>>,
+    checks: Option<Vec<String>>,
+    create_mode: Option<String>,
+    if_target_exists: Option<String>,
+) -> Result<NormalizedTableSchemaDefinition, AdapterError> {
+    let schema_name = schema_name.trim().to_string();
+    if schema_name.is_empty() {
+        return Err(AdapterError::InvalidConfig {
+            node_id: node.node_id.clone(),
+            message: "`schema_name` must not be empty.".to_string(),
+        });
+    }
+
+    let table_name = table_name.trim().to_string();
+    if table_name.is_empty() {
+        return Err(AdapterError::InvalidConfig {
+            node_id: node.node_id.clone(),
+            message: "`table_name` must not be empty.".to_string(),
+        });
+    }
+
+    if columns.is_empty() {
+        return Err(AdapterError::InvalidConfig {
+            node_id: node.node_id.clone(),
+            message: "`columns` must include at least one column.".to_string(),
+        });
+    }
+
+    let output_alias = output_alias
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(table_name.as_str())
+        .to_string();
+    let columns = normalize_table_schema_columns(node, columns)?;
+    let primary_key = primary_key
+        .unwrap_or_default()
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    let checks = checks
+        .unwrap_or_default()
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    let create_mode = create_mode
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("create_if_missing")
+        .to_string();
+    let if_target_exists = if_target_exists
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("keep_existing")
+        .to_string();
+
+    Ok(NormalizedTableSchemaDefinition {
+        schema_name,
+        table_name,
+        output_alias,
+        columns,
+        primary_key,
+        checks,
+        create_mode,
+        if_target_exists,
+    })
+}
+
+fn normalize_table_schema_definitions(
+    node: &WorkflowNode,
+    config: TableSchemaConfig,
+) -> Result<(String, bool, Vec<NormalizedTableSchemaDefinition>), AdapterError> {
+    let catalog = config
+        .catalog
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("workflow.duckdb")
+        .to_string();
+    let open_in_catalog = config.open_in_catalog.unwrap_or(false);
+    let tables = if let Some(tables) = config.tables {
+        if tables.is_empty() {
+            return Err(AdapterError::InvalidConfig {
+                node_id: node.node_id.clone(),
+                message: "`tables` must include at least one table definition.".to_string(),
+            });
+        }
+
+        tables
+            .into_iter()
+            .map(|table| {
+                normalize_table_schema_definition(
+                    node,
+                    table.schema_name,
+                    table.table_name,
+                    table.output_alias,
+                    table.columns,
+                    table.primary_key,
+                    table.checks,
+                    table.create_mode,
+                    table.if_target_exists,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        vec![normalize_table_schema_definition(
+            node,
+            config.schema_name,
+            config.table_name,
+            config.output_alias,
+            config.columns,
+            config.primary_key,
+            config.checks,
+            config.create_mode,
+            config.if_target_exists,
+        )?]
+    };
+
+    Ok((catalog, open_in_catalog, tables))
+}
+
+fn execute_table_schema(node: &WorkflowNode) -> Result<NodeExecutionResult, AdapterError> {
+    let config: TableSchemaConfig =
+        serde_json::from_value(node.config.clone()).map_err(|error| {
+            AdapterError::InvalidConfig {
+                node_id: node.node_id.clone(),
+                message: error.to_string(),
+            }
+        })?;
+    let (catalog, open_in_catalog, tables) = normalize_table_schema_definitions(node, config)?;
+    let primary_table = tables
+        .first()
+        .cloned()
+        .ok_or_else(|| AdapterError::InvalidConfig {
+            node_id: node.node_id.clone(),
+            message: "table schema requires at least one table definition.".to_string(),
+        })?;
+    let primary_schema_name = primary_table.schema_name.clone();
+    let primary_table_name = primary_table.table_name.clone();
+    let primary_output_alias = primary_table.output_alias.clone();
+    let primary_columns = primary_table.columns.clone();
+    let primary_primary_key = primary_table.primary_key.clone();
+    let primary_checks = primary_table.checks.clone();
+    let primary_create_mode = primary_table.create_mode.clone();
+    let primary_if_target_exists = primary_table.if_target_exists.clone();
+    let column_count = primary_columns.len();
+
+    let mut outputs = PortValues::new();
+    let schema_definitions = tables
+        .iter()
+        .map(|table| {
+            json!({
+                "schema_name": table.schema_name,
+                "table_name": table.table_name,
+                "output_alias": table.output_alias,
+                "columns": table.columns,
+                "primary_key": table.primary_key,
+                "checks": table.checks,
+                "create_mode": table.create_mode,
+                "if_target_exists": table.if_target_exists
+            })
+        })
+        .collect::<Vec<_>>();
+    outputs.insert(
+        "table".to_string(),
+        TypedValue {
+            data_type: DataType::TableRef,
+            value: json!({
+                "kind": "table_reference",
+                "catalog": catalog,
+                "schema_name": primary_schema_name,
+                "table_name": primary_table_name,
+                "output_alias": primary_output_alias,
+                "selected_columns": [],
+                "row_filter": Value::Null,
+                "row_limit": Value::Null,
+                "refresh_schema": true,
+                "open_in_catalog": open_in_catalog,
+                "schema_definition": {
+                    "columns": primary_columns,
+                    "primary_key": primary_primary_key,
+                    "checks": primary_checks,
+                    "create_mode": primary_create_mode,
+                    "if_target_exists": primary_if_target_exists
+                },
+                "schema_definitions": if schema_definitions.len() > 1 {
+                    Some(Value::Array(schema_definitions))
+                } else {
+                    None
+                }
+            }),
+        },
+    );
+
+    let primary_key_summary = if primary_table.primary_key.is_empty() {
+        "no primary key".to_string()
+    } else {
+        format!("primary key {}", primary_table.primary_key.join(", "))
+    };
+    let check_summary = if primary_table.checks.is_empty() {
+        "no checks".to_string()
+    } else if primary_table.checks.len() == 1 {
+        "1 check".to_string()
+    } else {
+        format!("{} checks", primary_table.checks.len())
+    };
+    let table_summary = if tables.len() == 1 {
+        format!(
+            "Prepared table schema `{schema}.{table}` from `{catalog}`",
+            schema = primary_table.schema_name,
+            table = primary_table.table_name
+        )
+    } else {
+        format!("Prepared {} table schemas from `{catalog}`", tables.len())
+    };
+
+    Ok(NodeExecutionResult {
+        outputs,
+        logs: vec![format!(
+            "{table_summary} ({} columns in primary table; {primary_key_summary}; {check_summary}; mode `{create_mode}` / `{if_target_exists}`).",
+            column_count,
+            create_mode = primary_table.create_mode,
+            if_target_exists = primary_table.if_target_exists
+        )],
+    })
+}
+
 fn execute_table_output(
     node: &WorkflowNode,
     inputs: &PortValues,
@@ -434,13 +777,7 @@ fn execute_table_output(
         });
     }
 
-    let table_name = config.table_name.trim();
-    if table_name.is_empty() {
-        return Err(AdapterError::InvalidConfig {
-            node_id: node.node_id.clone(),
-            message: "`table_name` must not be empty.".to_string(),
-        });
-    }
+    let configured_table_name = config.table_name.trim();
 
     let value_column = config
         .value_column
@@ -475,6 +812,22 @@ fn execute_table_output(
     let mut outputs = PortValues::new();
     match input.data_type {
         DataType::Text => {
+            if matches!(configured_input_shape, TableInputShape::TableSchema) {
+                return Err(AdapterError::ExecutionFailed {
+                    node_id: node.node_id.clone(),
+                    message:
+                        "table output input_shape `table_schema` requires a table schema input."
+                            .to_string(),
+                });
+            }
+
+            if configured_table_name.is_empty() {
+                return Err(AdapterError::InvalidConfig {
+                    node_id: node.node_id.clone(),
+                    message: "`table_name` must not be empty.".to_string(),
+                });
+            }
+
             let input = input
                 .as_text()
                 .ok_or_else(|| AdapterError::TextTypeMismatch {
@@ -494,7 +847,7 @@ fn execute_table_output(
                     value: json!({
                         "kind": "table_output_write",
                         "target_schema": target_schema,
-                        "table_name": table_name,
+                        "table_name": configured_table_name,
                         "write_mode": write_mode_label,
                         "input_shape": "single_text_row",
                         "value_column": value_column,
@@ -510,6 +863,7 @@ fn execute_table_output(
                 outputs,
                 logs: vec![format!(
                     "Prepared {write_mode_label} write to `{target_schema}.{table_name}` using `{value_column}` from single text row ({char_count} chars; {metadata_summary}).{catalog_hint}",
+                    table_name = configured_table_name,
                     char_count = input.chars().count()
                 )],
             })
@@ -549,9 +903,71 @@ fn execute_table_output(
             } else {
                 ""
             };
-            let resolved_shape = match configured_input_shape {
-                TableInputShape::SourceTable => "source_table",
-                TableInputShape::SingleTextRow => "source_table",
+            let schema_definitions = source_table
+                .schema_definitions
+                .as_ref()
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let has_schema_definition =
+                source_table.schema_definition.is_some() || !schema_definitions.is_empty();
+            let resolved_shape = if has_schema_definition {
+                "table_schema"
+            } else {
+                match configured_input_shape {
+                    TableInputShape::SourceTable | TableInputShape::SingleTextRow => "source_table",
+                    TableInputShape::TableSchema => {
+                        return Err(AdapterError::ExecutionFailed {
+                            node_id: node.node_id.clone(),
+                            message:
+                                "table output input_shape `table_schema` requires schema_definition metadata on the incoming table reference."
+                                    .to_string(),
+                        });
+                    }
+                }
+            };
+            let effective_table_name = if resolved_shape == "table_schema" {
+                schema_definitions
+                    .first()
+                    .and_then(|value| value.get("table_name"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+                    .or_else(|| {
+                        let source_table_name = source_table.table_name.trim();
+                        if source_table_name.is_empty() {
+                            None
+                        } else {
+                            Some(source_table_name.to_string())
+                        }
+                    })
+                    .ok_or_else(|| AdapterError::ExecutionFailed {
+                        node_id: node.node_id.clone(),
+                        message:
+                            "table schema input did not include a usable destination table name."
+                                .to_string(),
+                    })?
+            } else if configured_table_name.is_empty() {
+                return Err(AdapterError::InvalidConfig {
+                    node_id: node.node_id.clone(),
+                    message: "`table_name` must not be empty.".to_string(),
+                });
+            } else {
+                configured_table_name.to_string()
+            };
+            let source_catalog = source_table.catalog.clone();
+            let source_schema_name = source_table.schema_name.clone();
+            let source_table_name = source_table.table_name.clone();
+            let source_output_alias = source_table.output_alias.clone();
+            let source_selected_columns = source_table.selected_columns.clone();
+            let source_row_filter = source_table.row_filter.clone();
+            let source_row_limit = source_table.row_limit;
+            let source_schema_definition = source_table.schema_definition.clone();
+            let source_schema_definitions = if schema_definitions.is_empty() {
+                None
+            } else {
+                Some(Value::Array(schema_definitions.clone()))
             };
 
             outputs.insert(
@@ -561,30 +977,95 @@ fn execute_table_output(
                     value: json!({
                         "kind": "table_output_write",
                         "target_schema": target_schema,
-                        "table_name": table_name,
+                        "table_name": effective_table_name.clone(),
                         "write_mode": write_mode_label,
                         "input_shape": resolved_shape,
                         "value_column": value_column,
                         "include_run_id": include_run_id,
                         "include_written_at": include_written_at,
                         "open_in_catalog": open_in_catalog,
+                        "schema_definition": source_schema_definition,
+                        "schema_definitions": source_schema_definitions,
                         "source_table": {
-                            "catalog": source_table.catalog,
-                            "schema_name": source_table.schema_name,
-                            "table_name": source_table.table_name,
-                            "output_alias": source_table.output_alias,
-                            "selected_columns": source_table.selected_columns,
-                            "row_filter": source_table.row_filter,
-                            "row_limit": source_table.row_limit
+                            "catalog": source_catalog,
+                            "schema_name": source_schema_name,
+                            "table_name": source_table_name,
+                            "output_alias": source_output_alias,
+                            "selected_columns": source_selected_columns,
+                            "row_filter": source_row_filter,
+                            "row_limit": source_row_limit
                         }
                     }),
                 },
             );
 
+            if resolved_shape == "table_schema" {
+                let schema_table_count = if schema_definitions.is_empty() {
+                    usize::from(source_table.schema_definition.is_some())
+                } else {
+                    schema_definitions.len()
+                };
+                let schema_column_count = if !schema_definitions.is_empty() {
+                    schema_definitions
+                        .iter()
+                        .filter_map(|value| value.get("columns").and_then(Value::as_array))
+                        .map(Vec::len)
+                        .sum::<usize>()
+                } else {
+                    source_table
+                        .schema_definition
+                        .as_ref()
+                        .and_then(|value| value.get("columns"))
+                        .and_then(Value::as_array)
+                        .map(|columns| columns.len())
+                        .unwrap_or(0)
+                };
+                let schema_check_count = if !schema_definitions.is_empty() {
+                    schema_definitions
+                        .iter()
+                        .filter_map(|value| value.get("checks").and_then(Value::as_array))
+                        .map(Vec::len)
+                        .sum::<usize>()
+                } else {
+                    source_table
+                        .schema_definition
+                        .as_ref()
+                        .and_then(|value| value.get("checks"))
+                        .and_then(Value::as_array)
+                        .map(|checks| checks.len())
+                        .unwrap_or(0)
+                };
+                let check_summary = if schema_check_count == 0 {
+                    "no checks".to_string()
+                } else if schema_check_count == 1 {
+                    "1 check".to_string()
+                } else {
+                    format!("{schema_check_count} checks")
+                };
+                let bootstrap_target = if schema_table_count <= 1 {
+                    format!(
+                        "`{target_schema}.{table_name}`",
+                        table_name = effective_table_name
+                    )
+                } else {
+                    format!("schema `{target_schema}`")
+                };
+
+                return Ok(NodeExecutionResult {
+                    outputs,
+                    logs: vec![format!(
+                        "Prepared {write_mode_label} schema bootstrap for {bootstrap_target} from declared schema bundle `{schema}.{table}` ({schema_table_count} table(s); {schema_column_count} columns; {check_summary}; {metadata_summary}).{catalog_hint}",
+                        schema = source_table.schema_name,
+                        table = source_table.table_name
+                    )],
+                });
+            }
+
             Ok(NodeExecutionResult {
                 outputs,
                 logs: vec![format!(
                     "Prepared {write_mode_label} write to `{target_schema}.{table_name}` from source table `{schema}.{table}` ({projection_summary}; {filter_summary}; {limit_summary}; {metadata_summary}).{catalog_hint}",
+                    table_name = effective_table_name,
                     schema = source_table.schema_name,
                     table = source_table.table_name
                 )],
@@ -885,7 +1366,7 @@ fn normalize_text_input_value(
 #[cfg(test)]
 mod tests {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-    use serde_json::json;
+    use serde_json::{json, Value};
     use workflow_schema::{DataType, NodePosition, TypedValue, WorkflowNode};
 
     use super::{build_gmail_mime_message, RuntimeAdapters};
@@ -1101,6 +1582,197 @@ mod tests {
     }
 
     #[test]
+    fn table_schema_emits_table_reference_output() {
+        let registry = builtin_node_definitions();
+        let definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "table_schema")
+            .expect("table_schema definition");
+        let node = WorkflowNode {
+            node_id: "table_schema_orders".to_string(),
+            type_id: "table_schema".to_string(),
+            definition_version: 1,
+            label: None,
+            config: json!({
+                "catalog": "workflow.duckdb",
+                "schema_name": "output",
+                "table_name": "orders",
+                "output_alias": "orders_definition",
+                "columns": [
+                    {
+                        "name": "order_id",
+                        "type": "bigint",
+                        "nullable": false,
+                        "primary_key": true
+                    },
+                    {
+                        "name": "customer_id",
+                        "type": "varchar",
+                        "nullable": false,
+                        "primary_key": false
+                    }
+                ],
+                "primary_key": ["order_id"],
+                "checks": ["order_id > 0"],
+                "create_mode": "create_if_missing",
+                "if_target_exists": "keep_existing"
+            }),
+            position: NodePosition::default(),
+        };
+
+        let result = RuntimeAdapters::default()
+            .execute(definition, &node, &PortValues::new())
+            .expect("table schema should succeed");
+
+        let payload = result
+            .outputs
+            .get("table")
+            .expect("table schema payload should be present");
+        assert_eq!(payload.data_type, workflow_schema::DataType::TableRef);
+        assert_eq!(
+            payload.value,
+            json!({
+                "kind": "table_reference",
+                "catalog": "workflow.duckdb",
+                "schema_name": "output",
+                "table_name": "orders",
+                "output_alias": "orders_definition",
+                "selected_columns": [],
+                "row_filter": null,
+                "row_limit": null,
+                "refresh_schema": true,
+                "open_in_catalog": false,
+                "schema_definition": {
+                    "columns": [
+                        {
+                            "name": "order_id",
+                            "type": "bigint",
+                            "nullable": false,
+                            "primary_key": true,
+                            "default": null
+                        },
+                        {
+                            "name": "customer_id",
+                            "type": "varchar",
+                            "nullable": false,
+                            "primary_key": false,
+                            "default": null
+                        }
+                    ],
+                    "primary_key": ["order_id"],
+                    "checks": ["order_id > 0"],
+                    "create_mode": "create_if_missing",
+                    "if_target_exists": "keep_existing"
+                },
+                "schema_definitions": null
+            })
+        );
+    }
+
+    #[test]
+    fn table_schema_emits_schema_bundle_for_multiple_tables() {
+        let registry = builtin_node_definitions();
+        let definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "table_schema")
+            .expect("table_schema definition");
+        let node = WorkflowNode {
+            node_id: "table_schema_bundle".to_string(),
+            type_id: "table_schema".to_string(),
+            definition_version: 1,
+            label: None,
+            config: json!({
+                "catalog": "workflow.duckdb",
+                "schema_name": "tables",
+                "table_name": "orders",
+                "output_alias": "orders_definition",
+                "columns": [
+                    {
+                        "name": "order_id",
+                        "type": "bigint",
+                        "nullable": false,
+                        "primary_key": true
+                    }
+                ],
+                "primary_key": ["order_id"],
+                "checks": [],
+                "create_mode": "create_if_missing",
+                "if_target_exists": "keep_existing",
+                "tables": [
+                    {
+                        "schema_name": "tables",
+                        "table_name": "orders",
+                        "output_alias": "orders_definition",
+                        "columns": [
+                            {
+                                "name": "order_id",
+                                "type": "bigint",
+                                "nullable": false,
+                                "primary_key": true
+                            }
+                        ],
+                        "primary_key": ["order_id"],
+                        "checks": [],
+                        "create_mode": "create_if_missing",
+                        "if_target_exists": "keep_existing"
+                    },
+                    {
+                        "schema_name": "tables",
+                        "table_name": "order_lines",
+                        "output_alias": "order_lines_definition",
+                        "columns": [
+                            {
+                                "name": "line_id",
+                                "type": "bigint",
+                                "nullable": false,
+                                "primary_key": true
+                            },
+                            {
+                                "name": "order_id",
+                                "type": "bigint",
+                                "nullable": false,
+                                "primary_key": false
+                            }
+                        ],
+                        "primary_key": ["line_id"],
+                        "checks": [],
+                        "create_mode": "create_if_missing",
+                        "if_target_exists": "keep_existing"
+                    }
+                ]
+            }),
+            position: NodePosition::default(),
+        };
+
+        let result = RuntimeAdapters::default()
+            .execute(definition, &node, &PortValues::new())
+            .expect("table schema bundle should succeed");
+
+        let payload = result
+            .outputs
+            .get("table")
+            .expect("table schema payload should be present");
+
+        assert_eq!(payload.data_type, workflow_schema::DataType::TableRef);
+        assert_eq!(
+            payload
+                .value
+                .get("schema_definitions")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(2)
+        );
+        assert_eq!(
+            payload.value["schema_definitions"][0]["table_name"],
+            json!("orders")
+        );
+        assert_eq!(
+            payload.value["schema_definitions"][1]["table_name"],
+            json!("order_lines")
+        );
+    }
+
+    #[test]
     fn table_output_accepts_table_reference_input_and_emits_copy_summary() {
         let registry = builtin_node_definitions();
         let definition = registry
@@ -1163,6 +1835,8 @@ mod tests {
                 "include_run_id": true,
                 "include_written_at": true,
                 "open_in_catalog": false,
+                "schema_definition": null,
+                "schema_definitions": null,
                 "source_table": {
                     "catalog": "workflow.duckdb",
                     "schema_name": "runs",
@@ -1173,6 +1847,255 @@ mod tests {
                     "row_limit": 10
                 }
             })
+        );
+    }
+
+    #[test]
+    fn table_output_accepts_table_schema_input_and_emits_schema_bootstrap_payload() {
+        let registry = builtin_node_definitions();
+        let definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "table_output")
+            .expect("table_output definition");
+        let node = WorkflowNode {
+            node_id: "table_output_schema".to_string(),
+            type_id: "table_output".to_string(),
+            definition_version: 1,
+            label: None,
+            config: json!({
+                "target_schema": "tables",
+                "table_name": "orders_bootstrap",
+                "write_mode": "replace",
+                "input_shape": "table_schema",
+                "include_run_id": true,
+                "include_written_at": true
+            }),
+            position: NodePosition::default(),
+        };
+        let mut inputs = PortValues::new();
+        inputs.insert(
+            "text".to_string(),
+            TypedValue {
+                data_type: DataType::TableRef,
+                value: json!({
+                    "kind": "table_reference",
+                    "catalog": "workflow.duckdb",
+                    "schema_name": "output",
+                    "table_name": "orders",
+                    "output_alias": "orders_definition",
+                    "selected_columns": [],
+                    "row_filter": null,
+                    "row_limit": null,
+                    "refresh_schema": true,
+                    "open_in_catalog": false,
+                    "schema_definition": {
+                        "columns": [
+                            {
+                                "name": "order_id",
+                                "type": "bigint",
+                                "nullable": false,
+                                "primary_key": true,
+                                "default": null
+                            },
+                            {
+                                "name": "customer_id",
+                                "type": "varchar",
+                                "nullable": false,
+                                "primary_key": false,
+                                "default": "'unknown'"
+                            }
+                        ],
+                        "primary_key": ["order_id"],
+                        "checks": ["order_id > 0"],
+                        "create_mode": "create_if_missing",
+                        "if_target_exists": "keep_existing"
+                    }
+                }),
+            },
+        );
+
+        let result = RuntimeAdapters::default()
+            .execute(definition, &node, &inputs)
+            .expect("table output should succeed");
+
+        let payload = result
+            .outputs
+            .get("write_result")
+            .expect("table output payload should be present");
+        assert_eq!(payload.data_type, workflow_schema::DataType::Json);
+        assert_eq!(
+            payload.value,
+            json!({
+                "kind": "table_output_write",
+                "target_schema": "tables",
+                "table_name": "orders",
+                "write_mode": "replace",
+                "input_shape": "table_schema",
+                "value_column": "content",
+                "include_run_id": true,
+                "include_written_at": true,
+                "open_in_catalog": false,
+                "schema_definition": {
+                    "columns": [
+                        {
+                            "name": "order_id",
+                            "type": "bigint",
+                            "nullable": false,
+                            "primary_key": true,
+                            "default": null
+                        },
+                        {
+                            "name": "customer_id",
+                            "type": "varchar",
+                            "nullable": false,
+                            "primary_key": false,
+                            "default": "'unknown'"
+                        }
+                    ],
+                    "primary_key": ["order_id"],
+                    "checks": ["order_id > 0"],
+                    "create_mode": "create_if_missing",
+                    "if_target_exists": "keep_existing"
+                },
+                "schema_definitions": null,
+                "source_table": {
+                    "catalog": "workflow.duckdb",
+                    "schema_name": "output",
+                    "table_name": "orders",
+                    "output_alias": "orders_definition",
+                    "selected_columns": [],
+                    "row_filter": null,
+                    "row_limit": null
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn table_output_accepts_multi_table_schema_input_and_emits_schema_bundle_payload() {
+        let registry = builtin_node_definitions();
+        let definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "table_output")
+            .expect("table_output definition");
+        let node = WorkflowNode {
+            node_id: "table_output_schema_bundle".to_string(),
+            type_id: "table_output".to_string(),
+            definition_version: 1,
+            label: None,
+            config: json!({
+                "target_schema": "tables",
+                "table_name": "ignored_target",
+                "write_mode": "replace",
+                "input_shape": "table_schema",
+                "include_run_id": true,
+                "include_written_at": true
+            }),
+            position: NodePosition::default(),
+        };
+        let mut inputs = PortValues::new();
+        inputs.insert(
+            "text".to_string(),
+            TypedValue {
+                data_type: DataType::TableRef,
+                value: json!({
+                    "kind": "table_reference",
+                    "catalog": "workflow.duckdb",
+                    "schema_name": "tables",
+                    "table_name": "orders",
+                    "output_alias": "orders_definition",
+                    "selected_columns": [],
+                    "row_filter": null,
+                    "row_limit": null,
+                    "refresh_schema": true,
+                    "open_in_catalog": false,
+                    "schema_definition": {
+                        "columns": [
+                            {
+                                "name": "order_id",
+                                "type": "bigint",
+                                "nullable": false,
+                                "primary_key": true,
+                                "default": null
+                            }
+                        ],
+                        "primary_key": ["order_id"],
+                        "checks": [],
+                        "create_mode": "create_if_missing",
+                        "if_target_exists": "keep_existing"
+                    },
+                    "schema_definitions": [
+                        {
+                            "schema_name": "tables",
+                            "table_name": "orders",
+                            "output_alias": "orders_definition",
+                            "columns": [
+                                {
+                                    "name": "order_id",
+                                    "type": "bigint",
+                                    "nullable": false,
+                                    "primary_key": true,
+                                    "default": null
+                                }
+                            ],
+                            "primary_key": ["order_id"],
+                            "checks": [],
+                            "create_mode": "create_if_missing",
+                            "if_target_exists": "keep_existing"
+                        },
+                        {
+                            "schema_name": "tables",
+                            "table_name": "order_lines",
+                            "output_alias": "order_lines_definition",
+                            "columns": [
+                                {
+                                    "name": "line_id",
+                                    "type": "bigint",
+                                    "nullable": false,
+                                    "primary_key": true,
+                                    "default": null
+                                },
+                                {
+                                    "name": "order_id",
+                                    "type": "bigint",
+                                    "nullable": false,
+                                    "primary_key": false,
+                                    "default": null
+                                }
+                            ],
+                            "primary_key": ["line_id"],
+                            "checks": [],
+                            "create_mode": "create_if_missing",
+                            "if_target_exists": "keep_existing"
+                        }
+                    ]
+                }),
+            },
+        );
+
+        let result = RuntimeAdapters::default()
+            .execute(definition, &node, &inputs)
+            .expect("table output schema bundle should succeed");
+
+        let payload = result
+            .outputs
+            .get("write_result")
+            .expect("table output payload should be present");
+
+        assert_eq!(payload.data_type, workflow_schema::DataType::Json);
+        assert_eq!(payload.value["input_shape"], json!("table_schema"));
+        assert_eq!(payload.value["table_name"], json!("orders"));
+        assert_eq!(
+            payload
+                .value
+                .get("schema_definitions")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(2)
+        );
+        assert_eq!(
+            payload.value["schema_definitions"][1]["table_name"],
+            json!("order_lines")
         );
     }
 

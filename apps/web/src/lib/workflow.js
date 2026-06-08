@@ -349,8 +349,6 @@ function arePortTypesCompatible(sourceNode, sourcePort, targetNode, targetPort) 
   }
 
   return (
-    sourceNode?.type_id === 'table_input' &&
-    sourcePort?.port_id === 'table' &&
     sourceDataType === 'table_ref' &&
     targetNode?.type_id === 'table_output' &&
     targetPort?.port_id === 'text'
@@ -368,6 +366,8 @@ function applyConnectionSideEffects(workflow, connection) {
   let nextInputShape = null
   if (sourceNode.type_id === 'table_input') {
     nextInputShape = 'source_table'
+  } else if (sourceNode.type_id === 'table_schema') {
+    nextInputShape = 'table_schema'
   } else if (sourceNode.type_id === 'text_input') {
     nextInputShape = 'single_text_row'
   }
@@ -427,6 +427,10 @@ function resolveCanvasNodeType(typeId) {
 
   if (typeId === 'table_input') {
     return 'table_input'
+  }
+
+  if (typeId === 'table_schema') {
+    return 'table_schema'
   }
 
   if (typeId === 'table_output') {
@@ -507,6 +511,17 @@ const FALLBACK_NODE_DEFINITIONS = {
       }
     ],
     type_id: 'table_input'
+  },
+  table_schema: {
+    inputs: [],
+    outputs: [
+      {
+        data_type: 'table_ref',
+        multiple: false,
+        port_id: 'table'
+      }
+    ],
+    type_id: 'table_schema'
   },
   table_output: {
     inputs: [

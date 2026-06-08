@@ -2036,6 +2036,102 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn validate_endpoint_accepts_table_schema_to_table_output_workflow() {
+        let router = app(
+            runtime_core::RuntimeService::default(),
+            PlatformStore::for_tests().expect("platform store"),
+        );
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_table_schema_output_validate".to_string(),
+            version: 1,
+            name: "Table Schema Output Validate".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "table_schema_orders".to_string(),
+                    type_id: "table_schema".to_string(),
+                    definition_version: 1,
+                    label: Some("Table Schema".to_string()),
+                    config: json!({
+                        "catalog": "workflow.duckdb",
+                        "schema_name": "output",
+                        "table_name": "orders",
+                        "output_alias": "orders_definition",
+                        "columns": [
+                            {
+                                "name": "order_id",
+                                "type": "bigint",
+                                "nullable": false,
+                                "primary_key": true
+                            },
+                            {
+                                "name": "customer_id",
+                                "type": "varchar",
+                                "nullable": false,
+                                "primary_key": false
+                            }
+                        ],
+                        "primary_key": ["order_id"],
+                        "checks": ["order_id > 0"],
+                        "create_mode": "create_if_missing",
+                        "if_target_exists": "keep_existing"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "table_output_copy".to_string(),
+                    type_id: "table_output".to_string(),
+                    definition_version: 1,
+                    label: Some("Table Output".to_string()),
+                    config: json!({
+                        "target_schema": "tables",
+                        "table_name": "orders_bootstrap",
+                        "write_mode": "replace",
+                        "input_shape": "table_schema",
+                        "include_run_id": true,
+                        "include_written_at": true,
+                        "open_in_catalog": false
+                    }),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![WorkflowEdge {
+                edge_id: "edge_table_schema_to_table_output".to_string(),
+                source_node_id: "table_schema_orders".to_string(),
+                source_port_id: "table".to_string(),
+                target_node_id: "table_output_copy".to_string(),
+                target_port_id: "text".to_string(),
+            }],
+            metadata: Default::default(),
+        };
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/workflows/validate")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&json!({ "workflow": workflow })).expect("request body"),
+            ))
+            .expect("request builds");
+
+        let response = router.oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let payload = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body collects")
+            .to_bytes();
+        let validation: api_contract::ValidateWorkflowResponse =
+            serde_json::from_slice(&payload).expect("validation response parses");
+        assert!(
+            validation.valid,
+            "expected valid response, got: {validation:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn events_endpoint_replays_run_history() {
         let router = app(
             runtime_core::RuntimeService::default(),

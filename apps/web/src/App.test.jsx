@@ -475,6 +475,54 @@ describe('App platform shell', () => {
     );
   });
 
+  it('resolves a direct /flow/:workflowId route against the hinted workspace first', async () => {
+    api.getSession.mockResolvedValue(AUTHENTICATED_MULTI_WORKSPACE_SESSION);
+    api.getWorkflow.mockImplementation(async (workspaceId, workflowId) => {
+      if (workspaceId === 'ws_secondary') {
+        return {
+          workflow: {
+            workflow_id: workflowId,
+            workspace_id: 'ws_secondary',
+            name: 'Warehouse Workflow',
+            description: 'Resolved from workspace hint.',
+            version: 1,
+            updated_at: '2026-05-24T10:00:00Z'
+          },
+          definition: {
+            workflow_id: workflowId,
+            version: 1,
+            schema_version: 1,
+            name: 'Warehouse Workflow',
+            description: 'Resolved from workspace hint.',
+            nodes: [],
+            edges: [],
+            metadata: { viewport: { x: 0, y: 0, zoom: 1 } }
+          }
+        };
+      }
+
+      const error = new Error('Not found');
+      error.status = 404;
+      throw error;
+    });
+    window.history.replaceState(
+      {},
+      '',
+      '/flow/ScJUvQ7dgxHqu7tXtsekiL?workspaceId=ws_secondary'
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('canvas-workspace')).toBeInTheDocument();
+    });
+
+    expect(api.getWorkflow.mock.calls[0]).toEqual([
+      'ws_secondary',
+      'ScJUvQ7dgxHqu7tXtsekiL'
+    ]);
+  });
+
   it('opens the canvas node shelf on click from the collapsed rail', async () => {
     api.login.mockResolvedValue(AUTHENTICATED_SESSION);
 
@@ -587,14 +635,15 @@ describe('App platform shell', () => {
     expect(container.querySelector('.canvas-menu.is-open')).not.toBeNull();
     expect(screen.getByLabelText('Data sources window')).toBeInTheDocument();
     expect(screen.getByText('Catalog Tree')).toBeInTheDocument();
+    const tree = screen.getByRole('tree', { name: 'Catalog hierarchy' });
     expect(
-      await screen.findByText('default-workspace · ScJUvQ7dgxHqu7tXtsekiL · workflow.duckdb')
+      await within(tree).findByText('default-workspace · ScJUvQ7dgxHqu7tXtsekiL · workflow.duckdb')
     ).toBeInTheDocument();
     expect(
-      screen.getByText('warehouse-workspace · wf_warehouse_ops · workflow.duckdb')
+      within(tree).getByText('warehouse-workspace · wf_warehouse_ops · workflow.duckdb')
     ).toBeInTheDocument();
-    expect(screen.getByText('runs')).toBeInTheDocument();
-    expect(screen.getByText('workflow_runs')).toBeInTheDocument();
+    expect(within(tree).getByText('runs')).toBeInTheDocument();
+    expect(within(tree).getByText('workflow_runs')).toBeInTheDocument();
     expect(screen.getByText('SQL Editor')).toBeInTheDocument();
     expect(screen.getByRole('separator', { name: 'Resize query editor' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
@@ -610,7 +659,6 @@ describe('App platform shell', () => {
     });
     expect(api.getWorkspaceCatalogTable).not.toHaveBeenCalled();
 
-    const tree = screen.getByRole('tree', { name: 'Catalog hierarchy' });
     const collapseSchemaButton = within(tree).getByRole('button', {
       name: 'Collapse schema runs'
     });
@@ -726,6 +774,7 @@ describe('App platform shell', () => {
     fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
     fireEvent.click(await screen.findByRole('button', { name: 'Data' }));
 
+    const tree = await screen.findByRole('tree', { name: 'Catalog hierarchy' });
     const deleteButton = await screen.findByRole('button', {
       name: 'Delete table tables.daily_digest'
     });
@@ -751,7 +800,7 @@ describe('App platform shell', () => {
       );
     });
     await waitFor(() => {
-      expect(screen.queryByText('daily_digest')).toBeNull();
+      expect(within(tree).queryByText('daily_digest')).toBeNull();
     });
 
     confirmSpy.mockRestore();
@@ -782,7 +831,7 @@ describe('App platform shell', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Data' }));
 
     const tree = await screen.findByRole('tree', { name: 'Catalog hierarchy' });
-    fireEvent.click(within(tree).getByRole('button', { name: 'workflow_runs' }));
+    fireEvent.click(within(tree).getByRole('treeitem', { name: 'workflow_runs' }));
 
     await waitFor(() => {
       expect(api.getWorkspaceCatalogTable).toHaveBeenCalledWith(
@@ -846,7 +895,7 @@ describe('App platform shell', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Data' }));
 
     const tree = await screen.findByRole('tree', { name: 'Catalog hierarchy' });
-    fireEvent.click(within(tree).getByRole('button', { name: 'node_runs' }));
+    fireEvent.click(within(tree).getByRole('treeitem', { name: 'node_runs' }));
 
     await waitFor(() => {
       expect(api.runWorkspaceCatalogQuery).toHaveBeenCalledWith(
@@ -856,7 +905,7 @@ describe('App platform shell', () => {
       );
     });
 
-    fireEvent.click(within(tree).getByRole('button', { name: 'workflow_runs' }));
+    fireEvent.click(within(tree).getByRole('treeitem', { name: 'workflow_runs' }));
 
     await waitFor(() => {
       expect(api.runWorkspaceCatalogQuery).toHaveBeenLastCalledWith(
@@ -900,7 +949,7 @@ describe('App platform shell', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Data' }));
 
     const tree = await screen.findByRole('tree', { name: 'Catalog hierarchy' });
-    fireEvent.click(within(tree).getByRole('button', { name: 'node_runs' }));
+    fireEvent.click(within(tree).getByRole('treeitem', { name: 'node_runs' }));
 
     await waitFor(() => {
       expect(api.runWorkspaceCatalogQuery).toHaveBeenCalled();
@@ -1185,13 +1234,155 @@ describe('App platform shell', () => {
     expect(await screen.findByText('Ops Alerts')).toBeInTheDocument();
   });
 
+  it('opens another workspace from the workspace header using its latest workflow route', async () => {
+    api.login.mockResolvedValue(AUTHENTICATED_MULTI_WORKSPACE_SESSION);
+    api.getWorkflows.mockImplementation(async (workspaceId) => {
+      if (workspaceId === 'ws_secondary') {
+        return {
+          workflows: [
+            {
+              workflow_id: 'wf_warehouse_ops',
+              workspace_id: 'ws_secondary',
+              name: 'Warehouse Ops',
+              description: 'Secondary workflow.',
+              version: 1,
+              updated_at: '2026-05-24T11:00:00Z'
+            }
+          ]
+        };
+      }
+
+      return {
+        workflows: [
+          {
+            workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
+            workspace_id: 'ws_default',
+            name: 'Text Preview',
+            description: 'Primary workflow.',
+            version: 1,
+            updated_at: '2026-05-24T10:00:00Z'
+          }
+        ]
+      };
+    });
+    api.getWorkflow.mockImplementation(async (workspaceId, workflowId) => {
+      if (workspaceId === 'ws_secondary' && workflowId === 'wf_warehouse_ops') {
+        return {
+          workflow: {
+            workflow_id: workflowId,
+            workspace_id: 'ws_secondary',
+            name: 'Warehouse Ops',
+            description: 'Secondary workflow.',
+            version: 1,
+            updated_at: '2026-05-24T11:00:00Z'
+          },
+          definition: {
+            workflow_id: workflowId,
+            version: 1,
+            schema_version: 1,
+            name: 'Warehouse Ops',
+            description: 'Secondary workflow.',
+            nodes: [],
+            edges: [],
+            metadata: { viewport: { x: 0, y: 0, zoom: 1 } }
+          }
+        };
+      }
+
+      const error = new Error('Not found');
+      error.status = 404;
+      throw error;
+    });
+
+    render(<App />);
+
+    await screen.findByRole('heading', { name: /log in/i });
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+
+    const workspacesButton = await screen.findByRole('button', { name: 'Workspaces' });
+    fireEvent.click(workspacesButton);
+    const directory = await screen.findByLabelText('Workspace directory');
+    const targetWorkspaceButton = within(directory)
+      .getAllByRole('button', { name: /Warehouse Workspace/i })
+      .find((button) => !button.getAttribute('aria-label'));
+    expect(targetWorkspaceButton).toBeDefined();
+    fireEvent.click(targetWorkspaceButton);
+
+    expect(window.location.pathname).toBe('/flow/wf_warehouse_ops');
+    expect(window.location.search).toBe('?workspaceId=ws_secondary');
+    await waitFor(() => {
+      expect(screen.getByTestId('canvas-workspace')).toBeInTheDocument();
+    });
+  });
+
+  it('opens another workspace workflow with a workspace hint in the flow route', async () => {
+    api.login.mockResolvedValue({
+      ...AUTHENTICATED_SESSION,
+      workspaces: [
+        ...AUTHENTICATED_SESSION.workspaces,
+        {
+          workspace_id: 'ws_ops',
+          slug: 'ops-space',
+          name: 'Ops Space',
+          role: 'editor'
+        }
+      ]
+    });
+    api.getWorkflows.mockImplementation(async (workspaceId) => {
+      if (workspaceId === 'ws_default') {
+        return {
+          workflows: [
+            {
+              workflow_id: 'ScJUvQ7dgxHqu7tXtsekiL',
+              workspace_id: 'ws_default',
+              name: 'Text Preview',
+              description: 'Starter text preview flow.',
+              version: 1,
+              updated_at: '2026-05-24T10:00:00Z'
+            }
+          ]
+        };
+      }
+
+      return {
+        workflows: [
+          {
+            workflow_id: 'wf_ops_alerts',
+            workspace_id: 'ws_ops',
+            name: 'Ops Alerts',
+            description: 'Ops workflow.',
+            version: 1,
+            updated_at: '2026-05-24T11:00:00Z'
+          }
+        ]
+      };
+    });
+
+    render(<App />);
+
+    await screen.findByRole('heading', { name: /log in/i });
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+
+    const workspacesButton = await screen.findByRole('button', { name: 'Workspaces' });
+    fireEvent.click(workspacesButton);
+    fireEvent.click(await screen.findByRole('button', { name: /Ops Alerts/i }));
+
+    await waitFor(() => {
+      expect(api.updateWorkflowState).toHaveBeenCalledWith('ws_ops', 'wf_ops_alerts');
+    });
+    expect(window.location.pathname).toBe('/flow/wf_ops_alerts');
+    expect(window.location.search).toBe('?workspaceId=ws_ops');
+  });
+
   it('shows owner delete buttons in the workspace popup and removes a deleted workspace', async () => {
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     api.login.mockResolvedValue(AUTHENTICATED_MULTI_WORKSPACE_SESSION);
-    api.getSession.mockResolvedValue({
-      ...AUTHENTICATED_SESSION,
-      workspaces: [...AUTHENTICATED_SESSION.workspaces]
-    });
+    api.getSession
+      .mockResolvedValueOnce(UNAUTHENTICATED_SESSION)
+      .mockResolvedValue({
+        ...AUTHENTICATED_SESSION,
+        workspaces: [...AUTHENTICATED_SESSION.workspaces]
+      });
     api.getWorkflows.mockImplementation(async (workspaceId) => {
       if (workspaceId === 'ws_secondary') {
         return {
@@ -1311,7 +1502,7 @@ describe('App platform shell', () => {
     });
 
     expect(openSpy).toHaveBeenCalledWith(
-      '/flow/tFRXIL9X4YxHMVYqbeFH2T',
+      '/flow/tFRXIL9X4YxHMVYqbeFH2T?workspaceId=ws_default',
       '_blank',
       'noopener'
     );

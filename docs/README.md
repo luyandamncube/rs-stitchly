@@ -14,8 +14,10 @@ The goal is to document:
 
 - Foundational docs live under `00_foundation/` and use numbered filenames such as `00_intro.md`.
 - Earlier numbers describe stable concepts that other docs can depend on.
-- Workflow example docs live under `01_workflows/` and use numbered filenames starting at `20_...`.
-- Each workflow example doc should capture one concrete dataflow or automation flow.
+- Workflow planning and example docs live under `01_workflows/`.
+- Strategy and naming docs should use lower numbers such as `00_...` and `01_...`.
+- Concrete workflow example docs should continue to use numbered filenames starting at `20_...`.
+- Each concrete workflow example doc should capture one specific dataflow or automation flow.
 - Build prompt and implementation-guidance docs live under `02_build/` and use numbered filenames starting at `00_...`.
 - UI-specific product and interaction docs live under `03_ui/` and use numbered filenames starting at `00_...`.
 - Execution-specific runtime contract docs live under `04_execution/` and use numbered filenames starting at `01_...`.
@@ -70,6 +72,8 @@ The goal is to document:
 
 ## Workflows
 
+- `01_workflows/00_finance_workflow_ideas.md`: first-pass list of realistic finance ingestion workflows, data sources, and candidate node families
+- `01_workflows/01_finance_table_grouping_and_naming.md`: scalable naming and grouping convention for finance tables across schemas, grains, providers, and enrichments
 - `01_workflows/20_workflow_example_dolt.md`: DoltHub earnings ingest into typed artifacts and warehouse sinks
 
 ## Build

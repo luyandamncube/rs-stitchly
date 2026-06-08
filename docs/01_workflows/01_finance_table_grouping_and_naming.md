@@ -324,6 +324,88 @@ Examples:
 | `outputs` | `equity_signals__1d__composite__multi_symbol__breakout_v1` | published daily breakout signal product |
 | `outputs` | `earnings_event_windows__event__composite__multi_symbol__final` | published event-study output table |
 
+## Quant Extensions
+
+The same naming convention should hold for quantitative research, feature engineering, labeling, and signal generation.
+
+The main difference is that quant workflows produce more internally generated tables, so the `dataset`, `source`, and `variant` tags need a wider allowed vocabulary.
+
+### Quant dataset tags
+
+Useful additions include:
+
+- `features`
+- `labels`
+- `signals`
+- `factors`
+- `risk`
+- `predictions`
+- `portfolio`
+- `universe`
+
+Examples:
+
+- `tables.equity_features__1d__composite__multi_symbol__features_core`
+- `tables.equity_labels__1d__composite__multi_symbol__fwd_returns_5d_v1`
+- `tables.equity_factors__1d__composite__multi_symbol__cross_sectional_v1`
+- `outputs.equity_signals__15m__derived__multi_symbol__breakout_v1`
+
+### Quant source tags
+
+For quant tables, `source` should mean origin family rather than only external vendor.
+
+Recommended values:
+
+- provider tags such as `polygon`, `alpaca`, `databento`, or `fred` for provider-born tables
+- `composite` for intentionally merged or canonicalized multi-source tables
+- `derived` for internally generated research tables
+- `model` for model-produced predictions, scores, or signal outputs
+
+Examples:
+
+- `tables.equity_features__1d__derived__multi_symbol__features_core`
+- `tables.equity_predictions__1d__model__multi_symbol__xgb_v1`
+- `outputs.equity_signals__1d__model__multi_symbol__production_v1`
+
+### Quant variant tags
+
+The `variant` tag becomes especially important on the quant side because it tells us which feature pack, label definition, factor family, or signal recipe the table represents.
+
+Useful examples:
+
+- `features_core`
+- `features_intraday`
+- `mom_v1`
+- `fwd_returns_5d_v1`
+- `alpha_combo_v2`
+- `risk_beta_v1`
+- `production_v1`
+
+Avoid placing every single indicator name into the table name. Prefer a stable pack or recipe name and keep the exact column list in metadata or documentation.
+
+### Quant table examples
+
+| Schema | Example table | What it tells us |
+|---|---|---|
+| `tables` | `equity_features__1d__composite__multi_symbol__features_core` | research-ready daily feature pack across many symbols |
+| `tables` | `equity_labels__1d__composite__multi_symbol__fwd_returns_5d_v1` | forward-return labels for supervised learning |
+| `tables` | `equity_factors__1d__derived__multi_symbol__alpha_combo_v2` | internally generated factor scores |
+| `tables` | `equity_risk__1d__derived__multi_symbol__risk_beta_v1` | derived daily risk exposures or beta metrics |
+| `tables` | `equity_predictions__1d__model__multi_symbol__xgb_v1` | model-generated prediction scores |
+| `outputs` | `equity_signals__15m__model__multi_symbol__production_v1` | published signal table intended for downstream execution or monitoring |
+
+### Quant schema fit
+
+We still do not need extra schemas just because the data is more enriched or more generated.
+
+The same split should hold:
+
+- `staging` for landed source data
+- `tables` for normalized, enriched, research, and generated internal tables
+- `outputs` for strategy-ready or downstream-facing signal products
+
+If the quant surface grows a lot, the better next step is likely a naming linter and metadata rules, not a new set of DuckDB schemas.
+
 ## Minimal Metadata We Should Preserve In Columns
 
 The table name is not enough by itself. Finance tables should usually also carry:

@@ -99,3 +99,4 @@ The goal is to document:
 ## Trading Research
 
 - `06_trading_research/00_systematic_technical_strategy_research.md`: first structured direction for technical strategy research workflows, including research layers, table families, and node implications
+- `06_trading_research/01_derivatives_and_volatility_strategy_research.md`: first structured direction for options, volatility, and position-structure research workflows, including dashboards, payoff evaluation, and ranking

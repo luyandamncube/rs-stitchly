@@ -1,0 +1,567 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Design Lab · Dolt Repo Sync</title>
+    <link rel="stylesheet" href="../shared.css" />
+    <style>
+      .lab-page--sync { place-items: stretch; padding: 28px; }
+      .lab-stage--sync {
+        position: relative;
+        width: min(100%, 1500px);
+        min-height: 860px;
+        margin: 0 auto;
+        padding: 28px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 354px;
+        gap: 26px;
+        align-items: stretch;
+        border-radius: 28px;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 16% 18%, rgba(245, 110, 15, 0.075), transparent 18%),
+          radial-gradient(circle at 82% 12%, rgba(120, 195, 132, 0.06), transparent 16%),
+          linear-gradient(180deg, rgba(13, 13, 16, 0.88), rgba(9, 9, 11, 0.98));
+        box-shadow:
+          0 32px 64px rgba(0, 0, 0, 0.28),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+      }
+      .lab-stage--sync::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image: radial-gradient(circle, rgba(255, 255, 255, 0.12) 1px, transparent 1px);
+        background-size: 24px 24px;
+        pointer-events: none;
+      }
+      .flow-scene { position: relative; min-height: 804px; }
+      .flow-caption {
+        position: absolute;
+        left: 0;
+        top: 0;
+        z-index: 2;
+        display: grid;
+        gap: 6px;
+        max-width: 500px;
+      }
+      .flow-caption__eyebrow {
+        color: rgba(255, 255, 255, 0.54);
+        font-size: 0.76rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+      .flow-caption h1 {
+        margin: 0;
+        font-size: 1.14rem;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+      }
+      .flow-caption p {
+        margin: 0;
+        color: rgba(255, 255, 255, 0.62);
+        font-size: 0.88rem;
+        line-height: 1.55;
+      }
+      .flow-connection {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        pointer-events: none;
+      }
+      .flow-connection path {
+        fill: none;
+        stroke: rgba(120, 195, 132, 0.76);
+        stroke-width: 2.2;
+        stroke-linecap: round;
+      }
+      .flow-connection circle {
+        fill: #0d0d10;
+        stroke: rgba(120, 195, 132, 0.82);
+        stroke-width: 2;
+      }
+      .flow-node { position: absolute; z-index: 2; }
+      .flow-node--sync { left: 118px; top: 306px; width: 312px; }
+      .flow-node--manifest { left: 516px; top: 322px; width: 296px; }
+      .flow-node--selected {
+        background: rgba(39, 39, 44, 0.98);
+        box-shadow: 0 0 0 1px rgba(245, 110, 15, 0.82);
+      }
+      .node-card--sync,
+      .node-card--manifest {
+        min-height: 0;
+        padding: 8px 9px;
+        border-radius: 10px;
+        background: rgba(34, 34, 39, 0.96);
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.07);
+      }
+      .node-card--sync .node-card__header,
+      .node-card--manifest .node-card__header { min-height: 28px; }
+      .node-card--sync .node-card__heading,
+      .node-card--manifest .node-card__heading {
+        gap: 10px;
+        align-items: flex-start;
+      }
+      .node-card--sync .node-card__icon,
+      .node-card--manifest .node-card__icon {
+        margin-top: 2px;
+      }
+      .node-card__icon--dolt,
+      .node-panel__title-icon--dolt {
+        color: #33d1c0;
+      }
+      .node-card__icon--dolt {
+        width: 20px;
+        height: 20px;
+      }
+      .node-panel__title-icon--dolt {
+        width: 18px;
+        height: 18px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+      .dolt-mark {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      .node-card__title-copy {
+        display: grid;
+        gap: 2px;
+        min-width: 0;
+      }
+      .node-card__title-copy strong {
+        color: rgba(255, 255, 255, 0.98);
+        font-size: 0.96rem;
+        font-weight: 600;
+        line-height: 1.1;
+        letter-spacing: -0.02em;
+      }
+      .node-card__title-subtitle {
+        color: rgba(255, 255, 255, 0.54);
+        font-family: "Azeret Mono", "SFMono-Regular", "Consolas", monospace;
+        font-size: 0.68rem;
+        line-height: 1.1;
+        letter-spacing: -0.01em;
+      }
+      .node-card__header-meta {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        flex-shrink: 0;
+        color: rgba(255, 255, 255, 0.74);
+        font-size: 0.76rem;
+        font-weight: 600;
+      }
+      .node-card__header-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.1);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+      }
+      .node-card--sync .node-card__body,
+      .node-card--manifest .node-card__body {
+        gap: 4px;
+        margin-top: 4px;
+        margin-bottom: 3px;
+      }
+      .node-card--sync .node-card__row--summary,
+      .node-card--sync .node-card__footer,
+      .node-card--manifest .node-card__row--summary,
+      .node-card--manifest .node-card__footer {
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.035);
+      }
+      .node-card--sync .node-card__summary-label,
+      .node-card--sync .node-card__footer-meta,
+      .node-card--manifest .node-card__summary-label,
+      .node-card--manifest .node-card__footer-meta { color: var(--text-muted); }
+      .node-card--sync .node-card__summary-target,
+      .node-card--sync .node-card__footer strong,
+      .node-card--manifest .node-card__summary-target,
+      .node-card--manifest .node-card__footer strong {
+        color: rgba(255, 255, 255, 0.92);
+        font-weight: 300;
+      }
+      .node-card__handle--left { left: -8px; right: auto; }
+      .flow-node__hint {
+        position: absolute;
+        top: 334px;
+        left: 388px;
+        z-index: 2;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 10px;
+        background: rgba(28, 28, 33, 0.94);
+        box-shadow:
+          0 14px 26px rgba(0, 0, 0, 0.24),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+        color: rgba(255, 255, 255, 0.68);
+        font-size: 0.74rem;
+      }
+      .flow-node__hint strong { color: rgba(255, 255, 255, 0.86); font-weight: 500; }
+      .node-panel {
+        position: relative;
+        z-index: 2;
+        min-height: 804px;
+        display: grid;
+        grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+        gap: 14px;
+        padding: 14px 14px 16px;
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 12px;
+        background: rgba(34, 34, 39, 0.98);
+        box-shadow: 0 18px 36px rgba(0, 0, 0, 0.24);
+      }
+      .node-panel__header,
+      .node-panel__title-group,
+      .node-panel__header-meta,
+      .node-panel__field-head,
+      .node-panel__footer-row,
+      .node-panel__section-head,
+      .node-panel__contract-row,
+      .node-panel__inline-meta {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .node-panel__title-group { justify-content: flex-start; align-items: flex-start; }
+      .node-panel__title-icon { color: rgba(255, 255, 255, 0.56); font-size: 0.88rem; line-height: 1; margin-top: 2px; }
+      .node-panel__eyebrow { color: rgba(255, 255, 255, 0.52); font-size: 0.68rem; letter-spacing: 0.14em; text-transform: uppercase; }
+      .node-panel__title { margin: 0; font-size: 1.32rem; font-weight: 600; letter-spacing: -0.03em; }
+      .node-panel__subtitle { margin: 3px 0 0; color: rgba(255, 255, 255, 0.56); font-size: 0.84rem; }
+      .node-panel__status { display: inline-flex; align-items: center; gap: 8px; color: rgba(255, 255, 255, 0.8); font-size: 0.78rem; }
+      .node-panel__status-dot { width: 9px; height: 9px; border-radius: 999px; background: rgba(120, 195, 132, 0.92); box-shadow: 0 0 0 4px rgba(120, 195, 132, 0.12); }
+      .node-panel__summary,
+      .node-panel__section,
+      .node-panel__contract,
+      .node-panel__notes {
+        padding: 0;
+        border: none;
+        border-radius: 0;
+        background: transparent;
+        display: grid;
+        gap: 10px;
+      }
+      .node-panel__section,
+      .node-panel__contract,
+      .node-panel__notes {
+        padding-top: 12px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .node-panel__summary-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .node-panel__summary-card {
+        padding: 10px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.038);
+        display: grid;
+        gap: 4px;
+      }
+      .node-panel__summary-label,
+      .node-panel__field-label,
+      .node-panel__section-kicker,
+      .node-panel__contract-label,
+      .node-panel__note-label { color: rgba(255, 255, 255, 0.5); font-size: 0.72rem; }
+      .node-panel__summary-value,
+      .node-panel__contract-value { color: rgba(255, 255, 255, 0.94); font-size: 0.87rem; font-weight: 500; line-height: 1.3; }
+      .node-panel__section-title { margin: 0; font-size: 0.88rem; font-weight: 600; letter-spacing: -0.02em; }
+      .node-panel__section-copy,
+      .node-panel__note-copy { margin: 0; color: rgba(255, 255, 255, 0.62); font-size: 0.79rem; line-height: 1.45; }
+      .node-panel__fields { display: grid; gap: 8px; }
+      .node-panel__field { display: grid; gap: 5px; }
+      .node-panel__field-hint { color: rgba(255, 255, 255, 0.42); font-size: 0.72rem; }
+      .node-panel__control,
+      .node-panel__textarea,
+      .node-panel__pill-row {
+        min-height: 30px;
+        width: 100%;
+        padding: 0 10px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 7px;
+        background: rgba(255, 255, 255, 0.04);
+        color: rgba(255, 255, 255, 0.94);
+        font: inherit;
+      }
+      .node-panel__control,
+      .node-panel__pill-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      .node-panel__control-code,
+      .node-panel__contract-value { font-family: "Azeret Mono", "SFMono-Regular", "Consolas", monospace; font-size: 0.75rem; }
+      .node-panel__pill-row { min-height: 48px; padding-top: 7px; padding-bottom: 7px; align-items: flex-start; flex-direction: column; justify-content: center; }
+      .node-panel__pill-label { color: rgba(255, 255, 255, 0.5); font-size: 0.72rem; }
+      .node-panel__pill-value { color: rgba(255, 255, 255, 0.92); font-size: 0.82rem; font-weight: 500; }
+      .node-panel__caret { color: rgba(255, 255, 255, 0.5); font-size: 0.78rem; }
+      .node-panel__subsection {
+        display: grid;
+        gap: 10px;
+        padding-top: 12px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .node-panel__subsection-title {
+        margin: 0;
+        color: rgba(255, 255, 255, 0.72);
+        font-size: 0.82rem;
+        font-weight: 500;
+        line-height: 1.2;
+      }
+      .node-panel__checkbox {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .node-panel__checkbox input {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+      }
+      .node-panel__checkbox span:last-child {
+        color: rgba(255, 255, 255, 0.84);
+        font-size: 0.84rem;
+        font-weight: 500;
+      }
+      .node-panel__checkmark {
+        position: relative;
+        width: 18px;
+        height: 18px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 3px;
+        background: rgba(255, 255, 255, 0.86);
+      }
+      .node-panel__checkmark::after {
+        content: "";
+        position: absolute;
+        left: 5px;
+        top: 2px;
+        width: 4px;
+        height: 9px;
+        border-right: 1.75px solid #17171c;
+        border-bottom: 1.75px solid #17171c;
+        transform: rotate(40deg);
+      }
+      .node-panel__checkbox--off .node-panel__checkmark {
+        background: rgba(255, 255, 255, 0.02);
+      }
+      .node-panel__checkbox--off .node-panel__checkmark::after {
+        display: none;
+      }
+      .node-panel__timing-card {
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        padding: 0 10px;
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.02);
+      }
+      .node-panel__footer { display: grid; gap: 10px; margin-top: auto; }
+      .node-panel__footer-row { padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
+      .node-panel__footer-label { color: rgba(255, 255, 255, 0.52); font-size: 0.75rem; }
+      .node-panel__footer-value { color: rgba(255, 255, 255, 0.88); font-size: 0.82rem; }
+      .node-panel__button { min-height: 38px; border: none; border-radius: 8px; background: rgba(245, 110, 15, 0.24); color: rgba(255, 255, 255, 0.96); font: inherit; font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <main class="lab-page lab-page--sync">
+      <section class="lab-stage lab-stage--sync" aria-label="Dolt repo sync node study">
+        <div class="flow-scene">
+          <div class="flow-caption">
+            <span class="flow-caption__eyebrow">Node Study 13</span>
+            <h1>Dolt repo sync as commit-range preparation</h1>
+            <p>
+              This study keeps sync logic focused on advancing a reusable working copy and emitting
+              a clean `previous_commit -> current_commit` range for downstream manifest or diff nodes.
+            </p>
+          </div>
+
+          <svg class="flow-connection" viewBox="0 0 860 804" preserveAspectRatio="none" aria-hidden="true">
+            <path d="M 424 372 C 480 372, 508 372, 562 376 S 664 384, 718 384" />
+            <circle cx="424" cy="372" r="6"></circle>
+            <circle cx="718" cy="384" r="6"></circle>
+          </svg>
+
+          <article class="node-card node-card--sync flow-node flow-node--sync flow-node--selected" aria-label="Dolt repo sync node">
+            <header class="node-card__header">
+              <div class="node-card__heading">
+                <span class="node-card__icon node-card__icon--dolt" aria-hidden="true">
+                  <svg class="dolt-mark" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M4 16C1.791 16 0 14.209 0 12V8C0 5.791 1.791 4 4 4H6V1.75C6 0.784 6.784 0 7.75 0C8.716 0 9.5 0.784 9.5 1.75V12C9.5 14.209 7.709 16 5.5 16H4ZM4 7.5C3.724 7.5 3.5 7.724 3.5 8V12C3.5 12.276 3.724 12.5 4 12.5H5.5C5.776 12.5 6 12.276 6 12V7.5H4Z" fill="currentColor"/>
+                  </svg>
+                </span>
+                <div class="node-card__title-copy">
+                  <strong>Dolt Sync</strong>
+                  <span class="node-card__title-subtitle">dolt_repo_sync</span>
+                </div>
+              </div>
+              <div class="node-card__header-meta"><span class="node-card__header-dot" aria-hidden="true"></span><span>1 input</span></div>
+            </header>
+            <section class="node-card__body">
+              <div class="node-card__row node-card__row--summary">
+                <div class="node-card__summary-head">
+                  <span class="node-card__summary-label">From</span>
+                  <strong class="node-card__summary-target node-card__value--code">92fd7ac</strong>
+                </div>
+              </div>
+              <div class="node-card__row node-card__row--summary">
+                <div class="node-card__summary-head">
+                  <span class="node-card__summary-label">To</span>
+                  <strong class="node-card__summary-target node-card__value--code">a34ef9c</strong>
+                </div>
+              </div>
+            </section>
+            <footer class="node-card__footer">
+              <span class="node-card__footer-meta"><span class="node-card__footer-icon" aria-hidden="true">@</span><span>Sync mode</span></span>
+              <strong>pull + checkout</strong>
+            </footer>
+            <span class="node-card__handle node-card__handle--left" aria-hidden="true"></span>
+            <span class="node-card__handle node-card__handle--right" aria-hidden="true"></span>
+          </article>
+
+          <div class="flow-node__hint" aria-hidden="true"><span>emits</span><strong>`previous_commit`, `current_commit`</strong></div>
+
+          <article class="node-card node-card--manifest flow-node flow-node--manifest" aria-label="Dolt change manifest node">
+            <header class="node-card__header">
+              <div class="node-card__heading">
+                <span class="node-card__icon node-card__icon--dolt" aria-hidden="true">
+                  <svg class="dolt-mark" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M4 16C1.791 16 0 14.209 0 12V8C0 5.791 1.791 4 4 4H6V1.75C6 0.784 6.784 0 7.75 0C8.716 0 9.5 0.784 9.5 1.75V12C9.5 14.209 7.709 16 5.5 16H4ZM4 7.5C3.724 7.5 3.5 7.724 3.5 8V12C3.5 12.276 3.724 12.5 4 12.5H5.5C5.776 12.5 6 12.276 6 12V7.5H4Z" fill="currentColor"/>
+                  </svg>
+                </span>
+                <div class="node-card__title-copy">
+                  <strong>Change Manifest</strong>
+                  <span class="node-card__title-subtitle">dolt_change_manifest</span>
+                </div>
+              </div>
+              <div class="node-card__header-meta"><span class="node-card__header-dot" aria-hidden="true"></span><span>1 output</span></div>
+            </header>
+            <section class="node-card__body">
+              <div class="node-card__row node-card__row--summary">
+                <div class="node-card__summary-head">
+                  <span class="node-card__summary-label">Compare</span>
+                  <strong class="node-card__summary-target">2 commits</strong>
+                </div>
+              </div>
+              <div class="node-card__row node-card__row--summary">
+                <div class="node-card__summary-head">
+                  <span class="node-card__summary-label">Changed tables</span>
+                  <strong class="node-card__summary-target">3 tables</strong>
+                </div>
+              </div>
+            </section>
+            <footer class="node-card__footer">
+              <span class="node-card__footer-meta"><span class="node-card__footer-icon" aria-hidden="true">#</span><span>Next</span></span>
+              <strong>manifest + diff</strong>
+            </footer>
+            <span class="node-card__handle node-card__handle--left" aria-hidden="true"></span>
+            <span class="node-card__handle node-card__handle--right" aria-hidden="true"></span>
+          </article>
+        </div>
+
+        <aside class="node-panel" aria-label="Dolt repo sync manager">
+          <header class="node-panel__header">
+            <div class="node-panel__title-group">
+              <span class="node-panel__title-icon node-panel__title-icon--dolt" aria-hidden="true">
+                <svg class="dolt-mark" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M4 16C1.791 16 0 14.209 0 12V8C0 5.791 1.791 4 4 4H6V1.75C6 0.784 6.784 0 7.75 0C8.716 0 9.5 0.784 9.5 1.75V12C9.5 14.209 7.709 16 5.5 16H4ZM4 7.5C3.724 7.5 3.5 7.724 3.5 8V12C3.5 12.276 3.724 12.5 4 12.5H5.5C5.776 12.5 6 12.276 6 12V7.5H4Z" fill="currentColor"/>
+                </svg>
+              </span>
+              <div>
+                <div class="node-panel__eyebrow">Node config</div>
+                <h2 class="node-panel__title">Dolt Repo Sync</h2>
+                <p class="node-panel__subtitle">Advance a cached Dolt working copy and resolve the commit range.</p>
+              </div>
+            </div>
+            <div class="node-panel__header-meta">
+              <span class="node-panel__status"><span class="node-panel__status-dot" aria-hidden="true"></span>Ready</span>
+            </div>
+          </header>
+
+          <section class="node-panel__summary">
+            <div class="node-panel__section-head">
+              <div>
+                <div class="node-panel__section-kicker">Current range</div>
+                <h3 class="node-panel__section-title">Recurring sync checkpoint</h3>
+              </div>
+            </div>
+            <div class="node-panel__summary-grid">
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Repo</span><strong class="node-panel__summary-value">post-no-preference/earnings</strong></div>
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Branch</span><strong class="node-panel__summary-value">main</strong></div>
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Previous commit</span><strong class="node-panel__summary-value node-panel__control-code">92fd7ac</strong></div>
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Current commit</span><strong class="node-panel__summary-value node-panel__control-code">a34ef9c</strong></div>
+            </div>
+          </section>
+
+          <section class="node-panel__section">
+            <div class="node-panel__section-head">
+              <div><div class="node-panel__section-kicker">Sync behavior</div><h3 class="node-panel__section-title">How the working copy advances</h3></div>
+            </div>
+            <div class="node-panel__fields">
+              <div class="node-panel__field">
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Input repo handle</span><span class="node-panel__field-hint">from `dolt_repo_source`</span></div>
+                <div class="node-panel__pill-row"><span class="node-panel__pill-label">Resolved repo ref</span><strong class="node-panel__pill-value">dataset_ref.repo_ref</strong></div>
+              </div>
+              <div class="node-panel__field">
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Sync strategy</span><span class="node-panel__field-hint">recurring runs</span></div>
+                <div class="node-panel__control"><span>Pull and checkout head</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
+              </div>
+              <div class="node-panel__field">
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Branch guard</span><span class="node-panel__field-hint">avoid drift</span></div>
+                <div class="node-panel__control"><span>Require tracked branch match</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
+              </div>
+              <div class="node-panel__field">
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Dirty working copy policy</span><span class="node-panel__field-hint">runtime safety</span></div>
+                <div class="node-panel__control"><span>Fail if local repo is dirty</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="node-panel__contract">
+            <div class="node-panel__section-head">
+              <div><div class="node-panel__section-kicker">Output contract</div><h3 class="node-panel__section-title">What the sync step emits</h3></div>
+            </div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Previous commit</span><strong class="node-panel__contract-value">metadata.previous_commit</strong></div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Current commit</span><strong class="node-panel__contract-value">metadata.current_commit</strong></div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Repo handle passthrough</span><strong class="node-panel__contract-value">dataset_ref.repo_ref</strong></div>
+          </section>
+
+          <section class="node-panel__notes">
+            <div><span class="node-panel__note-label">Boundary</span><p class="node-panel__note-copy">This node should not decide which tables changed or how they get exported. It only advances the repo and resolves the commit range.</p></div>
+            <div><span class="node-panel__note-label">Checkpoint ownership</span><p class="node-panel__note-copy">The last successful synced commit can stay in a checkpoint table, but the sync node is where that state becomes a usable runtime range.</p></div>
+          </section>
+
+          <section class="node-panel__subsection" aria-label="Execution timing">
+            <p class="node-panel__subsection-title">Execution timing</p>
+            <div class="node-panel__timing-card">
+              <label class="node-panel__checkbox node-panel__checkbox--off">
+                <input type="checkbox" />
+                <span class="node-panel__checkmark" aria-hidden="true"></span>
+                <span>Wait before execution</span>
+              </label>
+            </div>
+            <div class="node-panel__timing-card">
+              <label class="node-panel__checkbox node-panel__checkbox--off">
+                <input type="checkbox" />
+                <span class="node-panel__checkmark" aria-hidden="true"></span>
+                <span>Wait after execution</span>
+              </label>
+            </div>
+          </section>
+
+          <footer class="node-panel__footer">
+            <div class="node-panel__footer-row"><span class="node-panel__footer-label">Best downstream pair</span><span class="node-panel__footer-value">`dolt_change_manifest` or `dolt_diff_export`</span></div>
+            <button class="node-panel__button" type="button">Stage node direction</button>
+          </footer>
+        </aside>
+      </section>
+    </main>
+  </body>
+</html>

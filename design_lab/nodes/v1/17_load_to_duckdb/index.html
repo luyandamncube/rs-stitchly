@@ -1,0 +1,759 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Design Lab · Load To DuckDB</title>
+    <link rel="stylesheet" href="../shared.css" />
+    <style>
+      .lab-page--load {
+        place-items: stretch;
+        padding: 28px;
+      }
+
+      .lab-stage--load {
+        position: relative;
+        width: min(100%, 1500px);
+        min-height: 860px;
+        margin: 0 auto;
+        padding: 28px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 354px;
+        gap: 26px;
+        align-items: stretch;
+        border-radius: 28px;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 16% 18%, rgba(245, 110, 15, 0.075), transparent 18%),
+          radial-gradient(circle at 82% 12%, rgba(120, 195, 132, 0.06), transparent 16%),
+          linear-gradient(180deg, rgba(13, 13, 16, 0.88), rgba(9, 9, 11, 0.98));
+        box-shadow:
+          0 32px 64px rgba(0, 0, 0, 0.28),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+      }
+
+      .lab-stage--load::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image: radial-gradient(circle, rgba(255, 255, 255, 0.12) 1px, transparent 1px);
+        background-size: 24px 24px;
+        pointer-events: none;
+      }
+
+      .flow-scene {
+        position: relative;
+        min-height: 804px;
+      }
+
+      .flow-caption {
+        position: absolute;
+        left: 0;
+        top: 0;
+        z-index: 2;
+        display: grid;
+        gap: 6px;
+        max-width: 500px;
+      }
+
+      .flow-caption__eyebrow {
+        color: rgba(255, 255, 255, 0.54);
+        font-size: 0.76rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      .flow-caption h1 {
+        margin: 0;
+        font-size: 1.14rem;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+      }
+
+      .flow-caption p {
+        margin: 0;
+        color: rgba(255, 255, 255, 0.62);
+        font-size: 0.88rem;
+        line-height: 1.55;
+      }
+
+      .flow-connection {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        pointer-events: none;
+      }
+
+      .flow-connection path {
+        fill: none;
+        stroke: rgba(120, 195, 132, 0.76);
+        stroke-width: 2.2;
+        stroke-linecap: round;
+      }
+
+      .flow-connection circle {
+        fill: #0d0d10;
+        stroke: rgba(120, 195, 132, 0.82);
+        stroke-width: 2;
+      }
+
+      .flow-node {
+        position: absolute;
+        z-index: 2;
+      }
+
+      .flow-node--load {
+        left: 118px;
+        top: 306px;
+        width: 320px;
+      }
+
+      .flow-node--merge {
+        left: 524px;
+        top: 322px;
+        width: 298px;
+      }
+
+      .flow-node--selected {
+        background: rgba(39, 39, 44, 0.98);
+        box-shadow: 0 0 0 1px rgba(245, 110, 15, 0.82);
+      }
+
+      .node-card--load,
+      .node-card--merge {
+        min-height: 0;
+        padding: 8px 9px;
+        border-radius: 10px;
+        background: rgba(34, 34, 39, 0.96);
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.07);
+      }
+
+      .node-card--load .node-card__header,
+      .node-card--merge .node-card__header {
+        min-height: 28px;
+      }
+
+      .node-card--load .node-card__heading,
+      .node-card--merge .node-card__heading {
+        gap: 10px;
+        align-items: flex-start;
+      }
+
+      .node-card--load .node-card__icon,
+      .node-card--merge .node-card__icon {
+        margin-top: 2px;
+      }
+
+      .node-card__icon--duckdb,
+      .node-panel__title-icon--duckdb {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+
+      .node-card__icon--duckdb {
+        width: 20px;
+        height: 20px;
+      }
+
+      .node-panel__title-icon--duckdb {
+        width: 18px;
+        height: 18px;
+      }
+
+      .duckdb-mark {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+
+      .node-card__title-copy {
+        display: grid;
+        gap: 2px;
+        min-width: 0;
+      }
+
+      .node-card__title-copy strong {
+        color: rgba(255, 255, 255, 0.98);
+        font-size: 0.96rem;
+        font-weight: 600;
+        line-height: 1.1;
+        letter-spacing: -0.02em;
+      }
+
+      .node-card__title-subtitle {
+        color: rgba(255, 255, 255, 0.54);
+        font-family: "Azeret Mono", "SFMono-Regular", "Consolas", monospace;
+        font-size: 0.68rem;
+        line-height: 1.1;
+        letter-spacing: -0.01em;
+      }
+
+      .node-card__header-meta {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        flex-shrink: 0;
+        color: rgba(255, 255, 255, 0.74);
+        font-size: 0.76rem;
+        font-weight: 600;
+      }
+
+      .node-card__header-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.1);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+      }
+
+      .node-card--load .node-card__body,
+      .node-card--merge .node-card__body {
+        gap: 4px;
+        margin-top: 4px;
+        margin-bottom: 3px;
+      }
+
+      .node-card--load .node-card__row--summary,
+      .node-card--load .node-card__footer,
+      .node-card--merge .node-card__row--summary,
+      .node-card--merge .node-card__footer {
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.035);
+      }
+
+      .node-card--load .node-card__summary-label,
+      .node-card--load .node-card__footer-meta,
+      .node-card--merge .node-card__summary-label,
+      .node-card--merge .node-card__footer-meta {
+        color: var(--text-muted);
+      }
+
+      .node-card--load .node-card__summary-target,
+      .node-card--load .node-card__footer strong,
+      .node-card--merge .node-card__summary-target,
+      .node-card--merge .node-card__footer strong {
+        color: rgba(255, 255, 255, 0.92);
+        font-weight: 300;
+      }
+
+      .node-card__handle--left {
+        left: -8px;
+        right: auto;
+      }
+
+      .flow-node__hint {
+        position: absolute;
+        top: 334px;
+        left: 394px;
+        z-index: 2;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 10px;
+        background: rgba(28, 28, 33, 0.94);
+        box-shadow:
+          0 14px 26px rgba(0, 0, 0, 0.24),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+        color: rgba(255, 255, 255, 0.68);
+        font-size: 0.74rem;
+      }
+
+      .flow-node__hint strong {
+        color: rgba(255, 255, 255, 0.86);
+        font-weight: 500;
+      }
+
+      .node-panel {
+        position: relative;
+        z-index: 2;
+        min-height: 804px;
+        display: grid;
+        grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+        gap: 14px;
+        padding: 14px 14px 16px;
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 12px;
+        background: rgba(34, 34, 39, 0.98);
+        box-shadow: 0 18px 36px rgba(0, 0, 0, 0.24);
+      }
+
+      .node-panel__header,
+      .node-panel__title-group,
+      .node-panel__header-meta,
+      .node-panel__field-head,
+      .node-panel__footer-row,
+      .node-panel__section-head,
+      .node-panel__contract-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .node-panel__title-group {
+        justify-content: flex-start;
+        align-items: flex-start;
+      }
+
+      .node-panel__title-icon {
+        color: rgba(255, 255, 255, 0.56);
+        font-size: 0.88rem;
+        margin-top: 2px;
+      }
+
+      .node-panel__eyebrow {
+        color: rgba(255, 255, 255, 0.52);
+        font-size: 0.68rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      .node-panel__title {
+        margin: 0;
+        font-size: 1.32rem;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+      }
+
+      .node-panel__subtitle {
+        margin: 3px 0 0;
+        color: rgba(255, 255, 255, 0.56);
+        font-size: 0.84rem;
+      }
+
+      .node-panel__status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: rgba(255, 255, 255, 0.8);
+        font-size: 0.78rem;
+      }
+
+      .node-panel__status-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: rgba(120, 195, 132, 0.92);
+        box-shadow: 0 0 0 4px rgba(120, 195, 132, 0.12);
+      }
+
+      .node-panel__summary,
+      .node-panel__section,
+      .node-panel__contract,
+      .node-panel__notes {
+        padding: 0;
+        border: none;
+        border-radius: 0;
+        background: transparent;
+        display: grid;
+        gap: 10px;
+      }
+
+      .node-panel__section,
+      .node-panel__contract,
+      .node-panel__notes {
+        padding-top: 12px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .node-panel__summary-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .node-panel__summary-card {
+        padding: 10px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.038);
+        display: grid;
+        gap: 4px;
+      }
+
+      .node-panel__summary-label,
+      .node-panel__field-label,
+      .node-panel__section-kicker,
+      .node-panel__contract-label,
+      .node-panel__note-label {
+        color: rgba(255, 255, 255, 0.5);
+        font-size: 0.72rem;
+      }
+
+      .node-panel__summary-value,
+      .node-panel__contract-value {
+        color: rgba(255, 255, 255, 0.94);
+        font-size: 0.87rem;
+        font-weight: 500;
+      }
+
+      .node-panel__section-title {
+        margin: 0;
+        font-size: 0.88rem;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+      }
+
+      .node-panel__note-copy {
+        margin: 0;
+        color: rgba(255, 255, 255, 0.66);
+        font-size: 0.79rem;
+        line-height: 1.45;
+      }
+
+      .node-panel__fields {
+        display: grid;
+        gap: 8px;
+      }
+
+      .node-panel__field {
+        display: grid;
+        gap: 5px;
+      }
+
+      .node-panel__field-hint {
+        color: rgba(255, 255, 255, 0.42);
+        font-size: 0.72rem;
+      }
+
+      .node-panel__control,
+      .node-panel__pill-row {
+        min-height: 30px;
+        width: 100%;
+        padding: 0 10px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 7px;
+        background: rgba(255, 255, 255, 0.04);
+        color: rgba(255, 255, 255, 0.94);
+        font: inherit;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .node-panel__pill-row {
+        min-height: 48px;
+        padding-top: 7px;
+        padding-bottom: 7px;
+        align-items: flex-start;
+        flex-direction: column;
+        justify-content: center;
+      }
+
+      .node-panel__pill-label {
+        color: rgba(255, 255, 255, 0.5);
+        font-size: 0.72rem;
+      }
+
+      .node-panel__pill-value,
+      .node-panel__control-code,
+      .node-panel__contract-value {
+        font-family: "Azeret Mono", "SFMono-Regular", "Consolas", monospace;
+        font-size: 0.75rem;
+      }
+
+      .node-panel__caret {
+        color: rgba(255, 255, 255, 0.5);
+        font-size: 0.78rem;
+      }
+
+      .node-panel__subsection {
+        display: grid;
+        gap: 10px;
+        padding-top: 12px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .node-panel__subsection-title {
+        margin: 0;
+        color: rgba(255, 255, 255, 0.72);
+        font-size: 0.82rem;
+        font-weight: 500;
+        line-height: 1.2;
+      }
+
+      .node-panel__checkbox {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .node-panel__checkbox input {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .node-panel__checkbox span:last-child {
+        color: rgba(255, 255, 255, 0.84);
+        font-size: 0.84rem;
+        font-weight: 500;
+      }
+
+      .node-panel__checkmark {
+        position: relative;
+        width: 18px;
+        height: 18px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 3px;
+        background: rgba(255, 255, 255, 0.86);
+      }
+
+      .node-panel__checkmark::after {
+        content: "";
+        position: absolute;
+        left: 5px;
+        top: 2px;
+        width: 4px;
+        height: 9px;
+        border-right: 1.75px solid #17171c;
+        border-bottom: 1.75px solid #17171c;
+        transform: rotate(40deg);
+      }
+
+      .node-panel__checkbox--off .node-panel__checkmark {
+        background: rgba(255, 255, 255, 0.02);
+      }
+
+      .node-panel__checkbox--off .node-panel__checkmark::after {
+        display: none;
+      }
+
+      .node-panel__timing-card {
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        padding: 0 10px;
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.02);
+      }
+
+      .node-panel__footer {
+        display: grid;
+        gap: 10px;
+        margin-top: auto;
+      }
+
+      .node-panel__footer-row {
+        padding-top: 10px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .node-panel__footer-label {
+        color: rgba(255, 255, 255, 0.52);
+        font-size: 0.75rem;
+      }
+
+      .node-panel__footer-value {
+        color: rgba(255, 255, 255, 0.88);
+        font-size: 0.82rem;
+      }
+
+      .node-panel__button {
+        min-height: 38px;
+        border: none;
+        border-radius: 8px;
+        background: rgba(245, 110, 15, 0.24);
+        color: rgba(255, 255, 255, 0.96);
+        font: inherit;
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="lab-page lab-page--load">
+      <section class="lab-stage lab-stage--load" aria-label="Load to DuckDB node study">
+        <div class="flow-scene">
+          <div class="flow-caption">
+            <span class="flow-caption__eyebrow">Node Study 17</span>
+            <h1>Load to DuckDB as append-only raw landing</h1>
+            <p>
+              This study keeps the load step centered on `staging` landing behavior, batch stamping,
+              and file-format-aware ingestion, while leaving durable reconcile policy to `table_merge`.
+            </p>
+          </div>
+          <svg class="flow-connection" viewBox="0 0 860 804" preserveAspectRatio="none" aria-hidden="true">
+            <path d="M 436 372 C 492 372, 520 372, 576 376 S 676 384, 730 384" />
+            <circle cx="436" cy="372" r="6"></circle>
+            <circle cx="730" cy="384" r="6"></circle>
+          </svg>
+
+          <article class="node-card node-card--load flow-node flow-node--load flow-node--selected" aria-label="Load to DuckDB node">
+            <header class="node-card__header">
+              <div class="node-card__heading">
+                <span class="node-card__icon node-card__icon--duckdb" aria-hidden="true">
+                  <svg class="duckdb-mark" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="16" cy="16" r="16" fill="#050505" />
+                    <circle cx="11.5" cy="16" r="6.6" fill="#FFEB00" />
+                    <path
+                      d="M20.8 13.9H23.6C25.0922 13.9 26.3 15.1078 26.3 16.6C26.3 18.0922 25.0922 19.3 23.6 19.3H20.8V13.9Z"
+                      fill="#FFEB00"
+                    />
+                  </svg>
+                </span>
+                <div class="node-card__title-copy">
+                  <strong>Load to DuckDB</strong>
+                  <span class="node-card__title-subtitle">load_to_duckdb</span>
+                </div>
+              </div>
+              <div class="node-card__header-meta">
+                <span class="node-card__header-dot" aria-hidden="true"></span>
+                <span>1 input</span>
+              </div>
+            </header>
+            <section class="node-card__body">
+              <div class="node-card__row node-card__row--summary">
+                <div class="node-card__summary-head">
+                  <span class="node-card__summary-label">Target</span>
+                  <strong class="node-card__summary-target">staging</strong>
+                </div>
+              </div>
+              <div class="node-card__row node-card__row--summary">
+                <div class="node-card__summary-head">
+                  <span class="node-card__summary-label">Batch mode</span>
+                  <strong class="node-card__summary-target">append raw batch</strong>
+                </div>
+              </div>
+            </section>
+            <footer class="node-card__footer">
+              <span class="node-card__footer-meta"><span class="node-card__footer-icon" aria-hidden="true">#</span><span>Stamped cols</span></span>
+              <strong>5 metadata cols</strong>
+            </footer>
+            <span class="node-card__handle node-card__handle--left" aria-hidden="true"></span>
+            <span class="node-card__handle node-card__handle--right" aria-hidden="true"></span>
+          </article>
+
+          <div class="flow-node__hint" aria-hidden="true"><span>emits</span><strong>`table_ref[]` in `staging`</strong></div>
+
+          <article class="node-card node-card--merge flow-node flow-node--merge" aria-label="Table merge node">
+            <header class="node-card__header">
+              <div class="node-card__heading">
+                <span class="node-card__icon" aria-hidden="true">G</span>
+                <div class="node-card__title-copy">
+                  <strong>Table Merge</strong>
+                  <span class="node-card__title-subtitle">table_merge</span>
+                </div>
+              </div>
+              <div class="node-card__header-meta">
+                <span class="node-card__header-dot" aria-hidden="true"></span>
+                <span>1 output</span>
+              </div>
+            </header>
+            <section class="node-card__body">
+              <div class="node-card__row node-card__row--summary">
+                <div class="node-card__summary-head">
+                  <span class="node-card__summary-label">Policy</span>
+                  <strong class="node-card__summary-target">upsert</strong>
+                </div>
+              </div>
+              <div class="node-card__row node-card__row--summary">
+                <div class="node-card__summary-head">
+                  <span class="node-card__summary-label">Target</span>
+                  <strong class="node-card__summary-target">tables.*</strong>
+                </div>
+              </div>
+            </section>
+            <footer class="node-card__footer">
+              <span class="node-card__footer-meta"><span class="node-card__footer-icon" aria-hidden="true">@</span><span>Next</span></span>
+              <strong>durable tables</strong>
+            </footer>
+            <span class="node-card__handle node-card__handle--left" aria-hidden="true"></span>
+            <span class="node-card__handle node-card__handle--right" aria-hidden="true"></span>
+          </article>
+        </div>
+
+        <aside class="node-panel" aria-label="Load to DuckDB manager">
+          <header class="node-panel__header">
+            <div class="node-panel__title-group">
+              <span class="node-panel__title-icon node-panel__title-icon--duckdb" aria-hidden="true">
+                <svg class="duckdb-mark" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <circle cx="16" cy="16" r="16" fill="#050505" />
+                  <circle cx="11.5" cy="16" r="6.6" fill="#FFEB00" />
+                  <path
+                    d="M20.8 13.9H23.6C25.0922 13.9 26.3 15.1078 26.3 16.6C26.3 18.0922 25.0922 19.3 23.6 19.3H20.8V13.9Z"
+                    fill="#FFEB00"
+                  />
+                </svg>
+              </span>
+              <div>
+                <div class="node-panel__eyebrow">Node config</div>
+                <h2 class="node-panel__title">Load To DuckDB</h2>
+                <p class="node-panel__subtitle">Land artifact bundles into `staging` tables with ingest metadata.</p>
+              </div>
+            </div>
+            <div class="node-panel__header-meta"><span class="node-panel__status"><span class="node-panel__status-dot" aria-hidden="true"></span>Ready</span></div>
+          </header>
+          <section class="node-panel__summary">
+            <div class="node-panel__section-head">
+              <div>
+                <div class="node-panel__section-kicker">Landing shape</div>
+                <h3 class="node-panel__section-title">Raw batch ingest</h3>
+              </div>
+            </div>
+            <div class="node-panel__summary-grid">
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Target schema</span><strong class="node-panel__summary-value">staging</strong></div>
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Input format</span><strong class="node-panel__summary-value">parquet</strong></div>
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Write mode</span><strong class="node-panel__summary-value">append only</strong></div>
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Stamped columns</span><strong class="node-panel__summary-value">source + batch metadata</strong></div>
+            </div>
+          </section>
+          <section class="node-panel__section">
+            <div class="node-panel__section-head">
+              <div>
+                <div class="node-panel__section-kicker">Load behavior</div>
+                <h3 class="node-panel__section-title">How files become staging tables</h3>
+              </div>
+            </div>
+            <div class="node-panel__fields">
+              <div class="node-panel__field">
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Target schema</span><span class="node-panel__field-hint">landing zone</span></div>
+                <div class="node-panel__control"><span>staging</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
+              </div>
+              <div class="node-panel__field">
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Table mapping</span><span class="node-panel__field-hint">one file per table</span></div>
+                <div class="node-panel__control"><span>Mirror source table names</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
+              </div>
+              <div class="node-panel__field">
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Schema inference</span><span class="node-panel__field-hint">type fidelity</span></div>
+                <div class="node-panel__control"><span>Infer and persist</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
+              </div>
+              <div class="node-panel__field">
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Metadata stamping</span><span class="node-panel__field-hint">lineage</span></div>
+                <div class="node-panel__pill-row"><span class="node-panel__pill-label">Added on ingest</span><strong class="node-panel__pill-value">source_repo, source_table, source_commit, ingested_at, batch_id</strong></div>
+              </div>
+            </div>
+          </section>
+          <section class="node-panel__contract">
+            <div class="node-panel__section-head">
+              <div>
+                <div class="node-panel__section-kicker">Output contract</div>
+                <h3 class="node-panel__section-title">What the merge step consumes</h3>
+              </div>
+            </div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Staging table refs</span><strong class="node-panel__contract-value">table_ref[]</strong></div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Load manifest</span><strong class="node-panel__contract-value">metadata.loaded_tables[]</strong></div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Batch metadata</span><strong class="node-panel__contract-value">metadata.batch_id</strong></div>
+          </section>
+          <section class="node-panel__notes">
+            <div><span class="node-panel__note-label">Boundary</span><p class="node-panel__note-copy">This node only lands raw or delta files into `staging`. It should not decide durable merge policy.</p></div>
+            <div><span class="node-panel__note-label">Why append only here</span><p class="node-panel__note-copy">Append-only landing gives us fast ingest, replayability, and easier debugging. Correctness decisions happen later in `table_merge`.</p></div>
+          </section>
+          <section class="node-panel__subsection" aria-label="Execution timing">
+            <p class="node-panel__subsection-title">Execution timing</p>
+            <div class="node-panel__timing-card"><label class="node-panel__checkbox node-panel__checkbox--off"><input type="checkbox" /><span class="node-panel__checkmark" aria-hidden="true"></span><span>Wait before execution</span></label></div>
+            <div class="node-panel__timing-card"><label class="node-panel__checkbox node-panel__checkbox--off"><input type="checkbox" /><span class="node-panel__checkmark" aria-hidden="true"></span><span>Wait after execution</span></label></div>
+          </section>
+          <footer class="node-panel__footer">
+            <div class="node-panel__footer-row"><span class="node-panel__footer-label">Best downstream pair</span><span class="node-panel__footer-value">`table_merge`</span></div>
+            <button class="node-panel__button" type="button">Stage node direction</button>
+          </footer>
+        </aside>
+      </section>
+    </main>
+  </body>
+</html>

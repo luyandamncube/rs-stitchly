@@ -76,6 +76,7 @@ The goal is to document:
 - `01_workflows/00_finance_workflow_ideas.md`: first-pass list of realistic finance ingestion workflows, data sources, and candidate node families
 - `01_workflows/01_finance_table_grouping_and_naming.md`: scalable naming and grouping convention for finance tables across schemas, grains, providers, and enrichments
 - `01_workflows/20_workflow_example_dolt.md`: DoltHub earnings ingest into typed artifacts and warehouse sinks
+- `01_workflows/21_dolthub_market_data_duckdb_ingest.md`: DuckDB-oriented plan for ingesting large DoltHub market datasets with append-friendly landing and efficient reingestion
 
 ## Build
 

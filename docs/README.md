@@ -22,6 +22,7 @@ The goal is to document:
 - UI-specific product and interaction docs live under `03_ui/` and use numbered filenames starting at `00_...`.
 - Execution-specific runtime contract docs live under `04_execution/` and use numbered filenames starting at `01_...`.
 - Venture and idea-evaluation docs live under `05_venture/` and use numbered filenames starting at `00_...`.
+- Trading-research strategy docs live under `06_trading_research/` and use numbered filenames starting at `00_...`.
 - When a major product or technical direction changes, update the relevant doc and add an entry to `00_foundation/11_decision_log.md`.
 - Prefer extending an existing numbered doc before creating a new one for overlapping content.
 
@@ -94,3 +95,7 @@ The goal is to document:
 - `05_venture/20_idea_savr.md`: seeded example evaluation for Savr
 - `05_venture/21_idea_waterwatch.md`: seeded example evaluation for WaterWatch
 - `05_venture/22_idea_gridza.md`: seeded example evaluation for GridZA
+
+## Trading Research
+
+- `06_trading_research/00_systematic_technical_strategy_research.md`: first structured direction for technical strategy research workflows, including research layers, table families, and node implications

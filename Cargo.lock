@@ -1847,6 +1847,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64",
+ "chrono",
+ "duckdb",
  "node_registry",
  "reqwest",
  "serde",
@@ -1861,6 +1863,7 @@ version = "0.1.0"
 dependencies = [
  "api_contract",
  "chrono",
+ "duckdb",
  "node_registry",
  "runtime_adapters",
  "serde_json",

@@ -6035,6 +6035,20 @@ button.canvas-data-panel__overview-row:hover {
   flex: 0 0 auto;
 }
 
+.canvas-node-panel__title-icon--dolt {
+  color: #33d1c0;
+}
+
+.canvas-node-panel__title-icon--duckdb {
+  color: #111111;
+}
+
+.canvas-node-panel__brand-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
 .canvas-node-panel__title-copy {
   display: grid;
   gap: 2px;
@@ -7893,8 +7907,32 @@ button.canvas-node-panel__select {
   flex-shrink: 0;
 }
 
+.workflow-node-card__icon--dolt {
+  color: #33d1c0;
+}
+
+.workflow-node-card__icon--dolt svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
+.workflow-node-card__icon--duckdb {
+  color: #111111;
+}
+
+.workflow-node-card__icon--duckdb svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
 .workflow-node-card[data-runtime-state="succeeded"] .workflow-node-card__icon {
   color: rgba(121, 199, 139, 0.94);
+}
+
+.workflow-node-card[data-runtime-state="succeeded"] .workflow-node-card__icon--duckdb {
+  color: #111111;
 }
 
 .workflow-node-card__heading strong {
@@ -8198,7 +8236,17 @@ button.canvas-node-panel__select {
 
 .workflow-node-card--table-input,
 .workflow-node-card--table-output,
-.workflow-node-card--table-schema {
+.workflow-node-card--table-schema,
+.workflow-node-card--checkpoint-read,
+.workflow-node-card--checkpoint-write,
+.workflow-node-card--quality-check,
+.workflow-node-card--dolt-change-manifest,
+.workflow-node-card--dolt-diff-export,
+.workflow-node-card--dolt-dump,
+.workflow-node-card--table-merge,
+.workflow-node-card--load-to-duckdb,
+.workflow-node-card--dolt-repo-source,
+.workflow-node-card--dolt-repo-sync {
   width: 280px;
   min-height: 0;
   padding: 8px 9px 8px;
@@ -8206,13 +8254,33 @@ button.canvas-node-panel__select {
 
 .workflow-node-card--table-input .workflow-node-card__header,
 .workflow-node-card--table-output .workflow-node-card__header,
-.workflow-node-card--table-schema .workflow-node-card__header {
+.workflow-node-card--table-schema .workflow-node-card__header,
+.workflow-node-card--checkpoint-read .workflow-node-card__header,
+.workflow-node-card--checkpoint-write .workflow-node-card__header,
+.workflow-node-card--quality-check .workflow-node-card__header,
+.workflow-node-card--dolt-change-manifest .workflow-node-card__header,
+.workflow-node-card--dolt-diff-export .workflow-node-card__header,
+.workflow-node-card--dolt-dump .workflow-node-card__header,
+.workflow-node-card--table-merge .workflow-node-card__header,
+.workflow-node-card--load-to-duckdb .workflow-node-card__header,
+.workflow-node-card--dolt-repo-source .workflow-node-card__header,
+.workflow-node-card--dolt-repo-sync .workflow-node-card__header {
   min-height: 20px;
 }
 
 .workflow-node-card--table-input .workflow-node-card__body,
 .workflow-node-card--table-output .workflow-node-card__body,
-.workflow-node-card--table-schema .workflow-node-card__body {
+.workflow-node-card--table-schema .workflow-node-card__body,
+.workflow-node-card--checkpoint-read .workflow-node-card__body,
+.workflow-node-card--checkpoint-write .workflow-node-card__body,
+.workflow-node-card--quality-check .workflow-node-card__body,
+.workflow-node-card--dolt-change-manifest .workflow-node-card__body,
+.workflow-node-card--dolt-diff-export .workflow-node-card__body,
+.workflow-node-card--dolt-dump .workflow-node-card__body,
+.workflow-node-card--table-merge .workflow-node-card__body,
+.workflow-node-card--load-to-duckdb .workflow-node-card__body,
+.workflow-node-card--dolt-repo-source .workflow-node-card__body,
+.workflow-node-card--dolt-repo-sync .workflow-node-card__body {
   gap: 4px;
   margin-top: 4px;
   margin-bottom: 3px;
@@ -8220,7 +8288,17 @@ button.canvas-node-panel__select {
 
 .workflow-node-card--table-input .workflow-node-card__menu,
 .workflow-node-card--table-output .workflow-node-card__menu,
-.workflow-node-card--table-schema .workflow-node-card__menu {
+.workflow-node-card--table-schema .workflow-node-card__menu,
+.workflow-node-card--checkpoint-read .workflow-node-card__menu,
+.workflow-node-card--checkpoint-write .workflow-node-card__menu,
+.workflow-node-card--quality-check .workflow-node-card__menu,
+.workflow-node-card--dolt-change-manifest .workflow-node-card__menu,
+.workflow-node-card--dolt-diff-export .workflow-node-card__menu,
+.workflow-node-card--dolt-dump .workflow-node-card__menu,
+.workflow-node-card--table-merge .workflow-node-card__menu,
+.workflow-node-card--load-to-duckdb .workflow-node-card__menu,
+.workflow-node-card--dolt-repo-source .workflow-node-card__menu,
+.workflow-node-card--dolt-repo-sync .workflow-node-card__menu {
   color: rgba(255, 255, 255, 0.42);
 }
 
@@ -8232,19 +8310,69 @@ button.canvas-node-panel__select {
 .workflow-node-card--table-output .workflow-node-card__footer-meta,
 .workflow-node-card--table-schema .workflow-node-card__label,
 .workflow-node-card--table-schema .workflow-node-card__summary-label,
-.workflow-node-card--table-schema .workflow-node-card__footer-meta {
+.workflow-node-card--table-schema .workflow-node-card__footer-meta,
+.workflow-node-card--checkpoint-read .workflow-node-card__label,
+.workflow-node-card--checkpoint-read .workflow-node-card__summary-label,
+.workflow-node-card--checkpoint-read .workflow-node-card__footer-meta,
+.workflow-node-card--checkpoint-write .workflow-node-card__label,
+.workflow-node-card--checkpoint-write .workflow-node-card__summary-label,
+.workflow-node-card--checkpoint-write .workflow-node-card__footer-meta,
+.workflow-node-card--quality-check .workflow-node-card__label,
+.workflow-node-card--quality-check .workflow-node-card__summary-label,
+.workflow-node-card--quality-check .workflow-node-card__footer-meta,
+.workflow-node-card--dolt-change-manifest .workflow-node-card__label,
+.workflow-node-card--dolt-change-manifest .workflow-node-card__summary-label,
+.workflow-node-card--dolt-change-manifest .workflow-node-card__footer-meta,
+.workflow-node-card--table-merge .workflow-node-card__label,
+.workflow-node-card--table-merge .workflow-node-card__summary-label,
+.workflow-node-card--table-merge .workflow-node-card__footer-meta,
+.workflow-node-card--load-to-duckdb .workflow-node-card__label,
+.workflow-node-card--load-to-duckdb .workflow-node-card__summary-label,
+.workflow-node-card--load-to-duckdb .workflow-node-card__footer-meta,
+.workflow-node-card--dolt-diff-export .workflow-node-card__label,
+.workflow-node-card--dolt-diff-export .workflow-node-card__summary-label,
+.workflow-node-card--dolt-diff-export .workflow-node-card__footer-meta,
+.workflow-node-card--dolt-dump .workflow-node-card__label,
+.workflow-node-card--dolt-dump .workflow-node-card__summary-label,
+.workflow-node-card--dolt-dump .workflow-node-card__footer-meta,
+.workflow-node-card--dolt-repo-source .workflow-node-card__label,
+.workflow-node-card--dolt-repo-source .workflow-node-card__summary-label,
+.workflow-node-card--dolt-repo-source .workflow-node-card__footer-meta,
+.workflow-node-card--dolt-repo-sync .workflow-node-card__label,
+.workflow-node-card--dolt-repo-sync .workflow-node-card__summary-label,
+.workflow-node-card--dolt-repo-sync .workflow-node-card__footer-meta {
   color: var(--text-muted);
 }
 
 .workflow-node-card--table-input .workflow-node-card__summary-target,
 .workflow-node-card--table-output .workflow-node-card__summary-target,
-.workflow-node-card--table-schema .workflow-node-card__summary-target {
+.workflow-node-card--table-schema .workflow-node-card__summary-target,
+.workflow-node-card--checkpoint-read .workflow-node-card__summary-target,
+.workflow-node-card--checkpoint-write .workflow-node-card__summary-target,
+.workflow-node-card--quality-check .workflow-node-card__summary-target,
+.workflow-node-card--dolt-change-manifest .workflow-node-card__summary-target,
+.workflow-node-card--dolt-diff-export .workflow-node-card__summary-target,
+.workflow-node-card--dolt-dump .workflow-node-card__summary-target,
+.workflow-node-card--table-merge .workflow-node-card__summary-target,
+.workflow-node-card--load-to-duckdb .workflow-node-card__summary-target,
+.workflow-node-card--dolt-repo-source .workflow-node-card__summary-target,
+.workflow-node-card--dolt-repo-sync .workflow-node-card__summary-target {
   font-weight: 300;
 }
 
 .workflow-node-card--table-input .workflow-node-card__footer,
 .workflow-node-card--table-output .workflow-node-card__footer,
-.workflow-node-card--table-schema .workflow-node-card__footer {
+.workflow-node-card--table-schema .workflow-node-card__footer,
+.workflow-node-card--checkpoint-read .workflow-node-card__footer,
+.workflow-node-card--checkpoint-write .workflow-node-card__footer,
+.workflow-node-card--quality-check .workflow-node-card__footer,
+.workflow-node-card--dolt-change-manifest .workflow-node-card__footer,
+.workflow-node-card--dolt-diff-export .workflow-node-card__footer,
+.workflow-node-card--dolt-dump .workflow-node-card__footer,
+.workflow-node-card--table-merge .workflow-node-card__footer,
+.workflow-node-card--load-to-duckdb .workflow-node-card__footer,
+.workflow-node-card--dolt-repo-source .workflow-node-card__footer,
+.workflow-node-card--dolt-repo-sync .workflow-node-card__footer {
   min-height: 32px;
   padding: 0 8px;
   border-radius: 5px;
@@ -8254,7 +8382,17 @@ button.canvas-node-panel__select {
 
 .workflow-node-card--table-input .workflow-node-card__footer strong,
 .workflow-node-card--table-output .workflow-node-card__footer strong,
-.workflow-node-card--table-schema .workflow-node-card__footer strong {
+.workflow-node-card--table-schema .workflow-node-card__footer strong,
+.workflow-node-card--checkpoint-read .workflow-node-card__footer strong,
+.workflow-node-card--checkpoint-write .workflow-node-card__footer strong,
+.workflow-node-card--quality-check .workflow-node-card__footer strong,
+.workflow-node-card--dolt-change-manifest .workflow-node-card__footer strong,
+.workflow-node-card--dolt-diff-export .workflow-node-card__footer strong,
+.workflow-node-card--dolt-dump .workflow-node-card__footer strong,
+.workflow-node-card--table-merge .workflow-node-card__footer strong,
+.workflow-node-card--load-to-duckdb .workflow-node-card__footer strong,
+.workflow-node-card--dolt-repo-source .workflow-node-card__footer strong,
+.workflow-node-card--dolt-repo-sync .workflow-node-card__footer strong {
   color: rgba(255, 255, 255, 0.92);
   font-weight: 300;
 }

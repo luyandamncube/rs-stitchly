@@ -1825,6 +1825,22 @@ impl PlatformStore {
             .join(workflow_id)
     }
 
+    pub fn workflow_duckdb_path(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        workflow_id: &str,
+    ) -> anyhow::Result<PathBuf> {
+        let connection = self.connection();
+        ensure_workspace_access(&connection, user_id, workspace_id)?;
+        let storage_owner_user_id =
+            lookup_workflow_storage_owner_user_id(&connection, workspace_id, workflow_id)?;
+        Ok(self
+            .workflow_root_path(storage_owner_user_id.as_str(), workspace_id, workflow_id)
+            .join("db")
+            .join("workflow.duckdb"))
+    }
+
     fn bootstrap_workflow_storage(
         &self,
         user_id: &str,
@@ -6155,11 +6171,7 @@ mod tests {
                 started_at: Some(started_at),
                 finished_at: Some(finished_at),
                 last_output: Some(table_output_schema_payload(
-                    "outputs",
-                    "orders",
-                    "append",
-                    "output",
-                    "orders",
+                    "outputs", "orders", "append", "output", "orders",
                 )),
                 log_count: 1,
                 error: None,
@@ -6169,7 +6181,11 @@ mod tests {
         };
 
         store
-            .persist_run_snapshot(&workspace.workspace_id, Some("usr_builder"), &single_snapshot)
+            .persist_run_snapshot(
+                &workspace.workspace_id,
+                Some("usr_builder"),
+                &single_snapshot,
+            )
             .expect("single run snapshot persists");
 
         let multi_started_at = started_at + Duration::minutes(1);
@@ -6200,7 +6216,11 @@ mod tests {
         };
 
         store
-            .persist_run_snapshot(&workspace.workspace_id, Some("usr_builder"), &multi_snapshot)
+            .persist_run_snapshot(
+                &workspace.workspace_id,
+                Some("usr_builder"),
+                &multi_snapshot,
+            )
             .expect("multi run snapshot persists");
 
         let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb reopens");

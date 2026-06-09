@@ -13,15 +13,16 @@ Purpose:
 What this sample is testing:
 
 - a compact commit-range card for a reused working copy
-- a summary shell centered on `From`, `To`, and `Sync mode`
-- a config panel focused on repo ref input, sync strategy, branch guard, and
+- a summary shell centered on `From`, `To`, and `Sync action`
+- a config panel focused on repo ref input, sync action, branch guard, and
   dirty working-copy policy
 - a clear boundary between repo sync and change detection
+- a runtime-owned checkpoint model where previous commit state is not manually
+  entered into node config
 
 Still unresolved:
 
-- whether sync should expose a manual ref override for recovery workflows
-- whether the `dirty working copy` policy belongs in basic config or advanced
-  config only
-- whether the card needs to show both commits or only the latest synced commit
-
+- whether `no change` runs should emit an identical `from -> to` range or a
+  more explicit no-op flag
+- whether recovery-only ref overrides belong here or should live in a separate
+  maintenance workflow pattern

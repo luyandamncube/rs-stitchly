@@ -376,10 +376,11 @@
         <div class="flow-scene">
           <div class="flow-caption">
             <span class="flow-caption__eyebrow">Node Study 13</span>
-            <h1>Dolt repo sync as commit-range preparation</h1>
+            <h1>Dolt repo sync as recurring commit-range resolution</h1>
             <p>
-              This study keeps sync logic focused on advancing a reusable working copy and emitting
-              a clean `previous_commit -> current_commit` range for downstream manifest or diff nodes.
+              This study keeps sync focused on advancing the upstream repo handle, resolving a
+              workflow-managed <code>previous_commit -&gt; current_commit</code> range, and handing
+              that clean window to downstream manifest or diff-export nodes.
             </p>
           </div>
 
@@ -398,7 +399,7 @@
                   </svg>
                 </span>
                 <div class="node-card__title-copy">
-                  <strong>Dolt Sync</strong>
+                  <strong>Dolt Repo Sync</strong>
                   <span class="node-card__title-subtitle">dolt_repo_sync</span>
                 </div>
               </div>
@@ -419,8 +420,8 @@
               </div>
             </section>
             <footer class="node-card__footer">
-              <span class="node-card__footer-meta"><span class="node-card__footer-icon" aria-hidden="true">@</span><span>Sync mode</span></span>
-              <strong>pull + checkout</strong>
+              <span class="node-card__footer-meta"><span class="node-card__footer-icon" aria-hidden="true">@</span><span>Sync action</span></span>
+              <strong>pull remote head</strong>
             </footer>
             <span class="node-card__handle node-card__handle--left" aria-hidden="true"></span>
             <span class="node-card__handle node-card__handle--right" aria-hidden="true"></span>
@@ -477,7 +478,7 @@
               <div>
                 <div class="node-panel__eyebrow">Node config</div>
                 <h2 class="node-panel__title">Dolt Repo Sync</h2>
-                <p class="node-panel__subtitle">Advance a cached Dolt working copy and resolve the commit range.</p>
+                <p class="node-panel__subtitle">Advance a cached Dolt working copy and resolve the runtime commit range.</p>
               </div>
             </div>
             <div class="node-panel__header-meta">
@@ -488,8 +489,8 @@
           <section class="node-panel__summary">
             <div class="node-panel__section-head">
               <div>
-                <div class="node-panel__section-kicker">Current range</div>
-                <h3 class="node-panel__section-title">Recurring sync checkpoint</h3>
+                <div class="node-panel__section-kicker">Resolved range</div>
+                <h3 class="node-panel__section-title">Recurring sync window</h3>
               </div>
             </div>
             <div class="node-panel__summary-grid">
@@ -506,12 +507,24 @@
             </div>
             <div class="node-panel__fields">
               <div class="node-panel__field">
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Label</span></div>
+                <div class="node-panel__control">Recurring earnings sync</div>
+              </div>
+              <div class="node-panel__field">
                 <div class="node-panel__field-head"><span class="node-panel__field-label">Input repo handle</span><span class="node-panel__field-hint">from `dolt_repo_source`</span></div>
                 <div class="node-panel__pill-row"><span class="node-panel__pill-label">Resolved repo ref</span><strong class="node-panel__pill-value">dataset_ref.repo_ref</strong></div>
               </div>
               <div class="node-panel__field">
-                <div class="node-panel__field-head"><span class="node-panel__field-label">Sync strategy</span><span class="node-panel__field-hint">recurring runs</span></div>
-                <div class="node-panel__control"><span>Pull and checkout head</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Previous commit source</span><span class="node-panel__field-hint">workflow managed</span></div>
+                <div class="node-panel__pill-row"><span class="node-panel__pill-label">Checkpoint lookup</span><strong class="node-panel__pill-value">checkpoint.last_synced_commit</strong></div>
+              </div>
+              <div class="node-panel__field">
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Sync action</span><span class="node-panel__field-hint">recurring runs</span></div>
+                <div class="node-panel__control"><span>Pull remote head</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
+              </div>
+              <div class="node-panel__field">
+                <div class="node-panel__field-head"><span class="node-panel__field-label">No-change behavior</span><span class="node-panel__field-hint">downstream contract</span></div>
+                <div class="node-panel__control"><span>Emit same from/to commit</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
               </div>
               <div class="node-panel__field">
                 <div class="node-panel__field-head"><span class="node-panel__field-label">Branch guard</span><span class="node-panel__field-hint">avoid drift</span></div>
@@ -531,11 +544,13 @@
             <div class="node-panel__contract-row"><span class="node-panel__contract-label">Previous commit</span><strong class="node-panel__contract-value">metadata.previous_commit</strong></div>
             <div class="node-panel__contract-row"><span class="node-panel__contract-label">Current commit</span><strong class="node-panel__contract-value">metadata.current_commit</strong></div>
             <div class="node-panel__contract-row"><span class="node-panel__contract-label">Repo handle passthrough</span><strong class="node-panel__contract-value">dataset_ref.repo_ref</strong></div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Sync action</span><strong class="node-panel__contract-value">metadata.sync_action</strong></div>
           </section>
 
           <section class="node-panel__notes">
             <div><span class="node-panel__note-label">Boundary</span><p class="node-panel__note-copy">This node should not decide which tables changed or how they get exported. It only advances the repo and resolves the commit range.</p></div>
-            <div><span class="node-panel__note-label">Checkpoint ownership</span><p class="node-panel__note-copy">The last successful synced commit can stay in a checkpoint table, but the sync node is where that state becomes a usable runtime range.</p></div>
+            <div><span class="node-panel__note-label">Checkpoint ownership</span><p class="node-panel__note-copy">Previous commit state is workflow-managed and should not be manually typed into this node. The sync step only turns that checkpoint into a usable runtime range.</p></div>
+            <div><span class="node-panel__note-label">Bootstrap path</span><p class="node-panel__note-copy">When no checkpoint exists yet, the initial load should stay on the bootstrap path with <code>dolt_dump</code> rather than pretending a recurring diff window already exists.</p></div>
           </section>
 
           <section class="node-panel__subsection" aria-label="Execution timing">
@@ -557,8 +572,8 @@
           </section>
 
           <footer class="node-panel__footer">
-            <div class="node-panel__footer-row"><span class="node-panel__footer-label">Best downstream pair</span><span class="node-panel__footer-value">`dolt_change_manifest` or `dolt_diff_export`</span></div>
-            <button class="node-panel__button" type="button">Stage node direction</button>
+            <div class="node-panel__footer-row"><span class="node-panel__footer-label">Best downstream pair</span><span class="node-panel__footer-value">`dolt_change_manifest`</span></div>
+            <button class="node-panel__button" type="button">→ Sync range ready</button>
           </footer>
         </aside>
       </section>

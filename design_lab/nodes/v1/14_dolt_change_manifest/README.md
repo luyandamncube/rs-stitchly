@@ -12,15 +12,14 @@ Purpose:
 What this sample is testing:
 
 - a compact manifest card for a two-commit comparison
-- a summary shell centered on `Range`, `Changed tables`, and `Schema drift`
-- a config panel focused on commit range, table scope, and schema-change
-  detection
+- a summary shell centered on `Range`, `Scope`, and `Schema drift`
+- a config panel focused on read-only upstream range, table scope, and
+  schema-change policy
 - a clear boundary between manifest creation and file export
 
 Still unresolved:
 
-- whether row-change counts should always be part of the manifest or optional
-- whether table scope belongs in the base panel or should wait for advanced
-  filtering
+- whether table scope needs only `all_tables` vs allowlist in the first app cut
 - how much schema-drift detail belongs on the card itself
-
+- whether the output should be a dedicated `change_manifest_ref` type or a
+  dataset ref with manifest metadata attached

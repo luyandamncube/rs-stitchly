@@ -12,40 +12,41 @@ export function createCanvasElements(
   selectedEdgeId = null,
   runtimeSnapshot = null
 ) {
-  const definitionMap = Object.fromEntries(
-    nodeDefinitions.map((definition) => [definition.type_id, definition])
-  )
-
   return {
-    nodes: workflow.nodes.map((node) => ({
-      id: node.node_id,
-      type: resolveCanvasNodeType(node.type_id),
-      position: node.position,
-      selected: node.node_id === selectedNodeId,
-      data: {
-        label: node.label ?? definitionMap[node.type_id]?.display_name ?? node.type_id,
-        definition: definitionMap[node.type_id],
-        node,
-        uiState: {
-          interaction: {
-            hovered: node.node_id === hoveredNodeId
-          },
-          runtime: buildNodeRuntimeUiState(runtimeSnapshot, node.node_id)
-        },
-        typeId: node.type_id,
-        card: buildNodeCardModel({
-          workflow,
+    nodes: workflow.nodes.map((node) => {
+      const definition = resolveNodeDefinition(node, nodeDefinitions)
+
+      return {
+        id: node.node_id,
+        type: resolveCanvasNodeType(node.type_id),
+        position: node.position,
+        selected: node.node_id === selectedNodeId,
+        data: {
+          label: node.label ?? definition?.display_name ?? node.type_id,
+          definition,
           node,
-          definition: definitionMap[node.type_id],
-          nodeDefinitions
-        })
-      },
-      style: {
-        background: 'transparent',
-        border: 'none',
-        width: getNodeCardWidth(definitionMap[node.type_id])
+          uiState: {
+            interaction: {
+              hovered: node.node_id === hoveredNodeId
+            },
+            runtime: buildNodeRuntimeUiState(runtimeSnapshot, node.node_id)
+          },
+          typeId: node.type_id,
+          workflow,
+          card: buildNodeCardModel({
+            workflow,
+            node,
+            definition,
+            nodeDefinitions
+          })
+        },
+        style: {
+          background: 'transparent',
+          border: 'none',
+          width: getNodeCardWidth(definition)
+        }
       }
-    })),
+    }),
     edges: workflow.edges.map((edge) => ({
       className: edgeRuntimeClassName(runtimeSnapshot, edge),
       id: edge.edge_id,
@@ -344,6 +345,17 @@ function arePortTypesCompatible(sourceNode, sourcePort, targetNode, targetPort) 
   const sourceDataType = normalizeDataType(sourcePort?.data_type)
   const targetDataType = normalizeDataType(targetPort?.data_type)
 
+  if (targetNode?.type_id === 'quality_check' && targetPort?.port_id === 'table') {
+    return sourceNode?.type_id === 'table_merge' && sourceDataType === 'table_ref'
+  }
+
+  if (targetNode?.type_id === 'checkpoint_write' && targetPort?.port_id === 'table') {
+    return (
+      (sourceNode?.type_id === 'table_merge' || sourceNode?.type_id === 'quality_check') &&
+      sourceDataType === 'table_ref'
+    )
+  }
+
   if (sourceDataType === targetDataType) {
     return true
   }
@@ -364,7 +376,12 @@ function applyConnectionSideEffects(workflow, connection) {
   }
 
   let nextInputShape = null
-  if (sourceNode.type_id === 'table_input') {
+  if (
+    sourceNode.type_id === 'table_input' ||
+    sourceNode.type_id === 'table_merge' ||
+    sourceNode.type_id === 'checkpoint_write' ||
+    sourceNode.type_id === 'quality_check'
+  ) {
     nextInputShape = 'source_table'
   } else if (sourceNode.type_id === 'table_schema') {
     nextInputShape = 'table_schema'
@@ -423,6 +440,46 @@ export function updateNodeLabel(workflow, nodeId, nextLabel) {
 function resolveCanvasNodeType(typeId) {
   if (typeId === 'text_input') {
     return 'text_input'
+  }
+
+  if (typeId === 'dolt_repo_source') {
+    return 'dolt_repo_source'
+  }
+
+  if (typeId === 'checkpoint_read') {
+    return 'checkpoint_read'
+  }
+
+  if (typeId === 'checkpoint_write') {
+    return 'checkpoint_write'
+  }
+
+  if (typeId === 'quality_check') {
+    return 'quality_check'
+  }
+
+  if (typeId === 'dolt_repo_sync') {
+    return 'dolt_repo_sync'
+  }
+
+  if (typeId === 'dolt_change_manifest') {
+    return 'dolt_change_manifest'
+  }
+
+  if (typeId === 'dolt_dump') {
+    return 'dolt_dump'
+  }
+
+  if (typeId === 'dolt_diff_export') {
+    return 'dolt_diff_export'
+  }
+
+  if (typeId === 'load_to_duckdb') {
+    return 'load_to_duckdb'
+  }
+
+  if (typeId === 'table_merge') {
+    return 'table_merge'
   }
 
   if (typeId === 'table_input') {
@@ -489,7 +546,223 @@ function findNodeDefinition(node, nodeDefinitions) {
   return FALLBACK_NODE_DEFINITIONS[node.type_id] ?? null
 }
 
+export function resolveNodeDefinition(node, nodeDefinitions) {
+  return findNodeDefinition(node, nodeDefinitions)
+}
+
 const FALLBACK_NODE_DEFINITIONS = {
+  dolt_repo_source: {
+    display_name: 'Dolt Repo Source',
+    inputs: [],
+    outputs: [
+      {
+        data_type: 'dataset_ref',
+        multiple: false,
+        port_id: 'repo_out'
+      }
+    ],
+    ui: {
+      default_width: 336
+    },
+    type_id: 'dolt_repo_source'
+  },
+  checkpoint_read: {
+    display_name: 'Checkpoint Read',
+    inputs: [],
+    outputs: [
+      {
+        data_type: 'json',
+        multiple: false,
+        port_id: 'checkpoint'
+      }
+    ],
+    ui: {
+      default_width: 336
+    },
+    type_id: 'checkpoint_read'
+  },
+  checkpoint_write: {
+    display_name: 'Checkpoint Write',
+    inputs: [
+      {
+        data_type: 'table_ref',
+        multiple: false,
+        port_id: 'table',
+        required: true
+      }
+    ],
+    outputs: [
+      {
+        data_type: 'table_ref',
+        multiple: false,
+        port_id: 'table'
+      }
+    ],
+    ui: {
+      default_width: 336
+    },
+    type_id: 'checkpoint_write'
+  },
+  quality_check: {
+    display_name: 'Quality Check',
+    inputs: [
+      {
+        data_type: 'table_ref',
+        multiple: false,
+        port_id: 'table',
+        required: true
+      }
+    ],
+    outputs: [
+      {
+        data_type: 'table_ref',
+        multiple: false,
+        port_id: 'table'
+      }
+    ],
+    ui: {
+      default_width: 336
+    },
+    type_id: 'quality_check'
+  },
+  dolt_repo_sync: {
+    display_name: 'Dolt Repo Sync',
+    inputs: [
+      {
+        data_type: 'dataset_ref',
+        multiple: false,
+        port_id: 'repo',
+        required: true
+      },
+      {
+        data_type: 'json',
+        multiple: false,
+        port_id: 'checkpoint',
+        required: false
+      }
+    ],
+    outputs: [
+      {
+        data_type: 'dataset_ref',
+        multiple: false,
+        port_id: 'repo_out'
+      }
+    ],
+    ui: {
+      default_width: 336
+    },
+    type_id: 'dolt_repo_sync'
+  },
+  dolt_change_manifest: {
+    display_name: 'Dolt Change Manifest',
+    inputs: [
+      {
+        data_type: 'dataset_ref',
+        multiple: false,
+        port_id: 'repo',
+        required: true
+      }
+    ],
+    outputs: [
+      {
+        data_type: 'dataset_ref',
+        multiple: false,
+        port_id: 'manifest'
+      }
+    ],
+    ui: {
+      default_width: 336
+    },
+    type_id: 'dolt_change_manifest'
+  },
+  dolt_dump: {
+    display_name: 'Dolt Dump',
+    inputs: [
+      {
+        data_type: 'dataset_ref',
+        multiple: false,
+        port_id: 'repo',
+        required: true
+      }
+    ],
+    outputs: [
+      {
+        data_type: 'directory_ref',
+        multiple: false,
+        port_id: 'bundle'
+      }
+    ],
+    ui: {
+      default_width: 336
+    },
+    type_id: 'dolt_dump'
+  },
+  dolt_diff_export: {
+    display_name: 'Dolt Diff Export',
+    inputs: [
+      {
+        data_type: 'dataset_ref',
+        multiple: false,
+        port_id: 'manifest',
+        required: true
+      }
+    ],
+    outputs: [
+      {
+        data_type: 'directory_ref',
+        multiple: false,
+        port_id: 'bundle'
+      }
+    ],
+    ui: {
+      default_width: 336
+    },
+    type_id: 'dolt_diff_export'
+  },
+  load_to_duckdb: {
+    display_name: 'Load to DuckDB',
+    inputs: [
+      {
+        data_type: 'directory_ref',
+        multiple: false,
+        port_id: 'bundle',
+        required: true
+      }
+    ],
+    outputs: [
+      {
+        data_type: 'table_ref',
+        multiple: false,
+        port_id: 'table'
+      }
+    ],
+    ui: {
+      default_width: 336
+    },
+    type_id: 'load_to_duckdb'
+  },
+  table_merge: {
+    display_name: 'Table Merge',
+    inputs: [
+      {
+        data_type: 'table_ref',
+        multiple: false,
+        port_id: 'table',
+        required: true
+      }
+    ],
+    outputs: [
+      {
+        data_type: 'table_ref',
+        multiple: false,
+        port_id: 'table'
+      }
+    ],
+    ui: {
+      default_width: 336
+    },
+    type_id: 'table_merge'
+  },
   send_email: {
     inputs: [
       {

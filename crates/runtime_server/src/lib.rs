@@ -26,8 +26,11 @@ use axum::{
 };
 use futures::{stream, StreamExt};
 use platform::{AuthenticatedSession, PlatformStore};
-use runtime_core::{RunEventSubscription, RuntimeError, RuntimeService};
+use runtime_core::{
+    RunEventSubscription, RuntimeError, RuntimeService, INTERNAL_PARAM_WORKFLOW_DUCKDB_PATH,
+};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio_stream::wrappers::BroadcastStream;
 use uuid::Uuid;
 use workflow_schema::WorkflowDefinition;
@@ -910,6 +913,19 @@ async fn create_workspace_run(
                 request.workflow.workflow_id
             ))
         })?;
+
+    let workflow_duckdb_path = state
+        .platform
+        .workflow_duckdb_path(
+            &session.user_id,
+            &workspace_id,
+            &request.workflow.workflow_id,
+        )
+        .map_err(ApiError::internal)?;
+    request.params.insert(
+        INTERNAL_PARAM_WORKFLOW_DUCKDB_PATH.to_string(),
+        Value::String(workflow_duckdb_path.to_string_lossy().to_string()),
+    );
 
     hydrate_send_email_runtime_delivery(
         &state,

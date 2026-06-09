@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Design Lab · Schedule Trigger</title>
+    <title>Design Lab · Checkpoint Write</title>
     <link rel="stylesheet" href="../shared.css" />
     <style>
       .study-page {
@@ -539,14 +539,14 @@
   </head>
   <body>
     <main class="lab-page study-page">
-      <section class="lab-stage study-stage" aria-label="Schedule trigger node study">
+      <section class="lab-stage study-stage" aria-label="Checkpoint write node study">
         <div class="flow-scene">
           <div class="flow-caption">
-            <span class="flow-caption__eyebrow">Node Study 02</span>
-            <h1>Schedule trigger as the recurring ingest boundary</h1>
+            <span class="flow-caption__eyebrow">Node Study 20</span>
+            <h1>Checkpoint write as the success-advance boundary</h1>
             <p>
-              This study reframes the trigger as an operator-facing scheduler for recurring ingestion,
-              with cadence, catch-up rules, and run-protection semantics all visible in one place.
+              This study treats checkpoint persistence as a gated success step that only advances
+              ingest state after durable merge work has actually completed.
             </p>
           </div>
 
@@ -556,51 +556,52 @@
             <circle cx="736" cy="384" r="6"></circle>
           </svg>
 
-          <article class="node-card node-card--compact flow-node flow-node--primary flow-node--selected" aria-label="Schedule trigger node">
+          <article class="node-card node-card--compact flow-node flow-node--primary flow-node--selected" aria-label="Checkpoint write node">
             <header class="node-card__header">
               <div class="node-card__heading">
-                <span class="node-card__icon" aria-hidden="true">S</span>
+                <span class="node-card__icon" aria-hidden="true">W</span>
                 <div class="node-card__title-copy">
-                  <strong>Schedule Trigger</strong>
-                  <span class="node-card__title-subtitle">schedule_trigger</span>
+                  <strong>Checkpoint Write</strong>
+                  <span class="node-card__title-subtitle">checkpoint_write</span>
                 </div>
               </div>
               <div class="node-card__header-meta">
                 <span class="node-card__header-dot" aria-hidden="true"></span>
-                <span>1 output</span>
+                <span>1 in · 1 out</span>
               </div>
             </header>
             <section class="node-card__body">
               <div class="node-card__row node-card__row--summary">
                 <div class="node-card__summary-head">
-                  <span class="node-card__summary-label">Cadence</span>
-                  <strong class="node-card__summary-target">Every 15 min</strong>
+                  <span class="node-card__summary-label">Write gate</span>
+                  <strong class="node-card__summary-target">success only</strong>
                 </div>
                 <div class="node-card__summary-head">
-                  <span class="node-card__summary-label">Timezone</span>
-                  <strong class="node-card__summary-target">UTC</strong>
+                  <span class="node-card__summary-label">Scope</span>
+                  <strong class="node-card__summary-target">repo + branch</strong>
                 </div>
               </div>
             </section>
             <footer class="node-card__footer">
-              <span class="node-card__footer-meta">Next fire</span>
-              <strong>2026-06-09 14:15</strong>
+              <span class="node-card__footer-meta">Commit source</span>
+              <strong>merge metadata</strong>
             </footer>
+            <span class="node-card__handle node-card__handle--left" aria-hidden="true"></span>
             <span class="node-card__handle node-card__handle--right" aria-hidden="true"></span>
           </article>
 
           <div class="flow-node__hint" aria-hidden="true">
             <span>emits</span>
-            <strong>run window + schedule context</strong>
+            <strong>checkpoint persisted confirmation</strong>
           </div>
 
-          <article class="node-card node-card--compact flow-node flow-node--secondary" aria-label="Checkpoint read node">
+          <article class="node-card node-card--compact flow-node flow-node--secondary" aria-label="Table output node">
             <header class="node-card__header">
               <div class="node-card__heading">
-                <span class="node-card__icon" aria-hidden="true">R</span>
+                <span class="node-card__icon" aria-hidden="true">O</span>
                 <div class="node-card__title-copy">
-                  <strong>Checkpoint Read</strong>
-                  <span class="node-card__title-subtitle">checkpoint_read</span>
+                  <strong>Table Output</strong>
+                  <span class="node-card__title-subtitle">table_output</span>
                 </div>
               </div>
               <div class="node-card__header-meta">
@@ -611,27 +612,27 @@
             <section class="node-card__body">
               <div class="node-card__row node-card__row--summary">
                 <div class="node-card__summary-head">
-                  <span class="node-card__summary-label">Scope</span>
-                  <strong class="node-card__summary-target">repo checkpoint</strong>
+                  <span class="node-card__summary-label">Publish</span>
+                  <strong class="node-card__summary-target">outputs.*</strong>
                 </div>
               </div>
             </section>
             <footer class="node-card__footer">
-              <span class="node-card__footer-meta">Last commit</span>
-              <strong>ac31f0b</strong>
+              <span class="node-card__footer-meta">Mode</span>
+              <strong>append rows</strong>
             </footer>
             <span class="node-card__handle node-card__handle--left" aria-hidden="true"></span>
           </article>
         </div>
 
-        <aside class="node-panel" aria-label="Schedule trigger manager">
+        <aside class="node-panel" aria-label="Checkpoint write manager">
           <header class="node-panel__header">
             <div class="node-panel__title-group">
-              <span class="node-panel__title-icon" aria-hidden="true">S</span>
+              <span class="node-panel__title-icon" aria-hidden="true">W</span>
               <div>
                 <div class="node-panel__eyebrow">Node config</div>
-                <h2 class="node-panel__title">Schedule Trigger</h2>
-                <p class="node-panel__subtitle">Start recurring ingest runs on a predictable clock, with enough context for downstream checkpoint logic.</p>
+                <h2 class="node-panel__title">Checkpoint Write</h2>
+                <p class="node-panel__subtitle">Persist the new ingest position only after durable merge policy has succeeded and downstream state is safe to advance.</p>
               </div>
             </div>
             <div class="node-panel__header-meta">
@@ -642,41 +643,41 @@
           <section class="node-panel__summary">
             <div class="node-panel__section-head">
               <div>
-                <div class="node-panel__section-kicker">Trigger summary</div>
-                <h3 class="node-panel__section-title">Recurring run cadence</h3>
+                <div class="node-panel__section-kicker">Persistence summary</div>
+                <h3 class="node-panel__section-title">Advance ingest state safely</h3>
               </div>
             </div>
             <div class="node-panel__summary-grid">
-              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Cadence</span><strong class="node-panel__summary-value">Every 15 minutes</strong></div>
-              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Timezone</span><strong class="node-panel__summary-value">UTC</strong></div>
-              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Catch-up</span><strong class="node-panel__summary-value">Skip missed windows</strong></div>
-              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Deduping</span><strong class="node-panel__summary-value">One run per slot</strong></div>
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Checkpoint store</span><strong class="node-panel__summary-value">tables.ingest_checkpoints</strong></div>
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Write condition</span><strong class="node-panel__summary-value">On durable success</strong></div>
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Commit source</span><strong class="node-panel__summary-value">merge current_commit</strong></div>
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Granularity</span><strong class="node-panel__summary-value">Repo + branch</strong></div>
             </div>
           </section>
 
           <section class="node-panel__section">
             <div class="node-panel__section-head">
               <div>
-                <div class="node-panel__section-kicker">Trigger behavior</div>
-                <h3 class="node-panel__section-title">How recurring execution is shaped</h3>
+                <div class="node-panel__section-kicker">Write behavior</div>
+                <h3 class="node-panel__section-title">How ingest state is advanced</h3>
               </div>
             </div>
             <div class="node-panel__fields">
               <div class="node-panel__field">
-                <div class="node-panel__field-head"><span class="node-panel__field-label">Schedule mode</span><span class="node-panel__field-hint">operator facing</span></div>
-                <div class="node-panel__control"><span>Fixed interval</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Checkpoint table</span><span class="node-panel__field-hint">durable state</span></div>
+                <div class="node-panel__control"><span>tables.ingest_checkpoints</span></div>
               </div>
               <div class="node-panel__field">
-                <div class="node-panel__field-head"><span class="node-panel__field-label">Cron / interval</span><span class="node-panel__field-hint">resolved cadence</span></div>
-                <div class="node-panel__control"><span>*/15 * * * *</span></div>
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Commit source</span><span class="node-panel__field-hint">resolved upstream</span></div>
+                <div class="node-panel__control"><span>metadata.current_commit</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
               </div>
               <div class="node-panel__field">
-                <div class="node-panel__field-head"><span class="node-panel__field-label">Run window stamp</span><span class="node-panel__field-hint">downstream metadata</span></div>
-                <div class="node-panel__pill-row"><span class="node-panel__pill-label">Emitted values</span><strong class="node-panel__pill-value">scheduled_at, window_start, window_end</strong></div>
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Write timing</span><span class="node-panel__field-hint">gate condition</span></div>
+                <div class="node-panel__control"><span>After merge success</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
               </div>
               <div class="node-panel__field">
-                <div class="node-panel__field-head"><span class="node-panel__field-label">Missed slot behavior</span><span class="node-panel__field-hint">clock skew</span></div>
-                <div class="node-panel__control"><span>Skip stale windows</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Persisted fields</span><span class="node-panel__field-hint">resume metadata</span></div>
+                <div class="node-panel__pill-row"><span class="node-panel__pill-label">Written values</span><strong class="node-panel__pill-value">last_synced_commit, last_success_at, last_ingest_mode</strong></div>
               </div>
             </div>
           </section>
@@ -685,28 +686,28 @@
             <div class="node-panel__section-head">
               <div>
                 <div class="node-panel__section-kicker">Output contract</div>
-                <h3 class="node-panel__section-title">What downstream nodes receive</h3>
+                <h3 class="node-panel__section-title">What downstream nodes can trust</h3>
               </div>
             </div>
-            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Trigger payload</span><strong class="node-panel__contract-value">run_context</strong></div>
-            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Scheduled slot</span><strong class="node-panel__contract-value">scheduled_at</strong></div>
-            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Window bounds</span><strong class="node-panel__contract-value">window_start, window_end</strong></div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Confirmation payload</span><strong class="node-panel__contract-value">checkpoint_write_result</strong></div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Persisted commit</span><strong class="node-panel__contract-value">last_synced_commit</strong></div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Write timestamp</span><strong class="node-panel__contract-value">persisted_at</strong></div>
           </section>
 
           <section class="node-panel__notes">
-            <div><span class="node-panel__note-label">Why this matters</span><p class="node-panel__note-copy">The trigger should not just start a run. It should stamp enough time context that checkpoints, sync windows, and late-run handling stay deterministic.</p></div>
-            <div><span class="node-panel__note-label">Design direction</span><p class="node-panel__note-copy">This node benefits from feeling operational rather than developer-only, because users will reason about reliability and missed windows here.</p></div>
+            <div><span class="node-panel__note-label">Why separate</span><p class="node-panel__note-copy">Checkpoint write is not just a side effect of merge. It is a correctness decision about when the pipeline is allowed to say “this source position is safe.”</p></div>
+            <div><span class="node-panel__note-label">Design direction</span><p class="node-panel__note-copy">This node should feel conservative and explicit, because users will rely on it for restart safety and incremental correctness.</p></div>
           </section>
 
-          <section class="node-panel__subsection" aria-label="Run protections">
-            <p class="node-panel__subsection-title">Run protections</p>
-            <div class="node-panel__timing-card"><label class="node-panel__checkbox"><input checked type="checkbox" /><span class="node-panel__checkmark" aria-hidden="true"></span><span>Prevent duplicate slot runs</span></label></div>
-            <div class="node-panel__timing-card"><label class="node-panel__checkbox node-panel__checkbox--off"><input type="checkbox" /><span class="node-panel__checkmark" aria-hidden="true"></span><span>Replay missed windows</span></label></div>
+          <section class="node-panel__subsection" aria-label="Write safety">
+            <p class="node-panel__subsection-title">Write safety</p>
+            <div class="node-panel__timing-card"><label class="node-panel__checkbox"><input checked type="checkbox" /><span class="node-panel__checkmark" aria-hidden="true"></span><span>Only persist on full success</span></label></div>
+            <div class="node-panel__timing-card"><label class="node-panel__checkbox node-panel__checkbox--off"><input type="checkbox" /><span class="node-panel__checkmark" aria-hidden="true"></span><span>Advance on partial success</span></label></div>
           </section>
 
           <footer class="node-panel__footer">
-            <div class="node-panel__footer-row"><span class="node-panel__footer-label">Best downstream pair</span><span class="node-panel__footer-value">`checkpoint_read` or `dolt_repo_source`</span></div>
-            <button class="node-panel__button" type="button">Save trigger draft</button>
+            <div class="node-panel__footer-row"><span class="node-panel__footer-label">Best downstream pair</span><span class="node-panel__footer-value">`table_output`</span></div>
+            <button class="node-panel__button" type="button">Save checkpoint-write draft</button>
           </footer>
         </aside>
       </section>

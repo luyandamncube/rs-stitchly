@@ -45,7 +45,12 @@ import {
   WORKSPACE_CONNECTIONS_UPDATED_EVENT
 } from '../lib/workspaceConnectionsSync';
 import { buildStarterWorkflowDefinition } from '../lib/workflowTemplates';
-import { cloneWorkflow, updateNodeConfig, updateNodeLabel } from '../lib/workflow';
+import {
+  cloneWorkflow,
+  resolveNodeDefinition,
+  updateNodeConfig,
+  updateNodeLabel
+} from '../lib/workflow';
 
 const CANVAS_DEBUG_COLLAPSE_STORAGE_KEY = 'stitchly.canvas.debug-panel-collapsed.v1';
 
@@ -83,7 +88,7 @@ export default function CanvasWorkspace({
   workspaceId = null
 }) {
   const showCanvasDebug = import.meta.env.DEV;
-  const [workflow, setWorkflow] = useState(() => cloneWorkflow(starterWorkflowFixture));
+  const [workflow, setWorkflowState] = useState(() => buildCanvasStarterWorkflow());
   const [nodeDefinitions, setNodeDefinitions] = useState(nodeDefinitionFixture.node_definitions);
   const [connections, setConnections] = useState(connectionFixture.connections);
   const [workspaceConnections, setWorkspaceConnections] = useState([]);
@@ -128,8 +133,16 @@ export default function CanvasWorkspace({
   const workflowTitleInputRef = useRef(null);
   const deferredEvents = useDeferredValue(events);
 
-  const selectedNode = workflow.nodes.find((node) => node.node_id === selectedNodeId) ?? null;
-  const selectedDefinition = nodeDefinitions.find((definition) => definition.type_id === selectedNode?.type_id) ?? null;
+  function setWorkflow(nextWorkflow) {
+    setWorkflowState((currentWorkflow) =>
+      normalizeCanvasWorkflow(
+        typeof nextWorkflow === 'function' ? nextWorkflow(currentWorkflow) : nextWorkflow
+      )
+    );
+  }
+
+  const selectedNode = workflow?.nodes?.find((node) => node.node_id === selectedNodeId) ?? null;
+  const selectedDefinition = resolveNodeDefinition(selectedNode, nodeDefinitions);
   const displayWorkflowTitle = workflow?.name?.trim() ? workflow.name.trim() : 'untitled';
   const problemItems = buildProblemItems(validation);
   const activeSectionMeta = SHELL_SECTIONS.find((section) => section.id === activeSection) ?? SHELL_SECTIONS[0];
@@ -420,9 +433,9 @@ export default function CanvasWorkspace({
           return;
         }
 
-        const persistedWorkflow = cloneWorkflow(workflowResponse.definition);
-        const nextWorkflow = prepareCanvasWorkflow(persistedWorkflow);
-        const resolvedWorkflowId = workflowResponse.workflow.workflow_id;
+        const persistedWorkflow = extractCanvasWorkflowDefinition(workflowResponse);
+        const nextWorkflow = normalizeCanvasWorkflow(persistedWorkflow);
+        const resolvedWorkflowId = resolveCanvasWorkflowId(workflowResponse, nextWorkflow);
         persistedWorkflowSignatureRef.current = workflowSignature(persistedWorkflow);
         setWorkflow(nextWorkflow);
         setActiveWorkflowId(resolvedWorkflowId);
@@ -575,8 +588,8 @@ export default function CanvasWorkspace({
           return;
         }
 
-        const persistedWorkflow = cloneWorkflow(workflowResponse.definition);
-        const nextWorkflow = prepareCanvasWorkflow(persistedWorkflow);
+        const persistedWorkflow = extractCanvasWorkflowDefinition(workflowResponse);
+        const nextWorkflow = normalizeCanvasWorkflow(persistedWorkflow);
         persistedWorkflowSignatureRef.current = workflowSignature(persistedWorkflow);
         setWorkflow(nextWorkflow);
         setValidation(null);
@@ -638,9 +651,9 @@ export default function CanvasWorkspace({
           return;
         }
 
-        const nextWorkflow = cloneWorkflow(workflowResponse.definition);
+        const nextWorkflow = extractCanvasWorkflowDefinition(workflowResponse);
         persistedWorkflowSignatureRef.current = workflowSignature(nextWorkflow);
-        setActiveWorkflowId(workflowResponse.workflow.workflow_id);
+        setActiveWorkflowId(resolveCanvasWorkflowId(workflowResponse, nextWorkflow));
         setWorkflow(nextWorkflow);
         setWorkflowSyncState('synced');
       } catch (error) {
@@ -1521,6 +1534,134 @@ function CanvasNodeManagementPanel({
     );
   }
 
+  if (node?.type_id === 'dolt_repo_source') {
+    return (
+      <CanvasDoltRepoSourceManagementPanel
+        definition={definition}
+        node={node}
+        onNodeConfigChange={onNodeConfigChange}
+        onNodeLabelChange={onNodeLabelChange}
+        workflowSyncState={workflowSyncState}
+      />
+    );
+  }
+
+  if (node?.type_id === 'checkpoint_read') {
+    return (
+      <CanvasCheckpointReadManagementPanel
+        definition={definition}
+        node={node}
+        onNodeConfigChange={onNodeConfigChange}
+        onNodeLabelChange={onNodeLabelChange}
+        workflowSyncState={workflowSyncState}
+      />
+    );
+  }
+
+  if (node?.type_id === 'checkpoint_write') {
+    return (
+      <CanvasCheckpointWriteManagementPanel
+        definition={definition}
+        node={node}
+        onNodeConfigChange={onNodeConfigChange}
+        onNodeLabelChange={onNodeLabelChange}
+        workflow={workflow}
+        workflowSyncState={workflowSyncState}
+      />
+    );
+  }
+
+  if (node?.type_id === 'quality_check') {
+    return (
+      <CanvasQualityCheckManagementPanel
+        definition={definition}
+        node={node}
+        onNodeConfigChange={onNodeConfigChange}
+        onNodeLabelChange={onNodeLabelChange}
+        workflow={workflow}
+        workflowSyncState={workflowSyncState}
+      />
+    );
+  }
+
+  if (node?.type_id === 'dolt_repo_sync') {
+    return (
+      <CanvasDoltRepoSyncManagementPanel
+        definition={definition}
+        node={node}
+        onNodeConfigChange={onNodeConfigChange}
+        onNodeLabelChange={onNodeLabelChange}
+        workflow={workflow}
+        workflowSyncState={workflowSyncState}
+      />
+    );
+  }
+
+  if (node?.type_id === 'dolt_change_manifest') {
+    return (
+      <CanvasDoltChangeManifestManagementPanel
+        definition={definition}
+        node={node}
+        onNodeConfigChange={onNodeConfigChange}
+        onNodeLabelChange={onNodeLabelChange}
+        workflow={workflow}
+        workflowSyncState={workflowSyncState}
+      />
+    );
+  }
+
+  if (node?.type_id === 'dolt_dump') {
+    return (
+      <CanvasDoltDumpManagementPanel
+        definition={definition}
+        node={node}
+        onNodeConfigChange={onNodeConfigChange}
+        onNodeLabelChange={onNodeLabelChange}
+        workflow={workflow}
+        workflowSyncState={workflowSyncState}
+      />
+    );
+  }
+
+  if (node?.type_id === 'dolt_diff_export') {
+    return (
+      <CanvasDoltDiffExportManagementPanel
+        definition={definition}
+        node={node}
+        onNodeConfigChange={onNodeConfigChange}
+        onNodeLabelChange={onNodeLabelChange}
+        workflow={workflow}
+        workflowSyncState={workflowSyncState}
+      />
+    );
+  }
+
+  if (node?.type_id === 'load_to_duckdb') {
+    return (
+      <CanvasLoadToDuckDbManagementPanel
+        definition={definition}
+        node={node}
+        onNodeConfigChange={onNodeConfigChange}
+        onNodeLabelChange={onNodeLabelChange}
+        workflow={workflow}
+        workflowSyncState={workflowSyncState}
+      />
+    );
+  }
+
+  if (node?.type_id === 'table_merge') {
+    return (
+      <CanvasTableMergeManagementPanel
+        definition={definition}
+        node={node}
+        onNodeConfigChange={onNodeConfigChange}
+        onNodeLabelChange={onNodeLabelChange}
+        workflow={workflow}
+        workflowSyncState={workflowSyncState}
+      />
+    );
+  }
+
   if (node?.type_id === 'table_input') {
     return (
       <CanvasTableInputManagementPanel
@@ -1822,6 +1963,732 @@ function CanvasTableShapeSection({
         )}
       </div>
     </div>
+  );
+}
+
+function DoltRepoSourceIcon({ className = '' }) {
+  return (
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 16 16"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <path
+        d="M4 16C1.791 16 0 14.209 0 12V8C0 5.791 1.791 4 4 4H6V1.75C6 0.784 6.784 0 7.75 0C8.716 0 9.5 0.784 9.5 1.75V12C9.5 14.209 7.709 16 5.5 16H4ZM4 7.5C3.724 7.5 3.5 7.724 3.5 8V12C3.5 12.276 3.724 12.5 4 12.5H5.5C5.776 12.5 6 12.276 6 12V7.5H4Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function DuckDbIcon({ className = '' }) {
+  return (
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 16 16"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <circle cx="8" cy="8" fill="currentColor" r="8" />
+      <circle cx="5.2" cy="8" fill="#f8d106" r="3.1" />
+      <path
+        d="M10.2 6.5H11.65C12.6777 6.5 13.5 7.32235 13.5 8.35C13.5 9.37765 12.6777 10.2 11.65 10.2H10.2V6.5Z"
+        fill="#f8d106"
+      />
+    </svg>
+  );
+}
+
+function CanvasDoltRepoSourceManagementPanel({
+  definition,
+  node,
+  onNodeConfigChange,
+  onNodeLabelChange,
+  workflowSyncState = 'local'
+}) {
+  const config = normalizeDoltRepoSourcePanelConfig(node);
+  const connectionOptions = buildDoltRepoSourceConnectionOptions(config.connection_ref);
+  const branchOptions = buildDoltRepoSourceBranchOptions(config.branch);
+  const runtimeSummary = buildDoltRepoSourceRuntimeSummary(config);
+
+  return (
+    <aside className="canvas-node-panel" aria-label="Node management panel">
+      <header className="canvas-node-panel__header">
+        <div className="canvas-node-panel__title-group">
+          <span className="canvas-node-panel__title-icon canvas-node-panel__title-icon--dolt" aria-hidden="true">
+            <DoltRepoSourceIcon className="canvas-node-panel__brand-icon" />
+          </span>
+          <div className="canvas-node-panel__title-copy">
+            <strong>{node?.label ?? definition?.display_name ?? 'Dolt Repo Source'}</strong>
+            <code className="canvas-node-panel__title-subtitle">
+              {node?.node_id ?? 'dolt_repo_source'}
+            </code>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__header-meta">
+          <span className="canvas-node-panel__meta-dot" aria-hidden="true" />
+          <span>{definition?.outputs?.length === 1 ? '1 output' : `${definition?.outputs?.length ?? 0} outputs`}</span>
+        </div>
+      </header>
+
+      <section className="canvas-node-panel__section">
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label>Current repo state</label>
+          </div>
+          <div className="canvas-node-panel__code" aria-label="Current repo state">
+            <div className="canvas-node-panel__code-line">
+              <span>repo_family</span>
+              <strong>{runtimeSummary.repoFamily}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>sync_strategy</span>
+              <strong>{runtimeSummary.syncStrategyLabel}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>working_copy</span>
+              <strong>{runtimeSummary.workingCopy}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>current_commit</span>
+              <strong>{runtimeSummary.currentCommit}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-dolt-repo-source-label">Label</label>
+          </div>
+          <input
+            id="canvas-dolt-repo-source-label"
+            className="canvas-node-panel__input"
+            onChange={(event) => onNodeLabelChange?.(event.target.value)}
+            type="text"
+            value={node?.label ?? ''}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-dolt-repo-source-connection">Connection ref</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-dolt-repo-source-connection"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyDoltRepoSourceConfigUpdate(currentConfig, {
+                  connection_ref: nextValue
+                })
+              )
+            }
+            options={connectionOptions}
+            value={config.connection_ref}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-dolt-repo-source-repository">Repository</label>
+          </div>
+          <input
+            id="canvas-dolt-repo-source-repository"
+            className="canvas-node-panel__input"
+            onChange={(event) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyDoltRepoSourceConfigUpdate(currentConfig, {
+                  repository: event.target.value
+                })
+              )
+            }
+            type="text"
+            value={config.repository}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-dolt-repo-source-branch">Branch</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-dolt-repo-source-branch"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyDoltRepoSourceConfigUpdate(currentConfig, {
+                  branch: nextValue
+                })
+              )
+            }
+            options={branchOptions}
+            value={config.branch}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-dolt-repo-source-checkout-ref">Checkout ref override</label>
+          </div>
+          <input
+            id="canvas-dolt-repo-source-checkout-ref"
+            className="canvas-node-panel__input"
+            onChange={(event) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyDoltRepoSourceConfigUpdate(currentConfig, {
+                  checkout_ref: event.target.value
+                })
+              )
+            }
+            type="text"
+            value={config.checkout_ref}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-dolt-repo-source-clone-mode">Clone mode</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-dolt-repo-source-clone-mode"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyDoltRepoSourceConfigUpdate(currentConfig, {
+                  clone_mode: nextValue
+                })
+              )
+            }
+            options={[
+              { label: 'Reuse local working copy', value: 'reuse_local_copy' },
+              { label: 'Fresh clone per run', value: 'fresh_clone' },
+              { label: 'Depth 1 checkout', value: 'depth_1' }
+            ]}
+            value={config.clone_mode}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-dolt-repo-source-sync-strategy">Sync strategy</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-dolt-repo-source-sync-strategy"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyDoltRepoSourceConfigUpdate(currentConfig, {
+                  sync_strategy: nextValue
+                })
+              )
+            }
+            options={[
+              { label: 'Pull before execution', value: 'pull_before_execution' },
+              { label: 'Clone only on bootstrap', value: 'clone_only' },
+              { label: 'Manual sync only', value: 'manual' }
+            ]}
+            value={config.sync_strategy}
+          />
+        </div>
+
+      </section>
+
+      <CanvasNodeExecutionTimingSection
+        nodeId={node?.node_id ?? 'dolt_repo_source'}
+        onTimingChange={(patch) =>
+          onNodeConfigChange?.((currentConfig) =>
+            applyDoltRepoSourceConfigUpdate(
+              currentConfig,
+              buildExecutionTimingConfigPatch(currentConfig, patch)
+            )
+          )
+        }
+        timing={config.execution}
+      />
+
+      <footer className="canvas-node-panel__footer">
+        <p className="canvas-node-panel__footer-eyebrow">Output contract</p>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Repo ref</span>
+          <strong>{config.repository}</strong>
+        </div>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Branch</span>
+          <strong>{config.branch}</strong>
+        </div>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Sync</span>
+          <strong>{runtimeSummary.syncStrategyLabel}</strong>
+        </div>
+
+        <button className="canvas-node-panel__action" type="button">
+          <span aria-hidden="true">→</span>
+          <span>{workflowSyncStateLabel(workflowSyncState)}</span>
+        </button>
+      </footer>
+    </aside>
+  );
+}
+
+function CanvasCheckpointReadManagementPanel({
+  definition,
+  node,
+  onNodeConfigChange,
+  onNodeLabelChange,
+  workflowSyncState = 'local'
+}) {
+  const config = normalizeCheckpointReadPanelConfig(node);
+  const runtimeSummary = buildCheckpointReadRuntimeSummary(config);
+  const branchOptions = buildDoltRepoSourceBranchOptions(config.branch);
+  const outputCount = definition?.outputs?.length ?? 1;
+
+  return (
+    <aside className="canvas-node-panel" aria-label="Node management panel">
+      <header className="canvas-node-panel__header">
+        <div className="canvas-node-panel__title-group">
+          <span className="canvas-node-panel__title-icon" aria-hidden="true">
+            R
+          </span>
+          <div className="canvas-node-panel__title-copy">
+            <strong>{node?.label ?? definition?.display_name ?? 'Checkpoint Read'}</strong>
+            <code className="canvas-node-panel__title-subtitle">
+              {node?.node_id ?? 'checkpoint_read'}
+            </code>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__header-meta">
+          <span className="canvas-node-panel__meta-dot" aria-hidden="true" />
+          <span>{outputCount === 1 ? '1 output' : `${outputCount} outputs`}</span>
+        </div>
+      </header>
+
+      <section className="canvas-node-panel__section">
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label>Current checkpoint state</label>
+          </div>
+          <div className="canvas-node-panel__code" aria-label="Current checkpoint state">
+            <div className="canvas-node-panel__code-line">
+              <span>checkpoint_store</span>
+              <strong>{runtimeSummary.checkpointTable}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>last_synced_commit</span>
+              <strong>{runtimeSummary.lastSyncedCommit}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>last_success_at</span>
+              <strong>{runtimeSummary.lastSuccessAt}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>last_ingest_mode</span>
+              <strong>{runtimeSummary.lastIngestMode}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-checkpoint-read-label">Label</label>
+          </div>
+          <input
+            id="canvas-checkpoint-read-label"
+            className="canvas-node-panel__input"
+            onChange={(event) => onNodeLabelChange?.(event.target.value)}
+            type="text"
+            value={node?.label ?? ''}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-checkpoint-read-table">Checkpoint table</label>
+          </div>
+          <input
+            id="canvas-checkpoint-read-table"
+            className="canvas-node-panel__input"
+            onChange={(event) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyCheckpointReadConfigUpdate(currentConfig, {
+                  checkpoint_table: event.target.value
+                })
+              )
+            }
+            type="text"
+            value={config.checkpoint_table}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-checkpoint-read-repo">Source repo</label>
+          </div>
+          <input
+            id="canvas-checkpoint-read-repo"
+            className="canvas-node-panel__input"
+            onChange={(event) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyCheckpointReadConfigUpdate(currentConfig, {
+                  source_repo: event.target.value
+                })
+              )
+            }
+            type="text"
+            value={config.source_repo}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-checkpoint-read-branch">Branch</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-checkpoint-read-branch"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyCheckpointReadConfigUpdate(currentConfig, {
+                  branch: nextValue
+                })
+              )
+            }
+            options={branchOptions}
+            value={config.branch}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label>Output contract</label>
+          </div>
+          <div className="canvas-node-panel__code" aria-label="Checkpoint output contract">
+            <div className="canvas-node-panel__code-line">
+              <span>payload</span>
+              <strong>checkpoint_context</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>previous_commit</span>
+              <strong>last_synced_commit</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>success_metadata</span>
+              <strong>last_success_at + last_ingest_mode</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__toggle-row">
+          <label className="canvas-node-panel__checkbox">
+            <input
+              checked={config.emit_bootstrap_marker_if_missing}
+              onChange={(event) =>
+                onNodeConfigChange?.((currentConfig) =>
+                  applyCheckpointReadConfigUpdate(currentConfig, {
+                    emit_bootstrap_marker_if_missing: event.target.checked
+                  })
+                )
+              }
+              type="checkbox"
+            />
+            <span className="canvas-node-panel__checkmark" aria-hidden="true" />
+            <span>Emit bootstrap marker if missing</span>
+          </label>
+        </div>
+
+        <div className="canvas-node-panel__toggle-row">
+          <label className="canvas-node-panel__checkbox">
+            <input
+              checked={config.fail_on_stale_checkpoint}
+              onChange={(event) =>
+                onNodeConfigChange?.((currentConfig) =>
+                  applyCheckpointReadConfigUpdate(currentConfig, {
+                    fail_on_stale_checkpoint: event.target.checked
+                  })
+                )
+              }
+              type="checkbox"
+            />
+            <span className="canvas-node-panel__checkmark" aria-hidden="true" />
+            <span>Fail on stale checkpoint</span>
+          </label>
+        </div>
+      </section>
+
+      <CanvasNodeExecutionTimingSection
+        nodeId={node?.node_id ?? 'checkpoint_read'}
+        onTimingChange={(patch) =>
+          onNodeConfigChange?.((currentConfig) =>
+            applyCheckpointReadConfigUpdate(
+              currentConfig,
+              buildExecutionTimingConfigPatch(currentConfig, patch)
+            )
+          )
+        }
+        timing={config.execution}
+      />
+
+      <footer className="canvas-node-panel__footer">
+        <p className="canvas-node-panel__footer-eyebrow">Recurring handoff</p>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Scope</span>
+          <strong>Repo + branch</strong>
+        </div>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Output</span>
+          <strong>checkpoint_context</strong>
+        </div>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Downstream</span>
+          <strong>dolt_repo_sync</strong>
+        </div>
+
+        <button className="canvas-node-panel__action" type="button">
+          <span aria-hidden="true">→</span>
+          <span>{workflowSyncStateLabel(workflowSyncState)}</span>
+        </button>
+      </footer>
+    </aside>
+  );
+}
+
+function CanvasDoltRepoSyncManagementPanel({
+  definition,
+  node,
+  onNodeConfigChange,
+  onNodeLabelChange,
+  workflow,
+  workflowSyncState = 'local'
+}) {
+  const config = normalizeDoltRepoSyncPanelConfig(node);
+  const runtimeSummary = buildDoltRepoSyncRuntimeSummary(
+    config,
+    workflow,
+    node?.node_id
+  );
+  const inputCount = definition?.inputs?.length ?? 1;
+  const outputCount = definition?.outputs?.length ?? 1;
+
+  return (
+    <aside className="canvas-node-panel" aria-label="Node management panel">
+      <header className="canvas-node-panel__header">
+        <div className="canvas-node-panel__title-group">
+          <span className="canvas-node-panel__title-icon canvas-node-panel__title-icon--dolt" aria-hidden="true">
+            <DoltRepoSourceIcon className="canvas-node-panel__brand-icon" />
+          </span>
+          <div className="canvas-node-panel__title-copy">
+            <strong>{node?.label ?? definition?.display_name ?? 'Dolt Repo Sync'}</strong>
+            <code className="canvas-node-panel__title-subtitle">
+              {node?.node_id ?? 'dolt_repo_sync'}
+            </code>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__header-meta">
+          <span className="canvas-node-panel__meta-dot" aria-hidden="true" />
+          <span>{`${inputCount} input${inputCount === 1 ? '' : 's'} · ${outputCount} output${outputCount === 1 ? '' : 's'}`}</span>
+        </div>
+      </header>
+
+      <section className="canvas-node-panel__section">
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label>Current sync state</label>
+          </div>
+          <div className="canvas-node-panel__code" aria-label="Current sync state">
+            <div className="canvas-node-panel__code-line">
+              <span>repo_family</span>
+              <strong>{runtimeSummary.repoFamily}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>previous_commit</span>
+              <strong>{runtimeSummary.previousCommit}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>current_commit</span>
+              <strong>{runtimeSummary.currentCommit}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>sync_action</span>
+              <strong>{runtimeSummary.syncActionLabel}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-dolt-repo-sync-label">Label</label>
+          </div>
+          <input
+            id="canvas-dolt-repo-sync-label"
+            className="canvas-node-panel__input"
+            onChange={(event) => onNodeLabelChange?.(event.target.value)}
+            type="text"
+            value={node?.label ?? ''}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label>Input repo handle</label>
+          </div>
+          <div className="canvas-node-panel__code" aria-label="Input repo handle">
+            <div className="canvas-node-panel__code-line">
+              <span>resolved repo</span>
+              <strong>{runtimeSummary.repository}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>handle</span>
+              <strong>dataset_ref.repo_ref</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label>Previous commit source</label>
+          </div>
+          <div className="canvas-node-panel__code" aria-label="Previous commit source">
+            <div className="canvas-node-panel__code-line">
+              <span>checkpoint</span>
+              <strong>{runtimeSummary.checkpointSourceLabel}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>resolved value</span>
+              <strong>{runtimeSummary.previousCommit}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-dolt-repo-sync-action">Sync action</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-dolt-repo-sync-action"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyDoltRepoSyncConfigUpdate(currentConfig, {
+                  sync_action: nextValue
+                })
+              )
+            }
+            options={[
+              { label: 'Pull remote head', value: 'pull_remote_head' },
+              { label: 'Fetch and checkout', value: 'fetch_and_checkout' },
+              { label: 'Refresh checkout', value: 'refresh_checkout' }
+            ]}
+            value={config.sync_action}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-dolt-repo-sync-no-change">No-change behavior</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-dolt-repo-sync-no-change"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyDoltRepoSyncConfigUpdate(currentConfig, {
+                  no_change_behavior: nextValue
+                })
+              )
+            }
+            options={[
+              { label: 'Emit same from/to commit', value: 'emit_current_range' },
+              { label: 'Emit no-op marker', value: 'emit_no_op_marker' }
+            ]}
+            value={config.no_change_behavior}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-dolt-repo-sync-branch-guard">Branch guard</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-dolt-repo-sync-branch-guard"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyDoltRepoSyncConfigUpdate(currentConfig, {
+                  branch_guard: nextValue
+                })
+              )
+            }
+            options={[
+              {
+                label: 'Require tracked branch match',
+                value: 'require_tracked_branch_match'
+              },
+              { label: 'Allow detached head', value: 'allow_detached_head' }
+            ]}
+            value={config.branch_guard}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-dolt-repo-sync-dirty-policy">Dirty working copy policy</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-dolt-repo-sync-dirty-policy"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyDoltRepoSyncConfigUpdate(currentConfig, {
+                  dirty_working_copy_policy: nextValue
+                })
+              )
+            }
+            options={[
+              { label: 'Fail if local repo is dirty', value: 'fail_if_dirty' },
+              { label: 'Stash and continue', value: 'stash_and_continue' }
+            ]}
+            value={config.dirty_working_copy_policy}
+          />
+        </div>
+      </section>
+
+      <CanvasNodeExecutionTimingSection
+        nodeId={node?.node_id ?? 'dolt_repo_sync'}
+        onTimingChange={(patch) =>
+          onNodeConfigChange?.((currentConfig) =>
+            applyDoltRepoSyncConfigUpdate(
+              currentConfig,
+              buildExecutionTimingConfigPatch(currentConfig, patch)
+            )
+          )
+        }
+        timing={config.execution}
+      />
+
+      <footer className="canvas-node-panel__footer">
+        <p className="canvas-node-panel__footer-eyebrow">Output contract</p>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Repo</span>
+          <strong>{runtimeSummary.repository}</strong>
+        </div>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Range</span>
+          <strong>{`${runtimeSummary.previousCommit} -> ${runtimeSummary.currentCommit}`}</strong>
+        </div>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Output</span>
+          <strong>repo + sync metadata</strong>
+        </div>
+
+        <button className="canvas-node-panel__action" type="button">
+          <span aria-hidden="true">→</span>
+          <span>{workflowSyncStateLabel(workflowSyncState)}</span>
+        </button>
+      </footer>
+    </aside>
   );
 }
 
@@ -2199,6 +3066,1623 @@ function CanvasTextInputManagementPanel({
         <div className="canvas-node-panel__footer-row">
           <span>Length</span>
           <strong>{`${config.text.length} chars`}</strong>
+        </div>
+
+        <button className="canvas-node-panel__action" type="button">
+          <span aria-hidden="true">→</span>
+          <span>{workflowSyncStateLabel(workflowSyncState)}</span>
+        </button>
+      </footer>
+    </aside>
+  );
+}
+
+function CanvasDoltChangeManifestManagementPanel({
+  definition,
+  node,
+  onNodeConfigChange,
+  onNodeLabelChange,
+  workflow,
+  workflowSyncState = 'local'
+}) {
+  const config = normalizeDoltChangeManifestPanelConfig(node);
+  const runtimeSummary = buildDoltChangeManifestRuntimeSummary(
+    config,
+    workflow,
+    node?.node_id
+  );
+  const outputCount = definition?.outputs?.length ?? 1;
+
+  return (
+    <aside className="canvas-node-panel" aria-label="Node management panel">
+      <header className="canvas-node-panel__header">
+        <div className="canvas-node-panel__title-group">
+          <span className="canvas-node-panel__title-icon canvas-node-panel__title-icon--dolt" aria-hidden="true">
+            <DoltRepoSourceIcon className="canvas-node-panel__brand-icon" />
+          </span>
+          <div className="canvas-node-panel__title-copy">
+            <strong>{node?.label ?? definition?.display_name ?? 'Dolt Change Manifest'}</strong>
+            <code className="canvas-node-panel__title-subtitle">
+              {node?.node_id ?? 'dolt_change_manifest'}
+            </code>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__header-meta">
+          <span className="canvas-node-panel__meta-dot" aria-hidden="true" />
+          <span>{`1 input · ${outputCount} output${outputCount === 1 ? '' : 's'}`}</span>
+        </div>
+      </header>
+
+      <section className="canvas-node-panel__section">
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label>Manifest preview</label>
+          </div>
+          <div className="canvas-node-panel__code" aria-label="Manifest preview">
+            <div className="canvas-node-panel__code-line">
+              <span>changed_tables</span>
+              <strong>{`${runtimeSummary.changedTables.length} tables`}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>schema_drift</span>
+              <strong>{runtimeSummary.schemaDriftLabel}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>row_counts</span>
+              <strong>best effort</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-dolt-change-manifest-label">Label</label>
+          </div>
+          <input
+            id="canvas-dolt-change-manifest-label"
+            className="canvas-node-panel__input"
+            onChange={(event) => onNodeLabelChange?.(event.target.value)}
+            type="text"
+            value={node?.label ?? ''}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label>Input repo handle</label>
+          </div>
+          <div className="canvas-node-panel__code" aria-label="Input repo handle">
+            <div className="canvas-node-panel__code-line">
+              <span>resolved repo</span>
+              <strong>{runtimeSummary.repository}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>handle</span>
+              <strong>dataset_ref.repo_ref</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label>Resolved range</label>
+          </div>
+          <div className="canvas-node-panel__code" aria-label="Resolved range">
+            <div className="canvas-node-panel__code-line">
+              <span>previous_commit</span>
+              <strong>{runtimeSummary.previousCommit}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>current_commit</span>
+              <strong>{runtimeSummary.currentCommit}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-dolt-change-manifest-scope">Table scope</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-dolt-change-manifest-scope"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyDoltChangeManifestConfigUpdate(currentConfig, {
+                  table_scope: nextValue
+                })
+              )
+            }
+            options={[
+              { label: 'All tables in repo', value: 'all_tables' },
+              { label: 'Selected tables only', value: 'allowlist' }
+            ]}
+            value={config.table_scope}
+          />
+        </div>
+
+        {config.table_scope === 'allowlist' ? (
+          <div className="canvas-node-panel__field">
+            <div className="canvas-node-panel__field-head">
+              <label htmlFor="canvas-dolt-change-manifest-selected-tables">Selected tables</label>
+            </div>
+            <input
+              id="canvas-dolt-change-manifest-selected-tables"
+              className="canvas-node-panel__input"
+              onChange={(event) =>
+                onNodeConfigChange?.((currentConfig) =>
+                  applyDoltChangeManifestConfigUpdate(currentConfig, {
+                    selected_tables_text: event.target.value
+                  })
+                )
+              }
+              placeholder="earnings_calendar, eps_history"
+              type="text"
+              value={config.selected_tables_text}
+            />
+          </div>
+        ) : null}
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-dolt-change-manifest-schema-policy">Schema change policy</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-dolt-change-manifest-schema-policy"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyDoltChangeManifestConfigUpdate(currentConfig, {
+                  schema_change_policy: nextValue
+                })
+              )
+            }
+            options={[
+              { label: 'Flag and continue', value: 'flag_and_continue' },
+              { label: 'Fail run on schema drift', value: 'fail_run' }
+            ]}
+            value={config.schema_change_policy}
+          />
+        </div>
+      </section>
+
+      <CanvasNodeExecutionTimingSection
+        nodeId={node?.node_id ?? 'dolt_change_manifest'}
+        onTimingChange={(patch) =>
+          onNodeConfigChange?.((currentConfig) =>
+            applyDoltChangeManifestConfigUpdate(
+              currentConfig,
+              buildExecutionTimingConfigPatch(currentConfig, patch)
+            )
+          )
+        }
+        timing={config.execution}
+      />
+
+      <footer className="canvas-node-panel__footer">
+        <p className="canvas-node-panel__footer-eyebrow">Output contract</p>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Range</span>
+          <strong>{`${runtimeSummary.previousCommit} -> ${runtimeSummary.currentCommit}`}</strong>
+        </div>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Scope</span>
+          <strong>{runtimeSummary.scopeLabel}</strong>
+        </div>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Output</span>
+          <strong>manifest + change metadata</strong>
+        </div>
+
+        <button className="canvas-node-panel__action" type="button">
+          <span aria-hidden="true">→</span>
+          <span>{workflowSyncStateLabel(workflowSyncState)}</span>
+        </button>
+      </footer>
+    </aside>
+  );
+}
+
+function CanvasDoltDumpManagementPanel({
+  definition,
+  node,
+  onNodeConfigChange,
+  onNodeLabelChange,
+  workflow,
+  workflowSyncState = 'local'
+}) {
+  const config = normalizeDoltDumpPanelConfig(node);
+  const runtimeSummary = buildDoltDumpRuntimeSummary(config, workflow, node?.node_id);
+  const outputCount = definition?.outputs?.length ?? 1;
+
+  return (
+    <aside className="canvas-node-panel" aria-label="Node management panel">
+      <header className="canvas-node-panel__header">
+        <div className="canvas-node-panel__title-group">
+          <span className="canvas-node-panel__title-icon canvas-node-panel__title-icon--dolt" aria-hidden="true">
+            <DoltRepoSourceIcon className="canvas-node-panel__brand-icon" />
+          </span>
+          <div className="canvas-node-panel__title-copy">
+            <strong>{node?.label ?? definition?.display_name ?? 'Dolt Dump'}</strong>
+            <code className="canvas-node-panel__title-subtitle">
+              {node?.node_id ?? 'dolt_dump'}
+            </code>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__header-meta">
+          <span className="canvas-node-panel__meta-dot" aria-hidden="true" />
+          <span>{`1 input · ${outputCount} output${outputCount === 1 ? '' : 's'}`}</span>
+        </div>
+      </header>
+
+      <section className="canvas-node-panel__section">
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label>Current export state</label>
+          </div>
+          <div className="canvas-node-panel__code" aria-label="Current export state">
+            <div className="canvas-node-panel__code-line">
+              <span>repo_family</span>
+              <strong>{runtimeSummary.repoFamily}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>source_kind</span>
+              <strong>{runtimeSummary.sourceKind}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>scope</span>
+              <strong>{runtimeSummary.scopeLabel}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>export_format</span>
+              <strong>{runtimeSummary.formatLabel}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-dolt-dump-label">Label</label>
+          </div>
+          <input
+            id="canvas-dolt-dump-label"
+            className="canvas-node-panel__input"
+            onChange={(event) => onNodeLabelChange?.(event.target.value)}
+            type="text"
+            value={node?.label ?? ''}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label>Input handle</label>
+          </div>
+          <div className="canvas-node-panel__code" aria-label="Input handle">
+            <div className="canvas-node-panel__code-line">
+              <span>resolved repo</span>
+              <strong>{runtimeSummary.repository}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>handle kind</span>
+              <strong>{runtimeSummary.sourceHandleLabel}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-dolt-dump-selection-mode">Table selection mode</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-dolt-dump-selection-mode"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyDoltDumpConfigUpdate(currentConfig, {
+                  table_selection_mode: nextValue
+                })
+              )
+            }
+            options={[
+              {
+                label: 'Prefer manifest scope, else all tables',
+                value: 'prefer_manifest_scope'
+              },
+              { label: 'All tables in repo', value: 'all_tables' },
+              { label: 'Manual table list', value: 'manual_tables' }
+            ]}
+            value={config.table_selection_mode}
+          />
+        </div>
+
+        {config.table_selection_mode === 'manual_tables' ? (
+          <div className="canvas-node-panel__field">
+            <div className="canvas-node-panel__field-head">
+              <label htmlFor="canvas-dolt-dump-selected-tables">Selected tables</label>
+            </div>
+            <input
+              id="canvas-dolt-dump-selected-tables"
+              className="canvas-node-panel__input"
+              onChange={(event) =>
+                onNodeConfigChange?.((currentConfig) =>
+                  applyDoltDumpConfigUpdate(currentConfig, {
+                    selected_tables_text: event.target.value
+                  })
+                )
+              }
+              placeholder="earnings_calendar, income_statement"
+              type="text"
+              value={config.selected_tables_text}
+            />
+          </div>
+        ) : null}
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-dolt-dump-output-format">File format</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-dolt-dump-output-format"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyDoltDumpConfigUpdate(currentConfig, {
+                  output_format: nextValue
+                })
+              )
+            }
+            options={[
+              { label: 'Parquet', value: 'parquet' },
+              { label: 'CSV', value: 'csv' }
+            ]}
+            value={config.output_format}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-dolt-dump-retention">Artifact retention</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-dolt-dump-retention"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyDoltDumpConfigUpdate(currentConfig, {
+                  artifact_retention: nextValue
+                })
+              )
+            }
+            options={[
+              { label: 'Keep latest successful bundle', value: 'keep_latest_success' },
+              { label: 'Ephemeral per run', value: 'ephemeral_per_run' },
+              { label: 'Persist all bundles', value: 'persist_all' }
+            ]}
+            value={config.artifact_retention}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-dolt-dump-output-directory">Output directory policy</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-dolt-dump-output-directory"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyDoltDumpConfigUpdate(currentConfig, {
+                  output_directory_policy: nextValue
+                })
+              )
+            }
+            options={[
+              { label: 'Ephemeral run bundle', value: 'ephemeral_run_bundle' },
+              { label: 'Stable repo cache', value: 'stable_repo_cache' }
+            ]}
+            value={config.output_directory_policy}
+          />
+        </div>
+      </section>
+
+      <CanvasNodeExecutionTimingSection
+        nodeId={node?.node_id ?? 'dolt_dump'}
+        onTimingChange={(patch) =>
+          onNodeConfigChange?.((currentConfig) =>
+            applyDoltDumpConfigUpdate(
+              currentConfig,
+              buildExecutionTimingConfigPatch(currentConfig, patch)
+            )
+          )
+        }
+        timing={config.execution}
+      />
+
+      <footer className="canvas-node-panel__footer">
+        <p className="canvas-node-panel__footer-eyebrow">Output contract</p>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Format</span>
+          <strong>{runtimeSummary.formatLabel}</strong>
+        </div>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Tables</span>
+          <strong>{runtimeSummary.scopeLabel}</strong>
+        </div>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Output</span>
+          <strong>directory_ref + export metadata</strong>
+        </div>
+
+        <button className="canvas-node-panel__action" type="button">
+          <span aria-hidden="true">→</span>
+          <span>{workflowSyncStateLabel(workflowSyncState)}</span>
+        </button>
+      </footer>
+    </aside>
+  );
+}
+
+function CanvasDoltDiffExportManagementPanel({
+  definition,
+  node,
+  onNodeConfigChange,
+  onNodeLabelChange,
+  workflow,
+  workflowSyncState = 'local'
+}) {
+  const config = normalizeDoltDiffExportPanelConfig(node);
+  const runtimeSummary = buildDoltDiffExportRuntimeSummary(config, workflow, node?.node_id);
+  const outputCount = definition?.outputs?.length ?? 1;
+
+  return (
+    <aside className="canvas-node-panel" aria-label="Node management panel">
+      <header className="canvas-node-panel__header">
+        <div className="canvas-node-panel__title-group">
+          <span className="canvas-node-panel__title-icon canvas-node-panel__title-icon--dolt" aria-hidden="true">
+            <DoltRepoSourceIcon className="canvas-node-panel__brand-icon" />
+          </span>
+          <div className="canvas-node-panel__title-copy">
+            <strong>{node?.label ?? definition?.display_name ?? 'Dolt Diff Export'}</strong>
+            <code className="canvas-node-panel__title-subtitle">
+              {node?.node_id ?? 'dolt_diff_export'}
+            </code>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__header-meta">
+          <span className="canvas-node-panel__meta-dot" aria-hidden="true" />
+          <span>{`1 input · ${outputCount} output${outputCount === 1 ? '' : 's'}`}</span>
+        </div>
+      </header>
+
+      <section className="canvas-node-panel__section">
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label>Current delta state</label>
+          </div>
+          <div className="canvas-node-panel__code" aria-label="Current delta state">
+            <div className="canvas-node-panel__code-line">
+              <span>range</span>
+              <strong>{runtimeSummary.rangeLabel}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>changed_tables</span>
+              <strong>{runtimeSummary.scopeLabel}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>change_filter</span>
+              <strong>{runtimeSummary.filterLabel}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>delete_rows</span>
+              <strong>{runtimeSummary.deleteRowsLabel}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-dolt-diff-export-label">Label</label>
+          </div>
+          <input
+            id="canvas-dolt-diff-export-label"
+            className="canvas-node-panel__input"
+            onChange={(event) => onNodeLabelChange?.(event.target.value)}
+            type="text"
+            value={node?.label ?? ''}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label>Input manifest</label>
+          </div>
+          <div className="canvas-node-panel__code" aria-label="Input manifest">
+            <div className="canvas-node-panel__code-line">
+              <span>resolved repo</span>
+              <strong>{runtimeSummary.repository}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>scope</span>
+              <strong>{runtimeSummary.scopeLabel}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-dolt-diff-export-change-filter">Change filter</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-dolt-diff-export-change-filter"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyDoltDiffExportConfigUpdate(currentConfig, {
+                  change_filter: nextValue
+                })
+              )
+            }
+            options={[
+              { label: 'All changes', value: 'all_changes' },
+              { label: 'Non-delete changes', value: 'non_delete_changes' },
+              { label: 'Added only', value: 'added_only' },
+              { label: 'Modified only', value: 'modified_only' },
+              { label: 'Removed only', value: 'removed_only' }
+            ]}
+            value={config.change_filter}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-dolt-diff-export-output-format">File format</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-dolt-diff-export-output-format"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyDoltDiffExportConfigUpdate(currentConfig, {
+                  output_format: nextValue
+                })
+              )
+            }
+            options={[
+              { label: 'Parquet', value: 'parquet' },
+              { label: 'CSV', value: 'csv' }
+            ]}
+            value={config.output_format}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-dolt-diff-export-delete-handling">Deleted row handling</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-dolt-diff-export-delete-handling"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyDoltDiffExportConfigUpdate(currentConfig, {
+                  deleted_row_handling: nextValue
+                })
+              )
+            }
+            options={[
+              { label: 'Emit delete markers', value: 'emit_delete_markers' },
+              { label: 'Omit delete rows', value: 'omit_delete_rows' }
+            ]}
+            value={config.deleted_row_handling}
+          />
+        </div>
+      </section>
+
+      <CanvasNodeExecutionTimingSection
+        nodeId={node?.node_id ?? 'dolt_diff_export'}
+        onTimingChange={(patch) =>
+          onNodeConfigChange?.((currentConfig) =>
+            applyDoltDiffExportConfigUpdate(
+              currentConfig,
+              buildExecutionTimingConfigPatch(currentConfig, patch)
+            )
+          )
+        }
+        timing={config.execution}
+      />
+
+      <footer className="canvas-node-panel__footer">
+        <p className="canvas-node-panel__footer-eyebrow">Output contract</p>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Range</span>
+          <strong>{runtimeSummary.rangeLabel}</strong>
+        </div>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Filter</span>
+          <strong>{runtimeSummary.filterLabel}</strong>
+        </div>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Output</span>
+          <strong>directory_ref + delta manifest</strong>
+        </div>
+
+        <button className="canvas-node-panel__action" type="button">
+          <span aria-hidden="true">→</span>
+          <span>{workflowSyncStateLabel(workflowSyncState)}</span>
+        </button>
+      </footer>
+    </aside>
+  );
+}
+
+function CanvasCheckpointWriteManagementPanel({
+  definition,
+  node,
+  onNodeConfigChange,
+  onNodeLabelChange,
+  workflow,
+  workflowSyncState = 'local'
+}) {
+  const config = normalizeCheckpointWritePanelConfig(node);
+  const runtimeSummary = buildCheckpointWriteRuntimeSummary(
+    config,
+    workflow,
+    node?.node_id
+  );
+  const outputCount = definition?.outputs?.length ?? 1;
+
+  return (
+    <aside className="canvas-node-panel" aria-label="Node management panel">
+      <header className="canvas-node-panel__header">
+        <div className="canvas-node-panel__title-group">
+          <span className="canvas-node-panel__title-icon" aria-hidden="true">
+            W
+          </span>
+          <div className="canvas-node-panel__title-copy">
+            <strong>{node?.label ?? definition?.display_name ?? 'Checkpoint Write'}</strong>
+            <code className="canvas-node-panel__title-subtitle">
+              {node?.node_id ?? 'checkpoint_write'}
+            </code>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__header-meta">
+          <span className="canvas-node-panel__meta-dot" aria-hidden="true" />
+          <span>{`1 input · ${outputCount} output${outputCount === 1 ? '' : 's'}`}</span>
+        </div>
+      </header>
+
+      <section className="canvas-node-panel__section">
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label>Current checkpoint plan</label>
+          </div>
+          <div className="canvas-node-panel__code" aria-label="Current checkpoint plan">
+            <div className="canvas-node-panel__code-line">
+              <span>checkpoint_store</span>
+              <strong>{runtimeSummary.checkpointTable}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>current_commit</span>
+              <strong>{runtimeSummary.currentCommit}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>last_ingest_mode</span>
+              <strong>{runtimeSummary.lastIngestMode}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>scope</span>
+              <strong>{runtimeSummary.scopeLabel}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-checkpoint-write-label">Label</label>
+          </div>
+          <input
+            id="canvas-checkpoint-write-label"
+            className="canvas-node-panel__input"
+            onChange={(event) => onNodeLabelChange?.(event.target.value)}
+            type="text"
+            value={node?.label ?? ''}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label>Input durable table</label>
+          </div>
+          <div className="canvas-node-panel__code" aria-label="Input durable table">
+            <div className="canvas-node-panel__code-line">
+              <span>repo</span>
+              <strong>{runtimeSummary.repository}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>tables</span>
+              <strong>{runtimeSummary.sourceTablesLabel}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>commit_source</span>
+              <strong>{runtimeSummary.commitSource}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-checkpoint-write-table">Checkpoint table</label>
+          </div>
+          <input
+            id="canvas-checkpoint-write-table"
+            className="canvas-node-panel__input"
+            onChange={(event) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyCheckpointWriteConfigUpdate(currentConfig, {
+                  checkpoint_table: event.target.value
+                })
+              )
+            }
+            type="text"
+            value={config.checkpoint_table}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-checkpoint-write-commit-source">Commit source</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-checkpoint-write-commit-source"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyCheckpointWriteConfigUpdate(currentConfig, {
+                  commit_source: nextValue
+                })
+              )
+            }
+            options={[
+              {
+                label: 'metadata.current_commit',
+                value: 'metadata.current_commit'
+              }
+            ]}
+            value={config.commit_source}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-checkpoint-write-timing">Write timing</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-checkpoint-write-timing"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyCheckpointWriteConfigUpdate(currentConfig, {
+                  write_timing: nextValue
+                })
+              )
+            }
+            options={[
+              { label: 'After merge success', value: 'after_merge_success' },
+              { label: 'After quality gate', value: 'after_quality_gate' }
+            ]}
+            value={config.write_timing}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label>Output contract</label>
+          </div>
+          <div className="canvas-node-panel__code" aria-label="Checkpoint write output contract">
+            <div className="canvas-node-panel__code-line">
+              <span>table_ref</span>
+              <strong>pass-through durable table</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>metadata.checkpoint_write</span>
+              <strong>checkpoint_write_result</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>persisted fields</span>
+              <strong>last_synced_commit + persisted_at</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__toggle-row">
+          <label className="canvas-node-panel__checkbox">
+            <input
+              checked={config.only_persist_on_full_success}
+              onChange={(event) =>
+                onNodeConfigChange?.((currentConfig) =>
+                  applyCheckpointWriteConfigUpdate(currentConfig, {
+                    only_persist_on_full_success: event.target.checked
+                  })
+                )
+              }
+              type="checkbox"
+            />
+            <span className="canvas-node-panel__checkmark" aria-hidden="true" />
+            <span>Only persist on full success</span>
+          </label>
+        </div>
+
+        <div className="canvas-node-panel__toggle-row">
+          <label className="canvas-node-panel__checkbox">
+            <input
+              checked={config.advance_on_partial_success}
+              onChange={(event) =>
+                onNodeConfigChange?.((currentConfig) =>
+                  applyCheckpointWriteConfigUpdate(currentConfig, {
+                    advance_on_partial_success: event.target.checked
+                  })
+                )
+              }
+              type="checkbox"
+            />
+            <span className="canvas-node-panel__checkmark" aria-hidden="true" />
+            <span>Advance on partial success</span>
+          </label>
+        </div>
+      </section>
+
+      <CanvasNodeExecutionTimingSection
+        nodeId={node?.node_id ?? 'checkpoint_write'}
+        onTimingChange={(patch) =>
+          onNodeConfigChange?.((currentConfig) =>
+            applyCheckpointWriteConfigUpdate(
+              currentConfig,
+              buildExecutionTimingConfigPatch(currentConfig, patch)
+            )
+          )
+        }
+        timing={config.execution}
+      />
+
+      <footer className="canvas-node-panel__footer">
+        <p className="canvas-node-panel__footer-eyebrow">Checkpoint persistence</p>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Write gate</span>
+          <strong>{runtimeSummary.writeGateLabel}</strong>
+        </div>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Timing</span>
+          <strong>{runtimeSummary.writeTimingLabel}</strong>
+        </div>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Commit source</span>
+          <strong>{runtimeSummary.commitSource}</strong>
+        </div>
+
+        <button className="canvas-node-panel__action" type="button">
+          <span aria-hidden="true">→</span>
+          <span>{workflowSyncStateLabel(workflowSyncState)}</span>
+        </button>
+      </footer>
+    </aside>
+  );
+}
+
+function CanvasQualityCheckManagementPanel({
+  definition,
+  node,
+  onNodeConfigChange,
+  onNodeLabelChange,
+  workflow,
+  workflowSyncState = 'local'
+}) {
+  const config = normalizeQualityCheckPanelConfig(node);
+  const runtimeSummary = buildQualityCheckRuntimeSummary(config, workflow, node?.node_id);
+  const outputCount = definition?.outputs?.length ?? 1;
+
+  return (
+    <aside className="canvas-node-panel" aria-label="Node management panel">
+      <header className="canvas-node-panel__header">
+        <div className="canvas-node-panel__title-group">
+          <span className="canvas-node-panel__title-icon" aria-hidden="true">
+            Q
+          </span>
+          <div className="canvas-node-panel__title-copy">
+            <strong>{node?.label ?? definition?.display_name ?? 'Quality Check'}</strong>
+            <code className="canvas-node-panel__title-subtitle">
+              {node?.node_id ?? 'quality_check'}
+            </code>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__header-meta">
+          <span className="canvas-node-panel__meta-dot" aria-hidden="true" />
+          <span>{`1 input · ${outputCount} output${outputCount === 1 ? '' : 's'}`}</span>
+        </div>
+      </header>
+
+      <section className="canvas-node-panel__section">
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label>Current gate state</label>
+          </div>
+          <div className="canvas-node-panel__code" aria-label="Current gate state">
+            <div className="canvas-node-panel__code-line">
+              <span>suite</span>
+              <strong>{runtimeSummary.suitePresetLabel}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>gate_status</span>
+              <strong>{runtimeSummary.gateStatusLabel}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>approved_tables</span>
+              <strong>{runtimeSummary.approvedTablesLabel}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>current_commit</span>
+              <strong>{runtimeSummary.currentCommit}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-quality-check-label">Label</label>
+          </div>
+          <input
+            id="canvas-quality-check-label"
+            className="canvas-node-panel__input"
+            onChange={(event) => onNodeLabelChange?.(event.target.value)}
+            type="text"
+            value={node?.label ?? ''}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label>Input durable table</label>
+          </div>
+          <div className="canvas-node-panel__code" aria-label="Input durable table">
+            <div className="canvas-node-panel__code-line">
+              <span>repo</span>
+              <strong>{runtimeSummary.repository}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>tables</span>
+              <strong>{runtimeSummary.sourceTablesLabel}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>scope</span>
+              <strong>{runtimeSummary.scopeLabel}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-quality-check-suite-preset">Suite preset</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-quality-check-suite-preset"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyQualityCheckConfigUpdate(currentConfig, {
+                  suite_preset: nextValue
+                })
+              )
+            }
+            options={[
+              { label: 'Post-merge ingest gate', value: 'post_merge_ingest_gate' },
+              { label: 'Custom rule bundle', value: 'custom_rule_bundle' }
+            ]}
+            value={config.suite_preset}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-quality-check-schema-drift-rule">Schema drift rule</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-quality-check-schema-drift-rule"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyQualityCheckConfigUpdate(currentConfig, {
+                  schema_drift_rule: nextValue
+                })
+              )
+            }
+            options={[
+              {
+                label: 'Fail on required column drift',
+                value: 'fail_on_required_column_drift'
+              },
+              {
+                label: 'Allow additive schema notes',
+                value: 'allow_additive_schema_notes'
+              }
+            ]}
+            value={config.schema_drift_rule}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-quality-check-null-key-policy">Null key policy</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-quality-check-null-key-policy"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyQualityCheckConfigUpdate(currentConfig, {
+                  null_key_policy: nextValue
+                })
+              )
+            }
+            options={[
+              {
+                label: 'Block on primary-key nulls',
+                value: 'block_on_primary_key_nulls'
+              },
+              {
+                label: 'Allow nulls with warning',
+                value: 'allow_nulls_with_warning'
+              }
+            ]}
+            value={config.null_key_policy}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-quality-check-warning-budget">Warning budget</label>
+          </div>
+          <input
+            id="canvas-quality-check-warning-budget"
+            className="canvas-node-panel__input"
+            min="0"
+            onChange={(event) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyQualityCheckConfigUpdate(currentConfig, {
+                  warning_budget: event.target.value
+                })
+              )
+            }
+            type="number"
+            value={config.warning_budget}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label>Output contract</label>
+          </div>
+          <div className="canvas-node-panel__code" aria-label="Quality check output contract">
+            <div className="canvas-node-panel__code-line">
+              <span>table_ref</span>
+              <strong>pass-through durable table</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>metadata.quality_check</span>
+              <strong>quality_gate_result</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>gate payload</span>
+              <strong>pass | warn | fail</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__toggle-row">
+          <label className="canvas-node-panel__checkbox">
+            <input
+              checked={config.block_checkpoint_write_on_failure}
+              onChange={(event) =>
+                onNodeConfigChange?.((currentConfig) =>
+                  applyQualityCheckConfigUpdate(currentConfig, {
+                    block_checkpoint_write_on_failure: event.target.checked
+                  })
+                )
+              }
+              type="checkbox"
+            />
+            <span className="canvas-node-panel__checkmark" aria-hidden="true" />
+            <span>Block checkpoint write on failure</span>
+          </label>
+        </div>
+
+        <div className="canvas-node-panel__toggle-row">
+          <label className="canvas-node-panel__checkbox">
+            <input
+              checked={config.allow_warning_only_runs_to_continue}
+              onChange={(event) =>
+                onNodeConfigChange?.((currentConfig) =>
+                  applyQualityCheckConfigUpdate(currentConfig, {
+                    allow_warning_only_runs_to_continue: event.target.checked
+                  })
+                )
+              }
+              type="checkbox"
+            />
+            <span className="canvas-node-panel__checkmark" aria-hidden="true" />
+            <span>Allow warning-only runs to continue</span>
+          </label>
+        </div>
+      </section>
+
+      <CanvasNodeExecutionTimingSection
+        nodeId={node?.node_id ?? 'quality_check'}
+        onTimingChange={(patch) =>
+          onNodeConfigChange?.((currentConfig) =>
+            applyQualityCheckConfigUpdate(
+              currentConfig,
+              buildExecutionTimingConfigPatch(currentConfig, patch)
+            )
+          )
+        }
+        timing={config.execution}
+      />
+
+      <footer className="canvas-node-panel__footer">
+        <p className="canvas-node-panel__footer-eyebrow">Quality gate</p>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Last result</span>
+          <strong>{runtimeSummary.lastResultLabel}</strong>
+        </div>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Gate</span>
+          <strong>{runtimeSummary.gateLabel}</strong>
+        </div>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Warning budget</span>
+          <strong>{runtimeSummary.warningBudgetLabel}</strong>
+        </div>
+
+        <button className="canvas-node-panel__action" type="button">
+          <span aria-hidden="true">→</span>
+          <span>{workflowSyncStateLabel(workflowSyncState)}</span>
+        </button>
+      </footer>
+    </aside>
+  );
+}
+
+function CanvasLoadToDuckDbManagementPanel({
+  definition,
+  node,
+  onNodeConfigChange,
+  onNodeLabelChange,
+  workflow,
+  workflowSyncState = 'local'
+}) {
+  const config = normalizeLoadToDuckDbPanelConfig(node);
+  const runtimeSummary = buildLoadToDuckDbRuntimeSummary(config, workflow, node?.node_id);
+  const outputCount = definition?.outputs?.length ?? 1;
+  const targetSchemaOptions = buildLoadToDuckDbSchemaOptions(config.target_schema);
+
+  return (
+    <aside className="canvas-node-panel" aria-label="Node management panel">
+      <header className="canvas-node-panel__header">
+        <div className="canvas-node-panel__title-group">
+          <span
+            className="canvas-node-panel__title-icon canvas-node-panel__title-icon--duckdb"
+            aria-hidden="true"
+          >
+            <DuckDbIcon className="canvas-node-panel__brand-icon" />
+          </span>
+          <div className="canvas-node-panel__title-copy">
+            <strong>{node?.label ?? definition?.display_name ?? 'Load to DuckDB'}</strong>
+            <code className="canvas-node-panel__title-subtitle">
+              {node?.node_id ?? 'load_to_duckdb'}
+            </code>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__header-meta">
+          <span className="canvas-node-panel__meta-dot" aria-hidden="true" />
+          <span>{`1 input · ${outputCount} output${outputCount === 1 ? '' : 's'}`}</span>
+        </div>
+      </header>
+
+      <section className="canvas-node-panel__section">
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label>Current staging state</label>
+          </div>
+          <div className="canvas-node-panel__code" aria-label="Current staging state">
+            <div className="canvas-node-panel__code-line">
+              <span>bundle_mode</span>
+              <strong>{runtimeSummary.bundleModeLabel}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>loaded_tables</span>
+              <strong>{runtimeSummary.loadedTablesLabel}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>target_schema</span>
+              <strong>{runtimeSummary.targetSchema}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>merge_context</span>
+              <strong>{runtimeSummary.mergeContextLabel}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-load-to-duckdb-label">Label</label>
+          </div>
+          <input
+            id="canvas-load-to-duckdb-label"
+            className="canvas-node-panel__input"
+            onChange={(event) => onNodeLabelChange?.(event.target.value)}
+            type="text"
+            value={node?.label ?? ''}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label>Input bundle</label>
+          </div>
+          <div className="canvas-node-panel__code" aria-label="Input bundle">
+            <div className="canvas-node-panel__code-line">
+              <span>accepted kinds</span>
+              <strong>dump + diff bundles</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>resolved input</span>
+              <strong>{runtimeSummary.sourceTypeLabel}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>repo</span>
+              <strong>{runtimeSummary.repository}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-load-to-duckdb-target-schema">Target schema</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-load-to-duckdb-target-schema"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyLoadToDuckDbConfigUpdate(currentConfig, {
+                  target_schema: nextValue
+                })
+              )
+            }
+            options={targetSchemaOptions}
+            value={config.target_schema}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-load-to-duckdb-table-mapping">Table mapping</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-load-to-duckdb-table-mapping"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyLoadToDuckDbConfigUpdate(currentConfig, {
+                  table_mapping: nextValue
+                })
+              )
+            }
+            options={[
+              {
+                label: 'Bundle-aware staging names',
+                value: 'bundle_aware_staging_names'
+              }
+            ]}
+            value={config.table_mapping}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-load-to-duckdb-schema-handling">Schema handling</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-load-to-duckdb-schema-handling"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyLoadToDuckDbConfigUpdate(currentConfig, {
+                  schema_handling: nextValue
+                })
+              )
+            }
+            options={[
+              {
+                label: 'Infer first, validate later',
+                value: 'infer_on_first_load_validate_on_recurring'
+              }
+            ]}
+            value={config.schema_handling}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-load-to-duckdb-delta-context">Delta context preservation</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-load-to-duckdb-delta-context"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyLoadToDuckDbConfigUpdate(currentConfig, {
+                  delta_context_preservation: nextValue
+                })
+              )
+            }
+            options={[
+              {
+                label: 'Preserve commit range and delete flags',
+                value: 'preserve_commit_range_and_delete_flags'
+              }
+            ]}
+            value={config.delta_context_preservation}
+          />
+        </div>
+      </section>
+
+      <CanvasNodeExecutionTimingSection
+        nodeId={node?.node_id ?? 'load_to_duckdb'}
+        onTimingChange={(patch) =>
+          onNodeConfigChange?.((currentConfig) =>
+            applyLoadToDuckDbConfigUpdate(
+              currentConfig,
+              buildExecutionTimingConfigPatch(currentConfig, patch)
+            )
+          )
+        }
+        timing={config.execution}
+      />
+
+      <footer className="canvas-node-panel__footer">
+        <p className="canvas-node-panel__footer-eyebrow">Output contract</p>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Target</span>
+          <strong>{runtimeSummary.targetSchema}</strong>
+        </div>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Loaded tables</span>
+          <strong>{runtimeSummary.loadedTablesLabel}</strong>
+        </div>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Output</span>
+          <strong>table_ref + load manifest metadata</strong>
+        </div>
+
+        <button className="canvas-node-panel__action" type="button">
+          <span aria-hidden="true">→</span>
+          <span>{workflowSyncStateLabel(workflowSyncState)}</span>
+        </button>
+      </footer>
+    </aside>
+  );
+}
+
+function CanvasTableMergeManagementPanel({
+  definition,
+  node,
+  onNodeConfigChange,
+  onNodeLabelChange,
+  workflow,
+  workflowSyncState = 'local'
+}) {
+  const config = normalizeTableMergePanelConfig(node);
+  const runtimeSummary = buildTableMergeRuntimeSummary(config, workflow, node?.node_id);
+  const outputCount = definition?.outputs?.length ?? 1;
+  const targetSchemaOptions = buildTableMergeSchemaOptions(config.target_schema);
+
+  return (
+    <aside className="canvas-node-panel" aria-label="Node management panel">
+      <header className="canvas-node-panel__header">
+        <div className="canvas-node-panel__title-group">
+          <span className="canvas-node-panel__title-icon" aria-hidden="true">
+            G
+          </span>
+          <div className="canvas-node-panel__title-copy">
+            <strong>{node?.label ?? definition?.display_name ?? 'Table Merge'}</strong>
+            <code className="canvas-node-panel__title-subtitle">
+              {node?.node_id ?? 'table_merge'}
+            </code>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__header-meta">
+          <span className="canvas-node-panel__meta-dot" aria-hidden="true" />
+          <span>{`1 input · ${outputCount} output${outputCount === 1 ? '' : 's'}`}</span>
+        </div>
+      </header>
+
+      <section className="canvas-node-panel__section">
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label>Current merge state</label>
+          </div>
+          <div className="canvas-node-panel__code" aria-label="Current merge state">
+            <div className="canvas-node-panel__code-line">
+              <span>source_tables</span>
+              <strong>{runtimeSummary.sourceTablesLabel}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>write_policy</span>
+              <strong>{runtimeSummary.writePolicyLabel}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>delete_handling</span>
+              <strong>{runtimeSummary.deleteHandlingLabel}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>target_schema</span>
+              <strong>{runtimeSummary.targetSchema}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-table-merge-label">Label</label>
+          </div>
+          <input
+            id="canvas-table-merge-label"
+            className="canvas-node-panel__input"
+            onChange={(event) => onNodeLabelChange?.(event.target.value)}
+            type="text"
+            value={node?.label ?? ''}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-table-merge-target-schema">Target schema</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-table-merge-target-schema"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyTableMergeConfigUpdate(currentConfig, {
+                  target_schema: nextValue
+                })
+              )
+            }
+            options={targetSchemaOptions}
+            value={config.target_schema}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-table-merge-write-policy">Write policy</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-table-merge-write-policy"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyTableMergeConfigUpdate(currentConfig, {
+                  write_policy: nextValue
+                })
+              )
+            }
+            options={[
+              { label: 'Upsert', value: 'upsert' },
+              { label: 'Append only', value: 'append_only' },
+              { label: 'Snapshot replace', value: 'snapshot_replace' }
+            ]}
+            value={config.write_policy}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-table-merge-key-columns">Merge key</label>
+          </div>
+          <input
+            id="canvas-table-merge-key-columns"
+            className="canvas-node-panel__input"
+            onChange={(event) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyTableMergeConfigUpdate(currentConfig, {
+                  merge_key_columns_text: event.target.value
+                })
+              )
+            }
+            placeholder="symbol, report_date"
+            type="text"
+            value={config.merge_key_columns_text}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-table-merge-delete-handling">Delete handling</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-table-merge-delete-handling"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyTableMergeConfigUpdate(currentConfig, {
+                  delete_handling: nextValue
+                })
+              )
+            }
+            options={[
+              { label: 'Apply delete markers', value: 'apply_delete_markers' },
+              { label: 'Ignore delete markers', value: 'ignore_delete_markers' }
+            ]}
+            value={config.delete_handling}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-table-merge-schema-drift">Schema drift behavior</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-table-merge-schema-drift"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applyTableMergeConfigUpdate(currentConfig, {
+                  schema_drift_behavior: nextValue
+                })
+              )
+            }
+            options={[
+              { label: 'Fail and require review', value: 'fail_and_require_review' },
+              { label: 'Allow additive changes', value: 'allow_additive_changes' }
+            ]}
+            value={config.schema_drift_behavior}
+          />
+        </div>
+      </section>
+
+      <CanvasNodeExecutionTimingSection
+        nodeId={node?.node_id ?? 'table_merge'}
+        onTimingChange={(patch) =>
+          onNodeConfigChange?.((currentConfig) =>
+            applyTableMergeConfigUpdate(
+              currentConfig,
+              buildExecutionTimingConfigPatch(currentConfig, patch)
+            )
+          )
+        }
+        timing={config.execution}
+      />
+
+      <footer className="canvas-node-panel__footer">
+        <p className="canvas-node-panel__footer-eyebrow">Durable merge</p>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Policy</span>
+          <strong>{runtimeSummary.writePolicyLabel}</strong>
+        </div>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Merge key</span>
+          <strong>{runtimeSummary.mergeKeyLabel}</strong>
+        </div>
+
+        <div className="canvas-node-panel__footer-row">
+          <span>Schema drift</span>
+          <strong>{runtimeSummary.schemaDriftLabel}</strong>
         </div>
 
         <button className="canvas-node-panel__action" type="button">
@@ -3984,10 +6468,22 @@ function buildCanvasNodeManagementModel(node, definition) {
     subtitle: node?.node_id ?? definition?.type_id ?? humanizeToken(node?.type_id ?? 'node'),
     meta: portCount ? `${portCount} port${portCount === 1 ? '' : 's'}` : 'Selected',
     icon:
-      nodeTypeId === 'send_email'
+      nodeTypeId === 'checkpoint_read'
+        ? 'R'
+        : nodeTypeId === 'checkpoint_write'
+          ? 'W'
+        : nodeTypeId === 'quality_check'
+          ? 'Q'
+        : nodeTypeId === 'dolt_repo_source' || nodeTypeId === 'dolt_repo_sync' || nodeTypeId === 'dolt_change_manifest' || nodeTypeId === 'dolt_dump' || nodeTypeId === 'dolt_diff_export'
+        ? 'd'
+        : nodeTypeId === 'load_to_duckdb'
+          ? 'O'
+        : nodeTypeId === 'send_email'
         ? '@'
         : nodeTypeId === 'table_input' || nodeTypeId === 'table_output' || nodeTypeId === 'table_schema'
           ? '[]'
+          : nodeTypeId === 'table_merge'
+            ? 'G'
           : 'T',
     footerEyebrow: 'Run selected node',
     footerMetricLabel: 'Estimated load',
@@ -4052,6 +6548,51 @@ const DEFAULT_TABLE_OUTPUT_TABLE_NAME = 'news_brief';
 const DEFAULT_TABLE_OUTPUT_VALUE_COLUMN = 'content';
 const DEFAULT_TABLE_OUTPUT_INPUT_SHAPE = 'single_text_row';
 const DEFAULT_TABLE_OUTPUT_WRITE_MODE = 'append';
+const DEFAULT_DOLT_REPO_SOURCE_CONNECTION_REF = 'dolthub_public';
+const DEFAULT_DOLT_REPO_SOURCE_REPOSITORY = 'post-no-preference/earnings';
+const DEFAULT_DOLT_REPO_SOURCE_BRANCH = 'main';
+const DEFAULT_DOLT_REPO_SOURCE_CLONE_MODE = 'reuse_local_copy';
+const DEFAULT_DOLT_REPO_SOURCE_SYNC_STRATEGY = 'pull_before_execution';
+const DEFAULT_CHECKPOINT_READ_TABLE = 'tables.ingest_checkpoints';
+const DEFAULT_CHECKPOINT_READ_SOURCE_REPO = DEFAULT_DOLT_REPO_SOURCE_REPOSITORY;
+const DEFAULT_CHECKPOINT_READ_BRANCH = DEFAULT_DOLT_REPO_SOURCE_BRANCH;
+const DEFAULT_CHECKPOINT_READ_EMIT_BOOTSTRAP_MARKER_IF_MISSING = true;
+const DEFAULT_CHECKPOINT_READ_FAIL_ON_STALE_CHECKPOINT = false;
+const DEFAULT_CHECKPOINT_WRITE_TABLE = 'tables.ingest_checkpoints';
+const DEFAULT_CHECKPOINT_WRITE_COMMIT_SOURCE = 'metadata.current_commit';
+const DEFAULT_CHECKPOINT_WRITE_TIMING = 'after_merge_success';
+const DEFAULT_CHECKPOINT_WRITE_ONLY_PERSIST_ON_FULL_SUCCESS = true;
+const DEFAULT_CHECKPOINT_WRITE_ADVANCE_ON_PARTIAL_SUCCESS = false;
+const DEFAULT_QUALITY_CHECK_SUITE_PRESET = 'post_merge_ingest_gate';
+const DEFAULT_QUALITY_CHECK_SCHEMA_DRIFT_RULE = 'fail_on_required_column_drift';
+const DEFAULT_QUALITY_CHECK_NULL_KEY_POLICY = 'block_on_primary_key_nulls';
+const DEFAULT_QUALITY_CHECK_WARNING_BUDGET = 2;
+const DEFAULT_QUALITY_CHECK_BLOCK_CHECKPOINT_WRITE_ON_FAILURE = true;
+const DEFAULT_QUALITY_CHECK_ALLOW_WARNING_ONLY_RUNS_TO_CONTINUE = true;
+const DEFAULT_DOLT_REPO_SYNC_ACTION = 'pull_remote_head';
+const DEFAULT_DOLT_REPO_SYNC_NO_CHANGE_BEHAVIOR = 'emit_current_range';
+const DEFAULT_DOLT_REPO_SYNC_BRANCH_GUARD = 'require_tracked_branch_match';
+const DEFAULT_DOLT_REPO_SYNC_DIRTY_WORKING_COPY_POLICY = 'fail_if_dirty';
+const DEFAULT_DOLT_CHANGE_MANIFEST_TABLE_SCOPE = 'all_tables';
+const DEFAULT_DOLT_CHANGE_MANIFEST_SCHEMA_CHANGE_POLICY = 'flag_and_continue';
+const DEFAULT_DOLT_DUMP_OUTPUT_FORMAT = 'parquet';
+const DEFAULT_DOLT_DUMP_TABLE_SELECTION_MODE = 'prefer_manifest_scope';
+const DEFAULT_DOLT_DUMP_ARTIFACT_RETENTION = 'keep_latest_success';
+const DEFAULT_DOLT_DUMP_OUTPUT_DIRECTORY_POLICY = 'ephemeral_run_bundle';
+const DEFAULT_DOLT_DIFF_EXPORT_OUTPUT_FORMAT = 'parquet';
+const DEFAULT_DOLT_DIFF_EXPORT_CHANGE_FILTER = 'all_changes';
+const DEFAULT_DOLT_DIFF_EXPORT_DELETED_ROW_HANDLING = 'emit_delete_markers';
+const DEFAULT_LOAD_TO_DUCKDB_TARGET_SCHEMA = 'staging';
+const DEFAULT_LOAD_TO_DUCKDB_TABLE_MAPPING = 'bundle_aware_staging_names';
+const DEFAULT_LOAD_TO_DUCKDB_SCHEMA_HANDLING =
+  'infer_on_first_load_validate_on_recurring';
+const DEFAULT_LOAD_TO_DUCKDB_DELTA_CONTEXT_PRESERVATION =
+  'preserve_commit_range_and_delete_flags';
+const DEFAULT_TABLE_MERGE_TARGET_SCHEMA = 'tables';
+const DEFAULT_TABLE_MERGE_WRITE_POLICY = 'upsert';
+const DEFAULT_TABLE_MERGE_DELETE_HANDLING = 'apply_delete_markers';
+const DEFAULT_TABLE_MERGE_SCHEMA_DRIFT_BEHAVIOR = 'fail_and_require_review';
+const DEFAULT_TABLE_MERGE_KEY_COLUMNS = ['symbol', 'report_date'];
 const DEFAULT_TABLE_INPUT_CATALOG = 'workflow.duckdb';
 const DEFAULT_TABLE_INPUT_SCHEMA = 'runs';
 const DEFAULT_TABLE_INPUT_TABLE_NAME = 'workflow_runs';
@@ -4081,6 +6622,23 @@ const TABLE_INPUT_SCHEMA_CHOICES = [
   { label: 'staging', value: 'staging' },
   { label: 'tables', value: 'tables' },
   { label: 'outputs', value: 'outputs' }
+];
+const LOAD_TO_DUCKDB_SCHEMA_CHOICES = [
+  { label: 'staging', value: 'staging' },
+  { label: 'tables', value: 'tables' },
+  { label: 'outputs', value: 'outputs' },
+  { label: 'runs', value: 'runs' }
+];
+const TABLE_MERGE_SCHEMA_CHOICES = [
+  { label: 'tables', value: 'tables' },
+  { label: 'outputs', value: 'outputs' }
+];
+const DOLT_REPO_SOURCE_CONNECTION_CHOICES = [
+  { label: 'dolthub_public', value: 'dolthub_public' }
+];
+const DOLT_REPO_SOURCE_BRANCH_CHOICES = [
+  { label: 'main', value: 'main' },
+  { label: 'master', value: 'master' }
 ];
 
 function normalizeSendEmailPanelConfig(node, workflow) {
@@ -4134,6 +6692,300 @@ function normalizeTextInputPanelConfig(node) {
       config.trim_mode === 'trim' || config.trim_mode === 'exact'
         ? config.trim_mode
       : 'automatic'
+  };
+}
+
+function normalizeDoltRepoSourcePanelConfig(node) {
+  const config = node?.config ?? {};
+
+  return {
+    branch: normalizeNodeConfigTextField(
+      config,
+      'branch',
+      DEFAULT_DOLT_REPO_SOURCE_BRANCH
+    ),
+    checkout_ref:
+      typeof config.checkout_ref === 'string' ? config.checkout_ref : '',
+    clone_mode:
+      config.clone_mode === 'fresh_clone' || config.clone_mode === 'depth_1'
+        ? config.clone_mode
+        : DEFAULT_DOLT_REPO_SOURCE_CLONE_MODE,
+    connection_ref: normalizeNodeConfigTextField(
+      config,
+      'connection_ref',
+      DEFAULT_DOLT_REPO_SOURCE_CONNECTION_REF
+    ),
+    execution: normalizeNodeExecutionTimingConfig(config),
+    repository: normalizeNodeConfigTextField(
+      config,
+      'repository',
+      DEFAULT_DOLT_REPO_SOURCE_REPOSITORY
+    ),
+    sync_strategy:
+      config.sync_strategy === 'clone_only' || config.sync_strategy === 'manual'
+        ? config.sync_strategy
+        : DEFAULT_DOLT_REPO_SOURCE_SYNC_STRATEGY
+  };
+}
+
+function normalizeDoltRepoSyncPanelConfig(node) {
+  const config = node?.config ?? {};
+
+  return {
+    branch_guard:
+      config.branch_guard === 'allow_detached_head'
+        ? config.branch_guard
+        : DEFAULT_DOLT_REPO_SYNC_BRANCH_GUARD,
+    dirty_working_copy_policy:
+      config.dirty_working_copy_policy === 'stash_and_continue'
+        ? config.dirty_working_copy_policy
+        : DEFAULT_DOLT_REPO_SYNC_DIRTY_WORKING_COPY_POLICY,
+    execution: normalizeNodeExecutionTimingConfig(config),
+    no_change_behavior:
+      config.no_change_behavior === 'emit_no_op_marker'
+        ? config.no_change_behavior
+        : DEFAULT_DOLT_REPO_SYNC_NO_CHANGE_BEHAVIOR,
+    sync_action:
+      config.sync_action === 'fetch_and_checkout' ||
+      config.sync_action === 'refresh_checkout'
+        ? config.sync_action
+        : DEFAULT_DOLT_REPO_SYNC_ACTION
+  };
+}
+
+function normalizeDoltChangeManifestPanelConfig(node) {
+  const config = node?.config ?? {};
+  const selectedTables = normalizeDoltChangeManifestSelectedTables(config.selected_tables);
+
+  return {
+    execution: normalizeNodeExecutionTimingConfig(config),
+    schema_change_policy:
+      config.schema_change_policy === 'fail_run'
+        ? config.schema_change_policy
+        : DEFAULT_DOLT_CHANGE_MANIFEST_SCHEMA_CHANGE_POLICY,
+    selected_tables: selectedTables,
+    selected_tables_text: selectedTables.join(', '),
+    table_scope:
+      config.table_scope === 'allowlist'
+        ? config.table_scope
+        : DEFAULT_DOLT_CHANGE_MANIFEST_TABLE_SCOPE
+  };
+}
+
+function normalizeDoltDumpPanelConfig(node) {
+  const config = node?.config ?? {};
+  const selectedTables = normalizeDoltDumpSelectedTables(config.selected_tables);
+
+  return {
+    artifact_retention:
+      config.artifact_retention === 'ephemeral_per_run' ||
+      config.artifact_retention === 'persist_all'
+        ? config.artifact_retention
+        : DEFAULT_DOLT_DUMP_ARTIFACT_RETENTION,
+    execution: normalizeNodeExecutionTimingConfig(config),
+    output_directory_policy:
+      config.output_directory_policy === 'stable_repo_cache'
+        ? config.output_directory_policy
+        : DEFAULT_DOLT_DUMP_OUTPUT_DIRECTORY_POLICY,
+    output_format:
+      config.output_format === 'csv' ? 'csv' : DEFAULT_DOLT_DUMP_OUTPUT_FORMAT,
+    selected_tables: selectedTables,
+    selected_tables_text: selectedTables.join(', '),
+    table_selection_mode:
+      config.table_selection_mode === 'all_tables' ||
+      config.table_selection_mode === 'manual_tables'
+        ? config.table_selection_mode
+        : DEFAULT_DOLT_DUMP_TABLE_SELECTION_MODE
+  };
+}
+
+function normalizeDoltDiffExportPanelConfig(node) {
+  const config = node?.config ?? {};
+
+  return {
+    change_filter:
+      config.change_filter === 'non_delete_changes' ||
+      config.change_filter === 'added_only' ||
+      config.change_filter === 'modified_only' ||
+      config.change_filter === 'removed_only'
+        ? config.change_filter
+        : DEFAULT_DOLT_DIFF_EXPORT_CHANGE_FILTER,
+    deleted_row_handling:
+      config.deleted_row_handling === 'omit_delete_rows'
+        ? config.deleted_row_handling
+        : DEFAULT_DOLT_DIFF_EXPORT_DELETED_ROW_HANDLING,
+    execution: normalizeNodeExecutionTimingConfig(config),
+    output_format:
+      config.output_format === 'csv' ? 'csv' : DEFAULT_DOLT_DIFF_EXPORT_OUTPUT_FORMAT
+  };
+}
+
+function normalizeLoadToDuckDbPanelConfig(node) {
+  const config = node?.config ?? {};
+
+  return {
+    delta_context_preservation:
+      config.delta_context_preservation === 'preserve_commit_range_and_delete_flags'
+        ? config.delta_context_preservation
+        : DEFAULT_LOAD_TO_DUCKDB_DELTA_CONTEXT_PRESERVATION,
+    execution: normalizeNodeExecutionTimingConfig(config),
+    schema_handling:
+      config.schema_handling === 'infer_on_first_load_validate_on_recurring'
+        ? config.schema_handling
+        : DEFAULT_LOAD_TO_DUCKDB_SCHEMA_HANDLING,
+    table_mapping:
+      config.table_mapping === 'bundle_aware_staging_names'
+        ? config.table_mapping
+        : DEFAULT_LOAD_TO_DUCKDB_TABLE_MAPPING,
+    target_schema: normalizeNodeConfigTextField(
+      config,
+      'target_schema',
+      DEFAULT_LOAD_TO_DUCKDB_TARGET_SCHEMA
+    )
+  };
+}
+
+function normalizeCheckpointReadPanelConfig(node) {
+  const config = node?.config ?? {};
+
+  return {
+    branch: normalizeNodeConfigTextField(
+      config,
+      'branch',
+      DEFAULT_CHECKPOINT_READ_BRANCH
+    ),
+    checkpoint_table: normalizeNodeConfigTextField(
+      config,
+      'checkpoint_table',
+      DEFAULT_CHECKPOINT_READ_TABLE
+    ),
+    emit_bootstrap_marker_if_missing:
+      typeof config.emit_bootstrap_marker_if_missing === 'boolean'
+        ? config.emit_bootstrap_marker_if_missing
+        : DEFAULT_CHECKPOINT_READ_EMIT_BOOTSTRAP_MARKER_IF_MISSING,
+    execution: normalizeNodeExecutionTimingConfig(config),
+    fail_on_stale_checkpoint:
+      typeof config.fail_on_stale_checkpoint === 'boolean'
+        ? config.fail_on_stale_checkpoint
+        : DEFAULT_CHECKPOINT_READ_FAIL_ON_STALE_CHECKPOINT,
+    source_repo: normalizeNodeConfigTextField(
+      config,
+      'source_repo',
+      DEFAULT_CHECKPOINT_READ_SOURCE_REPO
+    )
+  };
+}
+
+function normalizeCheckpointWritePanelConfig(node) {
+  const config = node?.config ?? {};
+
+  return {
+    advance_on_partial_success:
+      typeof config.advance_on_partial_success === 'boolean'
+        ? config.advance_on_partial_success
+        : DEFAULT_CHECKPOINT_WRITE_ADVANCE_ON_PARTIAL_SUCCESS,
+    checkpoint_table: normalizeNodeConfigTextField(
+      config,
+      'checkpoint_table',
+      DEFAULT_CHECKPOINT_WRITE_TABLE
+    ),
+    commit_source:
+      config.commit_source === 'metadata.current_commit'
+        ? config.commit_source
+        : DEFAULT_CHECKPOINT_WRITE_COMMIT_SOURCE,
+    execution: normalizeNodeExecutionTimingConfig(config),
+    only_persist_on_full_success:
+      typeof config.only_persist_on_full_success === 'boolean'
+        ? config.only_persist_on_full_success
+        : DEFAULT_CHECKPOINT_WRITE_ONLY_PERSIST_ON_FULL_SUCCESS,
+    write_timing:
+      config.write_timing === 'after_quality_gate'
+        ? config.write_timing
+        : DEFAULT_CHECKPOINT_WRITE_TIMING
+  };
+}
+
+function normalizeQualityCheckWarningBudget(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.max(0, Math.round(value));
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return Math.max(0, Math.round(parsed));
+    }
+  }
+
+  return DEFAULT_QUALITY_CHECK_WARNING_BUDGET;
+}
+
+function normalizeQualityCheckPanelConfig(node) {
+  const config = node?.config ?? {};
+
+  return {
+    allow_warning_only_runs_to_continue:
+      typeof config.allow_warning_only_runs_to_continue === 'boolean'
+        ? config.allow_warning_only_runs_to_continue
+        : DEFAULT_QUALITY_CHECK_ALLOW_WARNING_ONLY_RUNS_TO_CONTINUE,
+    block_checkpoint_write_on_failure:
+      typeof config.block_checkpoint_write_on_failure === 'boolean'
+        ? config.block_checkpoint_write_on_failure
+        : DEFAULT_QUALITY_CHECK_BLOCK_CHECKPOINT_WRITE_ON_FAILURE,
+    execution: normalizeNodeExecutionTimingConfig(config),
+    null_key_policy:
+      config.null_key_policy === 'allow_nulls_with_warning'
+        ? config.null_key_policy
+        : DEFAULT_QUALITY_CHECK_NULL_KEY_POLICY,
+    schema_drift_rule:
+      config.schema_drift_rule === 'allow_additive_schema_notes'
+        ? config.schema_drift_rule
+        : DEFAULT_QUALITY_CHECK_SCHEMA_DRIFT_RULE,
+    suite_preset:
+      config.suite_preset === 'custom_rule_bundle'
+        ? config.suite_preset
+        : DEFAULT_QUALITY_CHECK_SUITE_PRESET,
+    warning_budget: normalizeQualityCheckWarningBudget(config.warning_budget)
+  };
+}
+
+function normalizeTableMergeKeyColumns(value) {
+  if (Array.isArray(value)) {
+    return [...new Set(value.map((entry) => (typeof entry === 'string' ? entry.trim() : '')).filter(Boolean))];
+  }
+
+  if (typeof value === 'string') {
+    return [...new Set(value.split(',').map((entry) => entry.trim()).filter(Boolean))];
+  }
+
+  return [...DEFAULT_TABLE_MERGE_KEY_COLUMNS];
+}
+
+function normalizeTableMergePanelConfig(node) {
+  const config = node?.config ?? {};
+  const mergeKeyColumns = normalizeTableMergeKeyColumns(config.merge_key_columns);
+
+  return {
+    delete_handling:
+      config.delete_handling === 'ignore_delete_markers'
+        ? config.delete_handling
+        : DEFAULT_TABLE_MERGE_DELETE_HANDLING,
+    execution: normalizeNodeExecutionTimingConfig(config),
+    merge_key_columns: mergeKeyColumns,
+    merge_key_columns_text: mergeKeyColumns.join(', '),
+    schema_drift_behavior:
+      config.schema_drift_behavior === 'allow_additive_changes'
+        ? config.schema_drift_behavior
+        : DEFAULT_TABLE_MERGE_SCHEMA_DRIFT_BEHAVIOR,
+    target_schema: normalizeNodeConfigTextField(
+      config,
+      'target_schema',
+      DEFAULT_TABLE_MERGE_TARGET_SCHEMA
+    ),
+    write_policy:
+      config.write_policy === 'append_only' || config.write_policy === 'snapshot_replace'
+        ? config.write_policy
+        : DEFAULT_TABLE_MERGE_WRITE_POLICY
   };
 }
 
@@ -4335,6 +7187,323 @@ function applyTextInputConfigUpdate(currentConfig = {}, patch = {}) {
   };
 }
 
+function applyCheckpointReadConfigUpdate(currentConfig = {}, patch = {}) {
+  const next = {
+    ...normalizeCheckpointReadPanelConfig({ config: currentConfig }),
+    ...currentConfig,
+    ...patch
+  };
+
+  return {
+    ...next,
+    branch: normalizeNodeConfigTextField(next, 'branch', DEFAULT_CHECKPOINT_READ_BRANCH),
+    checkpoint_table: normalizeNodeConfigTextField(
+      next,
+      'checkpoint_table',
+      DEFAULT_CHECKPOINT_READ_TABLE
+    ),
+    emit_bootstrap_marker_if_missing:
+      typeof next.emit_bootstrap_marker_if_missing === 'boolean'
+        ? next.emit_bootstrap_marker_if_missing
+        : DEFAULT_CHECKPOINT_READ_EMIT_BOOTSTRAP_MARKER_IF_MISSING,
+    execution: normalizeNodeExecutionTimingConfig(next),
+    fail_on_stale_checkpoint:
+      typeof next.fail_on_stale_checkpoint === 'boolean'
+        ? next.fail_on_stale_checkpoint
+        : DEFAULT_CHECKPOINT_READ_FAIL_ON_STALE_CHECKPOINT,
+    source_repo: normalizeNodeConfigTextField(
+      next,
+      'source_repo',
+      DEFAULT_CHECKPOINT_READ_SOURCE_REPO
+    )
+  };
+}
+
+function applyCheckpointWriteConfigUpdate(currentConfig = {}, patch = {}) {
+  const next = {
+    ...normalizeCheckpointWritePanelConfig({ config: currentConfig }),
+    ...currentConfig,
+    ...patch
+  };
+
+  return {
+    ...next,
+    advance_on_partial_success:
+      typeof next.advance_on_partial_success === 'boolean'
+        ? next.advance_on_partial_success
+        : DEFAULT_CHECKPOINT_WRITE_ADVANCE_ON_PARTIAL_SUCCESS,
+    checkpoint_table: normalizeNodeConfigTextField(
+      next,
+      'checkpoint_table',
+      DEFAULT_CHECKPOINT_WRITE_TABLE
+    ),
+    commit_source:
+      next.commit_source === 'metadata.current_commit'
+        ? next.commit_source
+        : DEFAULT_CHECKPOINT_WRITE_COMMIT_SOURCE,
+    execution: normalizeNodeExecutionTimingConfig(next),
+    only_persist_on_full_success:
+      typeof next.only_persist_on_full_success === 'boolean'
+        ? next.only_persist_on_full_success
+        : DEFAULT_CHECKPOINT_WRITE_ONLY_PERSIST_ON_FULL_SUCCESS,
+    write_timing:
+      next.write_timing === 'after_quality_gate'
+        ? next.write_timing
+        : DEFAULT_CHECKPOINT_WRITE_TIMING
+  };
+}
+
+function applyQualityCheckConfigUpdate(currentConfig = {}, patch = {}) {
+  const next = {
+    ...normalizeQualityCheckPanelConfig({ config: currentConfig }),
+    ...currentConfig,
+    ...patch
+  };
+
+  return {
+    ...next,
+    allow_warning_only_runs_to_continue:
+      typeof next.allow_warning_only_runs_to_continue === 'boolean'
+        ? next.allow_warning_only_runs_to_continue
+        : DEFAULT_QUALITY_CHECK_ALLOW_WARNING_ONLY_RUNS_TO_CONTINUE,
+    block_checkpoint_write_on_failure:
+      typeof next.block_checkpoint_write_on_failure === 'boolean'
+        ? next.block_checkpoint_write_on_failure
+        : DEFAULT_QUALITY_CHECK_BLOCK_CHECKPOINT_WRITE_ON_FAILURE,
+    execution: normalizeNodeExecutionTimingConfig(next),
+    null_key_policy:
+      next.null_key_policy === 'allow_nulls_with_warning'
+        ? next.null_key_policy
+        : DEFAULT_QUALITY_CHECK_NULL_KEY_POLICY,
+    schema_drift_rule:
+      next.schema_drift_rule === 'allow_additive_schema_notes'
+        ? next.schema_drift_rule
+        : DEFAULT_QUALITY_CHECK_SCHEMA_DRIFT_RULE,
+    suite_preset:
+      next.suite_preset === 'custom_rule_bundle'
+        ? next.suite_preset
+        : DEFAULT_QUALITY_CHECK_SUITE_PRESET,
+    warning_budget: normalizeQualityCheckWarningBudget(next.warning_budget)
+  };
+}
+
+function applyDoltRepoSourceConfigUpdate(currentConfig = {}, patch = {}) {
+  const next = {
+    ...normalizeDoltRepoSourcePanelConfig({ config: currentConfig }),
+    ...currentConfig,
+    ...patch
+  };
+
+  return {
+    ...next,
+    branch: normalizeNodeConfigTextField(
+      next,
+      'branch',
+      DEFAULT_DOLT_REPO_SOURCE_BRANCH
+    ),
+    checkout_ref:
+      typeof next.checkout_ref === 'string' ? next.checkout_ref : '',
+    clone_mode:
+      next.clone_mode === 'fresh_clone' || next.clone_mode === 'depth_1'
+        ? next.clone_mode
+        : DEFAULT_DOLT_REPO_SOURCE_CLONE_MODE,
+    connection_ref: normalizeNodeConfigTextField(
+      next,
+      'connection_ref',
+      DEFAULT_DOLT_REPO_SOURCE_CONNECTION_REF
+    ),
+    execution: normalizeNodeExecutionTimingConfig(next),
+    repository: normalizeNodeConfigTextField(
+      next,
+      'repository',
+      DEFAULT_DOLT_REPO_SOURCE_REPOSITORY
+    ),
+    sync_strategy:
+      next.sync_strategy === 'clone_only' || next.sync_strategy === 'manual'
+        ? next.sync_strategy
+        : DEFAULT_DOLT_REPO_SOURCE_SYNC_STRATEGY
+  };
+}
+
+function applyDoltRepoSyncConfigUpdate(currentConfig = {}, patch = {}) {
+  const next = {
+    ...normalizeDoltRepoSyncPanelConfig({ config: currentConfig }),
+    ...currentConfig,
+    ...patch
+  };
+
+  return {
+    ...next,
+    branch_guard:
+      next.branch_guard === 'allow_detached_head'
+        ? next.branch_guard
+        : DEFAULT_DOLT_REPO_SYNC_BRANCH_GUARD,
+    dirty_working_copy_policy:
+      next.dirty_working_copy_policy === 'stash_and_continue'
+        ? next.dirty_working_copy_policy
+        : DEFAULT_DOLT_REPO_SYNC_DIRTY_WORKING_COPY_POLICY,
+    execution: normalizeNodeExecutionTimingConfig(next),
+    no_change_behavior:
+      next.no_change_behavior === 'emit_no_op_marker'
+        ? next.no_change_behavior
+        : DEFAULT_DOLT_REPO_SYNC_NO_CHANGE_BEHAVIOR,
+    sync_action:
+      next.sync_action === 'fetch_and_checkout' ||
+      next.sync_action === 'refresh_checkout'
+        ? next.sync_action
+        : DEFAULT_DOLT_REPO_SYNC_ACTION
+  };
+}
+
+function applyDoltChangeManifestConfigUpdate(currentConfig = {}, patch = {}) {
+  const next = {
+    ...normalizeDoltChangeManifestPanelConfig({ config: currentConfig }),
+    ...currentConfig,
+    ...patch
+  };
+  const { selected_tables_text: _selectedTablesText, ...rest } = next;
+  const selectedTables = normalizeDoltChangeManifestSelectedTables(
+    next.selected_tables_text ?? next.selected_tables
+  );
+
+  return {
+    ...rest,
+    execution: normalizeNodeExecutionTimingConfig(next),
+    schema_change_policy:
+      next.schema_change_policy === 'fail_run'
+        ? next.schema_change_policy
+        : DEFAULT_DOLT_CHANGE_MANIFEST_SCHEMA_CHANGE_POLICY,
+    selected_tables: selectedTables,
+    table_scope:
+      next.table_scope === 'allowlist'
+        ? next.table_scope
+        : DEFAULT_DOLT_CHANGE_MANIFEST_TABLE_SCOPE
+  };
+}
+
+function applyDoltDumpConfigUpdate(currentConfig = {}, patch = {}) {
+  const next = {
+    ...normalizeDoltDumpPanelConfig({ config: currentConfig }),
+    ...currentConfig,
+    ...patch
+  };
+  const { selected_tables_text: _selectedTablesText, ...rest } = next;
+  const selectedTables = normalizeDoltDumpSelectedTables(
+    next.selected_tables_text ?? next.selected_tables
+  );
+
+  return {
+    ...rest,
+    artifact_retention:
+      next.artifact_retention === 'ephemeral_per_run' ||
+      next.artifact_retention === 'persist_all'
+        ? next.artifact_retention
+        : DEFAULT_DOLT_DUMP_ARTIFACT_RETENTION,
+    execution: normalizeNodeExecutionTimingConfig(next),
+    output_directory_policy:
+      next.output_directory_policy === 'stable_repo_cache'
+        ? next.output_directory_policy
+        : DEFAULT_DOLT_DUMP_OUTPUT_DIRECTORY_POLICY,
+    output_format:
+      next.output_format === 'csv' ? 'csv' : DEFAULT_DOLT_DUMP_OUTPUT_FORMAT,
+    selected_tables: selectedTables,
+    table_selection_mode:
+      next.table_selection_mode === 'all_tables' ||
+      next.table_selection_mode === 'manual_tables'
+        ? next.table_selection_mode
+        : DEFAULT_DOLT_DUMP_TABLE_SELECTION_MODE
+  };
+}
+
+function applyDoltDiffExportConfigUpdate(currentConfig = {}, patch = {}) {
+  const next = {
+    ...normalizeDoltDiffExportPanelConfig({ config: currentConfig }),
+    ...currentConfig,
+    ...patch
+  };
+
+  return {
+    ...next,
+    change_filter:
+      next.change_filter === 'non_delete_changes' ||
+      next.change_filter === 'added_only' ||
+      next.change_filter === 'modified_only' ||
+      next.change_filter === 'removed_only'
+        ? next.change_filter
+        : DEFAULT_DOLT_DIFF_EXPORT_CHANGE_FILTER,
+    deleted_row_handling:
+      next.deleted_row_handling === 'omit_delete_rows'
+        ? next.deleted_row_handling
+        : DEFAULT_DOLT_DIFF_EXPORT_DELETED_ROW_HANDLING,
+    execution: normalizeNodeExecutionTimingConfig(next),
+    output_format:
+      next.output_format === 'csv' ? 'csv' : DEFAULT_DOLT_DIFF_EXPORT_OUTPUT_FORMAT
+  };
+}
+
+function applyLoadToDuckDbConfigUpdate(currentConfig = {}, patch = {}) {
+  const next = {
+    ...normalizeLoadToDuckDbPanelConfig({ config: currentConfig }),
+    ...currentConfig,
+    ...patch
+  };
+
+  return {
+    ...next,
+    delta_context_preservation:
+      next.delta_context_preservation === 'preserve_commit_range_and_delete_flags'
+        ? next.delta_context_preservation
+        : DEFAULT_LOAD_TO_DUCKDB_DELTA_CONTEXT_PRESERVATION,
+    execution: normalizeNodeExecutionTimingConfig(next),
+    schema_handling:
+      next.schema_handling === 'infer_on_first_load_validate_on_recurring'
+        ? next.schema_handling
+        : DEFAULT_LOAD_TO_DUCKDB_SCHEMA_HANDLING,
+    table_mapping:
+      next.table_mapping === 'bundle_aware_staging_names'
+        ? next.table_mapping
+        : DEFAULT_LOAD_TO_DUCKDB_TABLE_MAPPING,
+    target_schema: normalizeNodeConfigTextField(
+      next,
+      'target_schema',
+      DEFAULT_LOAD_TO_DUCKDB_TARGET_SCHEMA
+    )
+  };
+}
+
+function applyTableMergeConfigUpdate(currentConfig = {}, patch = {}) {
+  const next = {
+    ...normalizeTableMergePanelConfig({ config: currentConfig }),
+    ...currentConfig,
+    ...patch
+  };
+
+  return {
+    ...next,
+    delete_handling:
+      next.delete_handling === 'ignore_delete_markers'
+        ? next.delete_handling
+        : DEFAULT_TABLE_MERGE_DELETE_HANDLING,
+    execution: normalizeNodeExecutionTimingConfig(next),
+    merge_key_columns: normalizeTableMergeKeyColumns(
+      next.merge_key_columns_text ?? next.merge_key_columns
+    ),
+    schema_drift_behavior:
+      next.schema_drift_behavior === 'allow_additive_changes'
+        ? next.schema_drift_behavior
+        : DEFAULT_TABLE_MERGE_SCHEMA_DRIFT_BEHAVIOR,
+    target_schema: normalizeNodeConfigTextField(
+      next,
+      'target_schema',
+      DEFAULT_TABLE_MERGE_TARGET_SCHEMA
+    ),
+    write_policy:
+      next.write_policy === 'append_only' || next.write_policy === 'snapshot_replace'
+        ? next.write_policy
+        : DEFAULT_TABLE_MERGE_WRITE_POLICY
+  };
+}
+
 function applyTableInputConfigUpdate(currentConfig = {}, patch = {}) {
   const next = {
     ...normalizeTableInputPanelConfig({ config: currentConfig }),
@@ -4513,6 +7682,1137 @@ function buildSendEmailConnectionOptions(activeConnectionId, workspaceConnection
   }
 
   return options;
+}
+
+function buildDoltRepoSourceConnectionOptions(activeConnectionRef) {
+  const options = [...DOLT_REPO_SOURCE_CONNECTION_CHOICES];
+
+  if (
+    activeConnectionRef &&
+    !options.some((option) => option.value === activeConnectionRef)
+  ) {
+    options.push({
+      label: activeConnectionRef,
+      value: activeConnectionRef
+    });
+  }
+
+  return options;
+}
+
+function buildDoltRepoSourceBranchOptions(activeBranch) {
+  const options = [...DOLT_REPO_SOURCE_BRANCH_CHOICES];
+
+  if (activeBranch && !options.some((option) => option.value === activeBranch)) {
+    options.push({
+      label: activeBranch,
+      value: activeBranch
+    });
+  }
+
+  return options;
+}
+
+function buildDoltRepoSourceRuntimeSummary(config) {
+  const repository =
+    typeof config?.repository === 'string' ? config.repository.trim() : '';
+  const checkoutRef =
+    typeof config?.checkout_ref === 'string' && config.checkout_ref.trim()
+      ? config.checkout_ref.trim()
+      : null;
+  const profile = resolveMockDoltRepoSourceProfile(repository);
+  const cloneMode =
+    config?.clone_mode === 'fresh_clone' || config?.clone_mode === 'depth_1'
+      ? config.clone_mode
+      : DEFAULT_DOLT_REPO_SOURCE_CLONE_MODE;
+  const syncStrategy =
+    config?.sync_strategy === 'clone_only' || config?.sync_strategy === 'manual'
+      ? config.sync_strategy
+      : DEFAULT_DOLT_REPO_SOURCE_SYNC_STRATEGY;
+
+  return {
+    currentCommit: checkoutRef
+      ? checkoutRef.slice(0, 12)
+      : profile?.currentCommit ?? 'pending_sync',
+    repoFamily: profile?.repoFamily ?? deriveDoltRepoSourceRepoFamily(repository),
+    syncStrategyLabel: describeDoltRepoSourceSyncStrategy(syncStrategy),
+    workingCopy:
+      cloneMode === 'fresh_clone'
+        ? 'fresh clone per run'
+        : cloneMode === 'depth_1'
+          ? 'shallow clone reused'
+          : 'reused across runs'
+  };
+}
+
+function resolveMockDoltRepoSourceProfile(repository) {
+  switch (repository) {
+    case 'post-no-preference/earnings':
+      return {
+        repoFamily: 'earnings',
+        previousCommit: '92fd7ac',
+        currentCommit: 'a34ef9c'
+      };
+    case 'post-no-preference/options':
+      return {
+        repoFamily: 'options',
+        previousCommit: 'ac31f0b',
+        currentCommit: 'b91c2aa'
+      };
+    case 'post-no-preference/rates':
+      return {
+        repoFamily: 'rates',
+        previousCommit: 'c83f10d',
+        currentCommit: 'd0f61b4'
+      };
+    default:
+      return null;
+  }
+}
+
+function resolveMockCheckpointReadState(config = {}) {
+  const sourceRepo =
+    typeof config?.source_repo === 'string' && config.source_repo.trim()
+      ? config.source_repo.trim()
+      : DEFAULT_CHECKPOINT_READ_SOURCE_REPO;
+  const branch =
+    typeof config?.branch === 'string' && config.branch.trim()
+      ? config.branch.trim()
+      : DEFAULT_CHECKPOINT_READ_BRANCH;
+  const checkpointTable =
+    typeof config?.checkpoint_table === 'string' && config.checkpoint_table.trim()
+      ? config.checkpoint_table.trim()
+      : DEFAULT_CHECKPOINT_READ_TABLE;
+  const emitBootstrapMarkerIfMissing =
+    typeof config?.emit_bootstrap_marker_if_missing === 'boolean'
+      ? config.emit_bootstrap_marker_if_missing
+      : DEFAULT_CHECKPOINT_READ_EMIT_BOOTSTRAP_MARKER_IF_MISSING;
+  const failOnStaleCheckpoint =
+    typeof config?.fail_on_stale_checkpoint === 'boolean'
+      ? config.fail_on_stale_checkpoint
+      : DEFAULT_CHECKPOINT_READ_FAIL_ON_STALE_CHECKPOINT;
+  const profile = resolveMockDoltRepoSourceProfile(sourceRepo);
+
+  if (!profile) {
+    return {
+      branch,
+      checkpointTable,
+      emitBootstrapMarkerIfMissing,
+      failOnStaleCheckpoint,
+      hasCheckpoint: false,
+      lastIngestMode: emitBootstrapMarkerIfMissing
+        ? 'bootstrap_pending'
+        : 'checkpoint_required',
+      lastSuccessAt: null,
+      lastSyncedCommit: null,
+      scopeLabel: 'repo checkpoint',
+      sourceRepo,
+      staleCheckpoint: false
+    };
+  }
+
+  return {
+    branch,
+    checkpointTable,
+    emitBootstrapMarkerIfMissing,
+    failOnStaleCheckpoint,
+    hasCheckpoint: true,
+    lastIngestMode:
+      sourceRepo === 'post-no-preference/earnings' ? 'bootstrap_refresh' : 'recurring_delta',
+    lastSuccessAt:
+      sourceRepo === 'post-no-preference/options'
+        ? '2026-06-08T14:22:11Z'
+        : sourceRepo === 'post-no-preference/rates'
+          ? '2026-06-08T09:15:42Z'
+          : '2026-06-07T18:04:09Z',
+    lastSyncedCommit: profile.previousCommit ?? null,
+    scopeLabel: 'repo checkpoint',
+    sourceRepo,
+    staleCheckpoint: false
+  };
+}
+
+function describeDoltRepoSourceSyncStrategy(syncStrategy) {
+  switch (syncStrategy) {
+    case 'clone_only':
+      return 'clone only on bootstrap';
+    case 'manual':
+      return 'manual sync only';
+    default:
+      return 'pull before execution';
+  }
+}
+
+function buildCheckpointReadRuntimeSummary(config) {
+  const checkpointState = resolveMockCheckpointReadState(config);
+
+  return {
+    checkpointTable: checkpointState.checkpointTable,
+    lastIngestMode: humanizeToken(checkpointState.lastIngestMode),
+    lastSuccessAt: checkpointState.lastSuccessAt ?? 'bootstrap pending',
+    lastSyncedCommit: checkpointState.lastSyncedCommit ?? 'bootstrap pending',
+    scopeLabel: checkpointState.scopeLabel,
+    sourceRepo: checkpointState.sourceRepo
+  };
+}
+
+function buildCheckpointWriteRuntimeSummary(config, workflow, nodeId) {
+  const checkpointContext = resolveConnectedCheckpointWritePanelContext(workflow, nodeId);
+
+  return {
+    checkpointTable:
+      typeof config?.checkpoint_table === 'string' && config.checkpoint_table.trim()
+        ? config.checkpoint_table.trim()
+        : DEFAULT_CHECKPOINT_WRITE_TABLE,
+    commitSource:
+      config?.commit_source === 'metadata.current_commit'
+        ? 'metadata.current_commit'
+        : DEFAULT_CHECKPOINT_WRITE_COMMIT_SOURCE,
+    currentCommit: checkpointContext?.currentCommit ?? 'pending_merge',
+    lastIngestMode:
+      checkpointContext?.previousCommit == null ? 'Bootstrap Refresh' : 'Recurring Delta',
+    repository: checkpointContext?.repository ?? DEFAULT_DOLT_REPO_SOURCE_REPOSITORY,
+    scopeLabel: checkpointContext?.scopeLabel ?? 'Repo + branch',
+    sourceTablesLabel:
+      checkpointContext?.sourceTables?.length > 0
+        ? checkpointContext.sourceTables.length === 1
+          ? checkpointContext.sourceTables[0]
+          : `${checkpointContext.sourceTables[0]} +${checkpointContext.sourceTables.length - 1} more`
+        : 'awaiting durable table',
+    writeGateLabel:
+      config?.only_persist_on_full_success === false
+        ? config?.advance_on_partial_success
+          ? 'Partial success allowed'
+          : 'Durable success'
+        : 'Full success only',
+    writeTimingLabel:
+      config?.write_timing === 'after_quality_gate'
+        ? 'After quality gate'
+        : 'After merge success'
+  };
+}
+
+function buildQualityCheckRuntimeSummary(config, workflow, nodeId) {
+  const qualityContext = resolveConnectedQualityCheckPanelContext(workflow, nodeId);
+  const qualityState = resolveMockQualityCheckPanelState(config, qualityContext);
+  const sourceTables = qualityContext?.sourceTables ?? [];
+
+  return {
+    approvedTablesLabel:
+      sourceTables.length === 0
+        ? 'awaiting durable table'
+        : sourceTables.length === 1
+          ? sourceTables[0]
+          : `${sourceTables[0]} +${sourceTables.length - 1} more`,
+    currentCommit: qualityContext?.currentCommit ?? 'pending_sync',
+    gateLabel:
+      config?.block_checkpoint_write_on_failure === false
+        ? 'publish only'
+        : 'checkpoint + publish',
+    gateStatusLabel:
+      qualityState.gate_status === 'fail'
+        ? 'Fail'
+        : qualityState.gate_status === 'warn'
+          ? 'Warn'
+          : 'Pass',
+    lastResultLabel:
+      qualityState.failing_rules.length > 0
+        ? `${qualityState.failing_rules.length} failure${qualityState.failing_rules.length === 1 ? '' : 's'}`
+        : qualityState.warning_rules.length > 0
+          ? `${qualityState.warning_rules.length} warning${qualityState.warning_rules.length === 1 ? '' : 's'}`
+          : 'All checks passed',
+    repository: qualityContext?.repository ?? DEFAULT_DOLT_REPO_SOURCE_REPOSITORY,
+    scopeLabel: qualityContext?.scopeLabel ?? 'repo + branch',
+    sourceTablesLabel:
+      sourceTables.length === 0
+        ? 'awaiting durable table'
+        : sourceTables.length === 1
+          ? sourceTables[0]
+          : `${sourceTables[0]} +${sourceTables.length - 1} more`,
+    suitePresetLabel: describeQualityCheckSuitePreset(config?.suite_preset),
+    warningBudgetLabel: `${qualityState.warning_budget} warning${qualityState.warning_budget === 1 ? '' : 's'}`
+  };
+}
+
+function buildDoltRepoSyncRuntimeSummary(config, workflow, nodeId) {
+  const sourceConfig = resolveConnectedDoltRepoSourcePanelConfig(workflow, nodeId);
+  const checkpointContext = resolveConnectedCheckpointReadPanelContext(workflow, nodeId);
+  const repository =
+    typeof sourceConfig?.repository === 'string' && sourceConfig.repository.trim()
+      ? sourceConfig.repository.trim()
+      : DEFAULT_DOLT_REPO_SOURCE_REPOSITORY;
+  const profile = resolveMockDoltRepoSourceProfile(repository);
+  const checkoutRef =
+    typeof sourceConfig?.checkout_ref === 'string' && sourceConfig.checkout_ref.trim()
+      ? sourceConfig.checkout_ref.trim()
+      : null;
+
+  return {
+    currentCommit: checkoutRef
+      ? checkoutRef.slice(0, 12)
+      : profile?.currentCommit ?? 'pending_sync',
+    checkpointSourceLabel: checkpointContext?.lastSyncedCommit
+      ? 'checkpoint_context.last_synced_commit'
+      : checkpointContext
+        ? 'bootstrap marker'
+        : 'mock repo baseline',
+    previousCommit: checkpointContext
+      ? checkpointContext.lastSyncedCommit ?? 'pending_checkpoint'
+      : profile?.previousCommit ?? 'pending_checkpoint',
+    repoFamily: profile?.repoFamily ?? deriveDoltRepoSourceRepoFamily(repository),
+    repository,
+    syncActionLabel: describeDoltRepoSyncAction(config?.sync_action),
+  };
+}
+
+function buildDoltChangeManifestRuntimeSummary(config, workflow, nodeId) {
+  const syncContext = resolveConnectedDoltRepoSyncPanelContext(workflow, nodeId);
+  const sourceConfig = syncContext?.sourceConfig ?? null;
+  const repository =
+    typeof sourceConfig?.repository === 'string' && sourceConfig.repository.trim()
+      ? sourceConfig.repository.trim()
+      : DEFAULT_DOLT_REPO_SOURCE_REPOSITORY;
+  const profile = resolveMockDoltRepoSourceProfile(repository);
+  const checkoutRef =
+    typeof sourceConfig?.checkout_ref === 'string' && sourceConfig.checkout_ref.trim()
+      ? sourceConfig.checkout_ref.trim()
+      : null;
+  const manifestProfile = resolveMockDoltChangeManifestProfile(repository);
+  const changedTables = filterDoltChangeManifestTablesForScope(
+    manifestProfile?.changedTables ?? [],
+    config?.table_scope,
+    config?.selected_tables ?? []
+  );
+  const schemaFlaggedTables = filterDoltChangeManifestTablesForScope(
+    manifestProfile?.schemaChangedTables ?? [],
+    config?.table_scope,
+    config?.selected_tables ?? []
+  );
+
+  return {
+    changedTables,
+    currentCommit: checkoutRef
+      ? checkoutRef.slice(0, 12)
+      : profile?.currentCommit ?? 'pending_sync',
+    previousCommit: profile?.previousCommit ?? 'pending_checkpoint',
+    repoFamily: profile?.repoFamily ?? deriveDoltRepoSourceRepoFamily(repository),
+    repository,
+    schemaDriftLabel:
+      schemaFlaggedTables.length > 0
+        ? `${schemaFlaggedTables.length} table${schemaFlaggedTables.length === 1 ? '' : 's'} flagged`
+        : changedTables.length > 0
+          ? 'No drift'
+          : 'Pending scope',
+    scopeLabel:
+      config?.table_scope === 'allowlist'
+        ? config?.selected_tables?.length
+          ? `${config.selected_tables.length} selected`
+          : 'selected tables'
+        : 'all tables'
+  };
+}
+
+function buildDoltDumpRuntimeSummary(config, workflow, nodeId) {
+  const sourceContext = resolveConnectedDoltDumpPanelContext(workflow, nodeId);
+  const sourceConfig = sourceContext?.sourceConfig ?? null;
+  const repository =
+    typeof sourceConfig?.repository === 'string' && sourceConfig.repository.trim()
+      ? sourceConfig.repository.trim()
+      : DEFAULT_DOLT_REPO_SOURCE_REPOSITORY;
+  const profile = resolveMockDoltRepoSourceProfile(repository);
+  const manifestTables = sourceContext?.manifestTables ?? [];
+  const selectedTables = config?.selected_tables ?? [];
+
+  return {
+    formatLabel: config?.output_format === 'csv' ? 'csv' : 'parquet',
+    repoFamily: profile?.repoFamily ?? deriveDoltRepoSourceRepoFamily(repository),
+    repository,
+    scopeLabel:
+      config?.table_selection_mode === 'manual_tables'
+        ? selectedTables.length > 0
+          ? `${selectedTables.length} selected`
+          : 'selected tables'
+        : config?.table_selection_mode === 'prefer_manifest_scope' &&
+            sourceContext?.sourceTypeId === 'dolt_change_manifest'
+          ? manifestTables.length > 0
+            ? `${manifestTables.length} changed`
+            : 'changed tables'
+          : 'all tables',
+    sourceHandleLabel:
+      sourceContext?.sourceTypeId === 'dolt_change_manifest'
+        ? 'dataset_ref.manifest_ref'
+        : 'dataset_ref.repo_ref',
+    sourceKind:
+      sourceContext?.sourceTypeId === 'dolt_change_manifest'
+        ? 'change manifest'
+        : sourceContext?.sourceTypeId === 'dolt_repo_sync'
+          ? 'synced repo'
+          : 'repo handle'
+  };
+}
+
+function buildDoltDiffExportRuntimeSummary(config, workflow, nodeId) {
+  const sourceContext = resolveConnectedDoltDiffExportPanelContext(workflow, nodeId);
+  const sourceConfig = sourceContext?.sourceConfig ?? null;
+  const repository =
+    typeof sourceConfig?.repository === 'string' && sourceConfig.repository.trim()
+      ? sourceConfig.repository.trim()
+      : DEFAULT_DOLT_REPO_SOURCE_REPOSITORY;
+  const profile = resolveMockDoltRepoSourceProfile(repository);
+  const checkoutRef =
+    typeof sourceConfig?.checkout_ref === 'string' && sourceConfig.checkout_ref.trim()
+      ? sourceConfig.checkout_ref.trim()
+      : null;
+  const manifestTables = sourceContext?.manifestTables ?? [];
+  const currentCommit = checkoutRef
+    ? checkoutRef.slice(0, 12)
+    : profile?.currentCommit ?? 'pending_sync';
+  const previousCommit = profile?.previousCommit ?? 'pending_checkpoint';
+  const deleteRowsPresent = sourceContext?.rowSummaries?.some(
+    (summary) => summary.removed > 0
+  ) ?? false;
+
+  return {
+    currentCommit,
+    deleteRowsLabel: deleteRowsPresent ? 'present in manifest' : 'none flagged',
+    filterLabel: describeDoltDiffExportChangeFilter(config?.change_filter),
+    rangeLabel: `${previousCommit} -> ${currentCommit}`,
+    repoFamily: profile?.repoFamily ?? deriveDoltRepoSourceRepoFamily(repository),
+    repository,
+    scopeLabel:
+      manifestTables.length > 0
+        ? `${manifestTables.length} table${manifestTables.length === 1 ? '' : 's'}`
+        : 'awaiting manifest',
+    deletedRowHandlingLabel: describeDoltDiffExportDeletedRowHandling(
+      config?.deleted_row_handling
+    )
+  };
+}
+
+function buildLoadToDuckDbRuntimeSummary(config, workflow, nodeId) {
+  const sourceContext = resolveConnectedLoadToDuckDbPanelContext(workflow, nodeId);
+  const repository =
+    typeof sourceContext?.repository === 'string' && sourceContext.repository.trim()
+      ? sourceContext.repository.trim()
+      : DEFAULT_DOLT_REPO_SOURCE_REPOSITORY;
+  const loadedTableCount = sourceContext?.loadedTableCount ?? 0;
+
+  return {
+    bundleModeLabel:
+      sourceContext?.sourceTypeId === 'dolt_diff_export'
+        ? 'delta bundle'
+        : sourceContext?.sourceTypeId === 'dolt_dump'
+          ? 'snapshot bundle'
+          : 'dump + diff bundles',
+    loadedTablesLabel:
+      loadedTableCount > 0
+        ? `${loadedTableCount} table${loadedTableCount === 1 ? '' : 's'}`
+        : 'awaiting bundle',
+    mergeContextLabel:
+      sourceContext?.sourceTypeId === 'dolt_diff_export'
+        ? `${sourceContext.previousCommit ?? 'pending_checkpoint'} -> ${sourceContext.currentCommit ?? 'pending_sync'}`
+        : sourceContext?.currentCommit ?? 'load manifest',
+    repository,
+    sourceTypeLabel:
+      sourceContext?.sourceTypeId === 'dolt_diff_export'
+        ? 'dolt_diff_export bundle'
+        : sourceContext?.sourceTypeId === 'dolt_dump'
+          ? 'dolt_dump bundle'
+          : 'auto-detect at runtime',
+    targetSchema:
+      typeof config?.target_schema === 'string' && config.target_schema.trim()
+        ? config.target_schema.trim()
+        : DEFAULT_LOAD_TO_DUCKDB_TARGET_SCHEMA
+  };
+}
+
+function buildTableMergeRuntimeSummary(config, workflow, nodeId) {
+  const sourceContext = resolveConnectedTableMergePanelContext(workflow, nodeId);
+  const sourceTables = sourceContext?.sourceTables ?? [];
+
+  return {
+    deleteHandlingLabel: describeTableMergeDeleteHandling(config?.delete_handling),
+    mergeKeyLabel:
+      sourceTables.length > 0 && config?.merge_key_columns?.length > 0
+        ? config.merge_key_columns.join(', ')
+        : config?.merge_key_columns?.length > 0
+          ? config.merge_key_columns.join(', ')
+          : 'No merge key',
+    schemaDriftLabel: describeTableMergeSchemaDriftBehavior(
+      config?.schema_drift_behavior
+    ),
+    sourceTablesLabel:
+      sourceTables.length === 0
+        ? 'awaiting staged tables'
+        : sourceTables.length === 1
+          ? sourceTables[0]
+          : `${sourceTables[0]} +${sourceTables.length - 1} more`,
+    targetSchema:
+      typeof config?.target_schema === 'string' && config.target_schema.trim()
+        ? config.target_schema.trim()
+        : DEFAULT_TABLE_MERGE_TARGET_SCHEMA,
+    writePolicyLabel: describeTableMergeWritePolicy(config?.write_policy)
+  };
+}
+
+function resolveConnectedDoltRepoSourcePanelConfig(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return null;
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'repo'
+  );
+  if (!incomingEdge) {
+    return null;
+  }
+
+  const sourceNode = workflow.nodes?.find(
+    (node) =>
+      node.node_id === incomingEdge.source_node_id && node.type_id === 'dolt_repo_source'
+  );
+
+  return sourceNode?.config ?? null;
+}
+
+function resolveConnectedDoltRepoSyncPanelContext(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return null;
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'repo'
+  );
+  if (!incomingEdge) {
+    return null;
+  }
+
+  const syncNode = workflow.nodes?.find(
+    (node) =>
+      node.node_id === incomingEdge.source_node_id && node.type_id === 'dolt_repo_sync'
+  );
+  if (!syncNode) {
+    return null;
+  }
+
+  return {
+    checkpointContext: resolveConnectedCheckpointReadPanelContext(workflow, syncNode.node_id),
+    sourceConfig: resolveConnectedDoltRepoSourcePanelConfig(workflow, syncNode.node_id),
+    syncConfig: syncNode.config ?? {}
+  };
+}
+
+function resolveConnectedCheckpointReadPanelContext(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return null;
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'checkpoint'
+  );
+  if (!incomingEdge) {
+    return null;
+  }
+
+  const sourceNode = workflow.nodes?.find(
+    (node) =>
+      node.node_id === incomingEdge.source_node_id && node.type_id === 'checkpoint_read'
+  );
+  if (!sourceNode) {
+    return null;
+  }
+
+  return resolveMockCheckpointReadState(sourceNode.config ?? {});
+}
+
+function resolveConnectedCheckpointWritePanelContext(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return null;
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'table'
+  );
+  if (!incomingEdge) {
+    return null;
+  }
+
+  const sourceNode = workflow.nodes?.find((node) => node.node_id === incomingEdge.source_node_id);
+  if (!sourceNode) {
+    return null;
+  }
+
+  if (sourceNode.type_id === 'table_merge') {
+    const mergeContext = resolveConnectedTableMergePanelContext(workflow, sourceNode.node_id);
+    const loadContext = resolveConnectedLoadToDuckDbPanelContext(workflow, sourceNode.node_id);
+
+    return {
+      branch: loadContext?.branch ?? DEFAULT_DOLT_REPO_SOURCE_BRANCH,
+      currentCommit: loadContext?.currentCommit ?? 'pending_sync',
+      previousCommit: loadContext?.previousCommit ?? null,
+      repository: loadContext?.repository ?? DEFAULT_DOLT_REPO_SOURCE_REPOSITORY,
+      scopeLabel: 'Repo + branch',
+      sourceTables: mergeContext?.sourceTables ?? []
+    };
+  }
+
+  if (sourceNode.type_id === 'quality_check') {
+    const qualityContext = resolveConnectedQualityCheckPanelContext(workflow, sourceNode.node_id);
+    if (!qualityContext) {
+      return null;
+    }
+
+    return {
+      branch: qualityContext.branch ?? DEFAULT_DOLT_REPO_SOURCE_BRANCH,
+      currentCommit: qualityContext.currentCommit ?? 'pending_sync',
+      previousCommit: qualityContext.previousCommit ?? null,
+      repository: qualityContext.repository ?? DEFAULT_DOLT_REPO_SOURCE_REPOSITORY,
+      scopeLabel: qualityContext.scopeLabel ?? 'Repo + branch',
+      sourceTables: qualityContext.sourceTables ?? []
+    };
+  }
+
+  return null;
+}
+
+function resolveConnectedQualityCheckPanelContext(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return null;
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'table'
+  );
+  if (!incomingEdge) {
+    return null;
+  }
+
+  const sourceNode = workflow.nodes?.find((node) => node.node_id === incomingEdge.source_node_id);
+  if (!sourceNode || sourceNode.type_id !== 'table_merge') {
+    return null;
+  }
+
+  const loadContext = resolveConnectedLoadToDuckDbPanelContext(workflow, sourceNode.node_id);
+  const mergeContext = resolveConnectedTableMergePanelContext(workflow, sourceNode.node_id);
+
+  return {
+    branch: loadContext?.branch ?? DEFAULT_DOLT_REPO_SOURCE_BRANCH,
+    currentCommit: loadContext?.currentCommit ?? 'pending_sync',
+    previousCommit: loadContext?.previousCommit ?? null,
+    repository: loadContext?.repository ?? DEFAULT_DOLT_REPO_SOURCE_REPOSITORY,
+    scopeLabel: 'Repo + branch',
+    sourceTables: mergeContext?.sourceTables ?? []
+  };
+}
+
+function resolveMockQualityCheckPanelState(config = {}, context = null) {
+  const repository =
+    typeof context?.repository === 'string' && context.repository.trim()
+      ? context.repository.trim()
+      : DEFAULT_DOLT_REPO_SOURCE_REPOSITORY;
+  const warningBudget = normalizeQualityCheckWarningBudget(config?.warning_budget);
+  const allowWarningOnlyRunsToContinue =
+    config?.allow_warning_only_runs_to_continue !== false;
+  const blockCheckpointWriteOnFailure =
+    config?.block_checkpoint_write_on_failure !== false;
+  const suitePreset =
+    config?.suite_preset === 'custom_rule_bundle'
+      ? 'custom_rule_bundle'
+      : DEFAULT_QUALITY_CHECK_SUITE_PRESET;
+
+  if (repository === 'post-no-preference/earnings') {
+    return {
+      allow_warning_only_runs_to_continue: allowWarningOnlyRunsToContinue,
+      block_checkpoint_write_on_failure: blockCheckpointWriteOnFailure,
+      failing_rules: [],
+      gate_status: 'warn',
+      suite_preset: suitePreset,
+      warning_budget: warningBudget,
+      warning_rules: ['freshness lag', 'soft schema drift note']
+    };
+  }
+
+  return {
+    allow_warning_only_runs_to_continue: allowWarningOnlyRunsToContinue,
+    block_checkpoint_write_on_failure: blockCheckpointWriteOnFailure,
+    failing_rules: [],
+    gate_status: 'pass',
+    suite_preset: suitePreset,
+    warning_budget: warningBudget,
+    warning_rules: []
+  };
+}
+
+function resolveConnectedDoltDumpPanelContext(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return null;
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'repo'
+  );
+  if (!incomingEdge) {
+    return null;
+  }
+
+  const sourceNode = workflow.nodes?.find((node) => node.node_id === incomingEdge.source_node_id);
+  if (!sourceNode) {
+    return null;
+  }
+
+  if (sourceNode.type_id === 'dolt_repo_source') {
+    return {
+      manifestTables: [],
+      sourceConfig: sourceNode.config ?? null,
+      sourceTypeId: sourceNode.type_id
+    };
+  }
+
+  if (sourceNode.type_id === 'dolt_repo_sync') {
+    return {
+      manifestTables: [],
+      sourceConfig: resolveConnectedDoltRepoSourcePanelConfig(workflow, sourceNode.node_id),
+      sourceTypeId: sourceNode.type_id
+    };
+  }
+
+  if (sourceNode.type_id === 'dolt_change_manifest') {
+    const syncContext = resolveConnectedDoltRepoSyncPanelContext(workflow, sourceNode.node_id);
+    const sourceConfig = syncContext?.sourceConfig ?? null;
+    const repository =
+      typeof sourceConfig?.repository === 'string' && sourceConfig.repository.trim()
+        ? sourceConfig.repository.trim()
+        : DEFAULT_DOLT_REPO_SOURCE_REPOSITORY;
+    const manifestProfile = resolveMockDoltChangeManifestProfile(repository);
+    const manifestTables = filterDoltChangeManifestTablesForScope(
+      manifestProfile?.changedTables ?? [],
+      sourceNode.config?.table_scope,
+      normalizeDoltChangeManifestSelectedTables(sourceNode.config?.selected_tables)
+    );
+
+    return {
+      manifestTables,
+      sourceConfig,
+      sourceTypeId: sourceNode.type_id
+    };
+  }
+
+  return null;
+}
+
+function resolveConnectedDoltDiffExportPanelContext(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return null;
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'manifest'
+  );
+  if (!incomingEdge) {
+    return null;
+  }
+
+  const sourceNode = workflow.nodes?.find(
+    (node) =>
+      node.node_id === incomingEdge.source_node_id && node.type_id === 'dolt_change_manifest'
+  );
+  if (!sourceNode) {
+    return null;
+  }
+
+  const syncContext = resolveConnectedDoltRepoSyncPanelContext(workflow, sourceNode.node_id);
+  const sourceConfig = syncContext?.sourceConfig ?? null;
+  const repository =
+    typeof sourceConfig?.repository === 'string' && sourceConfig.repository.trim()
+      ? sourceConfig.repository.trim()
+      : DEFAULT_DOLT_REPO_SOURCE_REPOSITORY;
+  const manifestProfile = resolveMockDoltChangeManifestProfile(repository);
+  const manifestTables = filterDoltChangeManifestTablesForScope(
+    manifestProfile?.changedTables ?? [],
+    sourceNode.config?.table_scope,
+    normalizeDoltChangeManifestSelectedTables(sourceNode.config?.selected_tables)
+  );
+  const rowSummaryByTable = manifestProfile?.rowChangeSummary ?? {};
+  const rowSummaries = manifestTables.map((tableName) => ({
+    added: rowSummaryByTable[tableName]?.added ?? 0,
+    modified: rowSummaryByTable[tableName]?.modified ?? 0,
+    removed: rowSummaryByTable[tableName]?.removed ?? 0,
+    tableName
+  }));
+
+  return {
+    manifestTables,
+    rowSummaries,
+    sourceConfig
+  };
+}
+
+function resolveConnectedLoadToDuckDbPanelContext(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return null;
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'bundle'
+  );
+  if (!incomingEdge) {
+    return null;
+  }
+
+  const sourceNode = workflow.nodes?.find((node) => node.node_id === incomingEdge.source_node_id);
+  if (!sourceNode) {
+    return null;
+  }
+
+  if (sourceNode.type_id === 'dolt_dump') {
+    const dumpContext = resolveConnectedDoltDumpPanelContext(workflow, sourceNode.node_id);
+    return {
+      branch:
+        typeof dumpContext?.sourceConfig?.branch === 'string' &&
+        dumpContext.sourceConfig.branch.trim()
+          ? dumpContext.sourceConfig.branch.trim()
+          : DEFAULT_DOLT_REPO_SOURCE_BRANCH,
+      currentCommit: resolveLoadToDuckDbCurrentCommit(dumpContext?.sourceConfig),
+      loadedTableCount: resolveLoadToDuckDbDumpTableCount(sourceNode.config, dumpContext),
+      repository: dumpContext?.sourceConfig?.repository ?? DEFAULT_DOLT_REPO_SOURCE_REPOSITORY,
+      sourceTypeId: sourceNode.type_id
+    };
+  }
+
+  if (sourceNode.type_id === 'dolt_diff_export') {
+    const diffContext = resolveConnectedDoltDiffExportPanelContext(workflow, sourceNode.node_id);
+    return {
+      branch:
+        typeof diffContext?.sourceConfig?.branch === 'string' &&
+        diffContext.sourceConfig.branch.trim()
+          ? diffContext.sourceConfig.branch.trim()
+          : DEFAULT_DOLT_REPO_SOURCE_BRANCH,
+      currentCommit: resolveLoadToDuckDbCurrentCommit(diffContext?.sourceConfig),
+      loadedTableCount: diffContext?.manifestTables?.length ?? 0,
+      previousCommit: resolveLoadToDuckDbPreviousCommit(diffContext?.sourceConfig),
+      repository: diffContext?.sourceConfig?.repository ?? DEFAULT_DOLT_REPO_SOURCE_REPOSITORY,
+      sourceTypeId: sourceNode.type_id
+    };
+  }
+
+  return null;
+}
+
+function resolveConnectedLoadToDuckDbPanelTableNames(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return [];
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'bundle'
+  );
+  if (!incomingEdge) {
+    return [];
+  }
+
+  const sourceNode = workflow.nodes?.find((node) => node.node_id === incomingEdge.source_node_id);
+  if (!sourceNode) {
+    return [];
+  }
+
+  if (sourceNode.type_id === 'dolt_dump') {
+    const dumpContext = resolveConnectedDoltDumpPanelContext(workflow, sourceNode.node_id);
+    const repository =
+      typeof dumpContext?.sourceConfig?.repository === 'string' &&
+      dumpContext.sourceConfig.repository.trim()
+        ? dumpContext.sourceConfig.repository.trim()
+        : DEFAULT_DOLT_REPO_SOURCE_REPOSITORY;
+
+    if (sourceNode.config?.table_selection_mode === 'manual_tables') {
+      return normalizeDoltDumpSelectedTables(sourceNode.config?.selected_tables);
+    }
+
+    if (
+      sourceNode.config?.table_selection_mode === 'prefer_manifest_scope' &&
+      dumpContext?.sourceTypeId === 'dolt_change_manifest'
+    ) {
+      return dumpContext?.manifestTables ?? [];
+    }
+
+    return mockDoltDumpTableCatalog(repository);
+  }
+
+  if (sourceNode.type_id === 'dolt_diff_export') {
+    return resolveConnectedDoltDiffExportPanelContext(workflow, sourceNode.node_id)?.manifestTables ?? [];
+  }
+
+  return [];
+}
+
+function resolveConnectedTableMergePanelContext(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return null;
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'table'
+  );
+  if (!incomingEdge) {
+    return null;
+  }
+
+  const sourceNode = workflow.nodes?.find((node) => node.node_id === incomingEdge.source_node_id);
+  if (!sourceNode) {
+    return null;
+  }
+
+  if (sourceNode.type_id === 'load_to_duckdb') {
+    const sourceConfig = normalizeLoadToDuckDbPanelConfig(sourceNode);
+
+    return {
+      sourceSchema: sourceConfig.target_schema,
+      sourceTables: resolveConnectedLoadToDuckDbPanelTableNames(workflow, sourceNode.node_id),
+      sourceTypeId: sourceNode.type_id
+    };
+  }
+
+  if (sourceNode.type_id === 'table_input') {
+    const sourceConfig = normalizeTableInputPanelConfig(sourceNode);
+
+    return {
+      sourceSchema: sourceConfig.schema_name,
+      sourceTables: [sourceConfig.table_name],
+      sourceTypeId: sourceNode.type_id
+    };
+  }
+
+  return null;
+}
+
+function resolveLoadToDuckDbCurrentCommit(sourceConfig) {
+  const repository =
+    typeof sourceConfig?.repository === 'string' && sourceConfig.repository.trim()
+      ? sourceConfig.repository.trim()
+      : DEFAULT_DOLT_REPO_SOURCE_REPOSITORY;
+  const profile = resolveMockDoltRepoSourceProfile(repository);
+  const checkoutRef =
+    typeof sourceConfig?.checkout_ref === 'string' && sourceConfig.checkout_ref.trim()
+      ? sourceConfig.checkout_ref.trim()
+      : '';
+
+  return checkoutRef ? checkoutRef.slice(0, 12) : profile?.currentCommit ?? 'pending_sync';
+}
+
+function resolveLoadToDuckDbPreviousCommit(sourceConfig) {
+  const repository =
+    typeof sourceConfig?.repository === 'string' && sourceConfig.repository.trim()
+      ? sourceConfig.repository.trim()
+      : DEFAULT_DOLT_REPO_SOURCE_REPOSITORY;
+  const profile = resolveMockDoltRepoSourceProfile(repository);
+
+  return profile?.previousCommit ?? 'pending_checkpoint';
+}
+
+function resolveLoadToDuckDbDumpTableCount(config, sourceContext) {
+  if (!sourceContext) {
+    return 0;
+  }
+
+  const repository =
+    typeof sourceContext?.sourceConfig?.repository === 'string' &&
+    sourceContext.sourceConfig.repository.trim()
+      ? sourceContext.sourceConfig.repository.trim()
+      : DEFAULT_DOLT_REPO_SOURCE_REPOSITORY;
+  const selectedTables = normalizeDoltDumpSelectedTables(config?.selected_tables);
+
+  if (config?.table_selection_mode === 'manual_tables') {
+    return selectedTables.length;
+  }
+
+  if (
+    config?.table_selection_mode === 'prefer_manifest_scope' &&
+    sourceContext?.sourceTypeId === 'dolt_change_manifest'
+  ) {
+    return sourceContext.manifestTables?.length ?? 0;
+  }
+
+  return mockDoltDumpTableCatalog(repository).length;
+}
+
+function describeDoltRepoSyncAction(syncAction) {
+  switch (syncAction) {
+    case 'fetch_and_checkout':
+      return 'fetch and checkout';
+    case 'refresh_checkout':
+      return 'refresh checkout';
+    default:
+      return 'pull remote head';
+  }
+}
+
+function describeDoltDiffExportChangeFilter(changeFilter) {
+  switch (changeFilter) {
+    case 'non_delete_changes':
+      return 'Non-delete changes';
+    case 'added_only':
+      return 'Added only';
+    case 'modified_only':
+      return 'Modified only';
+    case 'removed_only':
+      return 'Removed only';
+    default:
+      return 'All changes';
+  }
+}
+
+function describeDoltDiffExportDeletedRowHandling(deletedRowHandling) {
+  switch (deletedRowHandling) {
+    case 'omit_delete_rows':
+      return 'Omit delete rows';
+    default:
+      return 'Emit delete markers';
+  }
+}
+
+function describeQualityCheckSuitePreset(suitePreset) {
+  switch (suitePreset) {
+    case 'custom_rule_bundle':
+      return 'Custom rule bundle';
+    default:
+      return 'Post-merge ingest gate';
+  }
+}
+
+function describeTableMergeWritePolicy(writePolicy) {
+  switch (writePolicy) {
+    case 'append_only':
+      return 'Append only';
+    case 'snapshot_replace':
+      return 'Snapshot replace';
+    default:
+      return 'Upsert';
+  }
+}
+
+function describeTableMergeDeleteHandling(deleteHandling) {
+  switch (deleteHandling) {
+    case 'ignore_delete_markers':
+      return 'Ignore delete markers';
+    default:
+      return 'Apply delete markers';
+  }
+}
+
+function describeTableMergeSchemaDriftBehavior(schemaDriftBehavior) {
+  switch (schemaDriftBehavior) {
+    case 'allow_additive_changes':
+      return 'Allow additive changes';
+    default:
+      return 'Fail and require review';
+  }
+}
+
+function normalizeDoltChangeManifestSelectedTables(value) {
+  if (Array.isArray(value)) {
+    return [...new Set(value.map((entry) => (typeof entry === 'string' ? entry.trim() : '')).filter(Boolean))];
+  }
+
+  if (typeof value === 'string') {
+    return [...new Set(value.split(',').map((entry) => entry.trim()).filter(Boolean))];
+  }
+
+  return [];
+}
+
+function normalizeDoltDumpSelectedTables(value) {
+  if (Array.isArray(value)) {
+    return [...new Set(value.map((entry) => (typeof entry === 'string' ? entry.trim() : '')).filter(Boolean))];
+  }
+
+  if (typeof value === 'string') {
+    return [...new Set(value.split(',').map((entry) => entry.trim()).filter(Boolean))];
+  }
+
+  return [];
+}
+
+function mockDoltDumpTableCatalog(repository) {
+  switch (repository) {
+    case 'post-no-preference/earnings':
+      return [
+        'balance_sheet_assets',
+        'balance_sheet_equity',
+        'balance_sheet_liabilities',
+        'cash_flow_statement',
+        'earnings_calendar',
+        'eps_estimate',
+        'eps_history',
+        'income_statement',
+        'rank_score',
+        'sales_estimate'
+      ];
+    case 'post-no-preference/options':
+      return ['option_chain', 'volatility_history'];
+    case 'post-no-preference/rates':
+      return ['us_treasury'];
+    default:
+      return [];
+  }
+}
+
+function resolveMockDoltChangeManifestProfile(repository) {
+  switch (repository) {
+    case 'post-no-preference/earnings':
+      return {
+        changedTables: ['earnings_calendar', 'eps_history', 'income_statement'],
+        rowChangeSummary: {
+          earnings_calendar: { added: 24, modified: 3, removed: 0 },
+          eps_history: { added: 18, modified: 5, removed: 0 },
+          income_statement: { added: 4, modified: 2, removed: 0 }
+        },
+        schemaChangedTables: ['income_statement']
+      };
+    case 'post-no-preference/options':
+      return {
+        changedTables: ['option_chain', 'volatility_history'],
+        rowChangeSummary: {
+          option_chain: { added: 440, modified: 182, removed: 17 },
+          volatility_history: { added: 32, modified: 4, removed: 0 }
+        },
+        schemaChangedTables: []
+      };
+    case 'post-no-preference/rates':
+      return {
+        changedTables: ['us_treasury'],
+        rowChangeSummary: {
+          us_treasury: { added: 6, modified: 1, removed: 0 }
+        },
+        schemaChangedTables: []
+      };
+    default:
+      return null;
+  }
+}
+
+function filterDoltChangeManifestTablesForScope(changedTables, tableScope, selectedTables) {
+  if (tableScope !== 'allowlist') {
+    return [...changedTables];
+  }
+
+  if (!Array.isArray(selectedTables) || selectedTables.length === 0) {
+    return [];
+  }
+
+  const selectedSet = new Set(selectedTables);
+  return changedTables.filter((tableName) => selectedSet.has(tableName));
+}
+
+function deriveDoltRepoSourceRepoFamily(repository) {
+  if (!repository) {
+    return 'repo';
+  }
+
+  const segments = repository
+    .split('/')
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  return segments[segments.length - 1] ?? 'repo';
 }
 
 function normalizeTableInputSelectedColumns(value) {
@@ -5233,6 +9533,32 @@ function buildTableOutputSchemaOptions(activeSchema) {
   return options;
 }
 
+function buildLoadToDuckDbSchemaOptions(activeSchema) {
+  const options = [{ label: 'Select schema', value: '' }, ...LOAD_TO_DUCKDB_SCHEMA_CHOICES];
+
+  if (activeSchema && !options.some((option) => option.value === activeSchema)) {
+    options.push({
+      label: activeSchema,
+      value: activeSchema
+    });
+  }
+
+  return options;
+}
+
+function buildTableMergeSchemaOptions(activeSchema) {
+  const options = [{ label: 'Select schema', value: '' }, ...TABLE_MERGE_SCHEMA_CHOICES];
+
+  if (activeSchema && !options.some((option) => option.value === activeSchema)) {
+    options.push({
+      label: activeSchema,
+      value: activeSchema
+    });
+  }
+
+  return options;
+}
+
 function buildTableOutputResultShape(config, workflow = null, nodeId = null) {
   if (config?.input_shape === 'table_schema') {
     const groups = buildTableOutputResultShapeGroups(config, workflow, nodeId);
@@ -5440,7 +9766,7 @@ function workflowSyncStateLabel(syncState) {
 function appendCanvasNode(workflow, typeId, options = {}) {
   const { position = null, selectedNodeId = null } = options;
 
-  if (!['text_input', 'table_input', 'table_schema', 'table_output', 'send_email'].includes(typeId)) {
+  if (!['text_input', 'dolt_repo_source', 'checkpoint_read', 'checkpoint_write', 'quality_check', 'dolt_repo_sync', 'dolt_change_manifest', 'dolt_dump', 'dolt_diff_export', 'load_to_duckdb', 'table_merge', 'table_input', 'table_schema', 'table_output', 'send_email'].includes(typeId)) {
     return null;
   }
 
@@ -5460,6 +9786,26 @@ function appendCanvasNode(workflow, typeId, options = {}) {
     label:
       typeId === 'text_input'
         ? 'Text Input'
+        : typeId === 'dolt_repo_source'
+          ? 'Dolt Repo Source'
+        : typeId === 'checkpoint_read'
+          ? 'Checkpoint Read'
+        : typeId === 'checkpoint_write'
+          ? 'Checkpoint Write'
+        : typeId === 'quality_check'
+          ? 'Quality Check'
+        : typeId === 'dolt_repo_sync'
+          ? 'Dolt Repo Sync'
+        : typeId === 'dolt_change_manifest'
+          ? 'Dolt Change Manifest'
+        : typeId === 'dolt_dump'
+          ? 'Dolt Dump'
+        : typeId === 'dolt_diff_export'
+          ? 'Dolt Diff Export'
+        : typeId === 'load_to_duckdb'
+          ? 'Load to DuckDB'
+        : typeId === 'table_merge'
+          ? 'Table Merge'
         : typeId === 'table_input'
           ? 'Table Input'
         : typeId === 'table_schema'
@@ -5479,6 +9825,128 @@ function appendCanvasNode(workflow, typeId, options = {}) {
             text: 'Draft the next message body here.',
             trim_mode: 'automatic'
           }
+        : typeId === 'dolt_repo_source'
+          ? {
+              branch: DEFAULT_DOLT_REPO_SOURCE_BRANCH,
+              checkout_ref: '',
+              clone_mode: DEFAULT_DOLT_REPO_SOURCE_CLONE_MODE,
+              connection_ref: DEFAULT_DOLT_REPO_SOURCE_CONNECTION_REF,
+              execution: {
+                wait_after_seconds: 0,
+                wait_before_seconds: 0
+              },
+              repository: DEFAULT_DOLT_REPO_SOURCE_REPOSITORY,
+              sync_strategy: DEFAULT_DOLT_REPO_SOURCE_SYNC_STRATEGY
+            }
+        : typeId === 'checkpoint_read'
+          ? {
+              branch: DEFAULT_CHECKPOINT_READ_BRANCH,
+              checkpoint_table: DEFAULT_CHECKPOINT_READ_TABLE,
+              emit_bootstrap_marker_if_missing:
+                DEFAULT_CHECKPOINT_READ_EMIT_BOOTSTRAP_MARKER_IF_MISSING,
+              execution: {
+                wait_after_seconds: 0,
+                wait_before_seconds: 0
+              },
+              fail_on_stale_checkpoint: DEFAULT_CHECKPOINT_READ_FAIL_ON_STALE_CHECKPOINT,
+              source_repo: DEFAULT_CHECKPOINT_READ_SOURCE_REPO
+            }
+        : typeId === 'checkpoint_write'
+          ? {
+              advance_on_partial_success:
+                DEFAULT_CHECKPOINT_WRITE_ADVANCE_ON_PARTIAL_SUCCESS,
+              checkpoint_table: DEFAULT_CHECKPOINT_WRITE_TABLE,
+              commit_source: DEFAULT_CHECKPOINT_WRITE_COMMIT_SOURCE,
+              execution: {
+                wait_after_seconds: 0,
+                wait_before_seconds: 0
+              },
+              only_persist_on_full_success:
+                DEFAULT_CHECKPOINT_WRITE_ONLY_PERSIST_ON_FULL_SUCCESS,
+              write_timing: DEFAULT_CHECKPOINT_WRITE_TIMING
+            }
+        : typeId === 'quality_check'
+          ? {
+              allow_warning_only_runs_to_continue:
+                DEFAULT_QUALITY_CHECK_ALLOW_WARNING_ONLY_RUNS_TO_CONTINUE,
+              block_checkpoint_write_on_failure:
+                DEFAULT_QUALITY_CHECK_BLOCK_CHECKPOINT_WRITE_ON_FAILURE,
+              execution: {
+                wait_after_seconds: 0,
+                wait_before_seconds: 0
+              },
+              null_key_policy: DEFAULT_QUALITY_CHECK_NULL_KEY_POLICY,
+              schema_drift_rule: DEFAULT_QUALITY_CHECK_SCHEMA_DRIFT_RULE,
+              suite_preset: DEFAULT_QUALITY_CHECK_SUITE_PRESET,
+              warning_budget: DEFAULT_QUALITY_CHECK_WARNING_BUDGET
+            }
+        : typeId === 'dolt_repo_sync'
+          ? {
+              branch_guard: DEFAULT_DOLT_REPO_SYNC_BRANCH_GUARD,
+              dirty_working_copy_policy: DEFAULT_DOLT_REPO_SYNC_DIRTY_WORKING_COPY_POLICY,
+              execution: {
+                wait_after_seconds: 0,
+                wait_before_seconds: 0
+              },
+              no_change_behavior: DEFAULT_DOLT_REPO_SYNC_NO_CHANGE_BEHAVIOR,
+              sync_action: DEFAULT_DOLT_REPO_SYNC_ACTION
+            }
+        : typeId === 'dolt_change_manifest'
+          ? {
+              execution: {
+                wait_after_seconds: 0,
+                wait_before_seconds: 0
+              },
+              schema_change_policy: DEFAULT_DOLT_CHANGE_MANIFEST_SCHEMA_CHANGE_POLICY,
+              selected_tables: [],
+              table_scope: DEFAULT_DOLT_CHANGE_MANIFEST_TABLE_SCOPE
+            }
+        : typeId === 'dolt_dump'
+          ? {
+              artifact_retention: DEFAULT_DOLT_DUMP_ARTIFACT_RETENTION,
+              execution: {
+                wait_after_seconds: 0,
+                wait_before_seconds: 0
+              },
+              output_directory_policy: DEFAULT_DOLT_DUMP_OUTPUT_DIRECTORY_POLICY,
+              output_format: DEFAULT_DOLT_DUMP_OUTPUT_FORMAT,
+              selected_tables: [],
+              table_selection_mode: DEFAULT_DOLT_DUMP_TABLE_SELECTION_MODE
+            }
+        : typeId === 'dolt_diff_export'
+          ? {
+              change_filter: DEFAULT_DOLT_DIFF_EXPORT_CHANGE_FILTER,
+              deleted_row_handling: DEFAULT_DOLT_DIFF_EXPORT_DELETED_ROW_HANDLING,
+              execution: {
+                wait_after_seconds: 0,
+                wait_before_seconds: 0
+              },
+              output_format: DEFAULT_DOLT_DIFF_EXPORT_OUTPUT_FORMAT
+            }
+        : typeId === 'load_to_duckdb'
+          ? {
+              delta_context_preservation:
+                DEFAULT_LOAD_TO_DUCKDB_DELTA_CONTEXT_PRESERVATION,
+              execution: {
+                wait_after_seconds: 0,
+                wait_before_seconds: 0
+              },
+              schema_handling: DEFAULT_LOAD_TO_DUCKDB_SCHEMA_HANDLING,
+              table_mapping: DEFAULT_LOAD_TO_DUCKDB_TABLE_MAPPING,
+              target_schema: DEFAULT_LOAD_TO_DUCKDB_TARGET_SCHEMA
+            }
+        : typeId === 'table_merge'
+          ? {
+              delete_handling: DEFAULT_TABLE_MERGE_DELETE_HANDLING,
+              execution: {
+                wait_after_seconds: 0,
+                wait_before_seconds: 0
+              },
+              merge_key_columns: [...DEFAULT_TABLE_MERGE_KEY_COLUMNS],
+              schema_drift_behavior: DEFAULT_TABLE_MERGE_SCHEMA_DRIFT_BEHAVIOR,
+              target_schema: DEFAULT_TABLE_MERGE_TARGET_SCHEMA,
+              write_policy: DEFAULT_TABLE_MERGE_WRITE_POLICY
+            }
         : typeId === 'table_input'
           ? {
               catalog: DEFAULT_TABLE_INPUT_CATALOG,
@@ -5562,10 +10030,10 @@ function appendCanvasNode(workflow, typeId, options = {}) {
             x: Math.max(
               80,
               selectedNode?.position?.x != null
-                ? selectedNode.position.x + (typeId === 'text_input' ? -380 : 380)
+                  ? selectedNode.position.x + (typeId === 'text_input' ? -380 : 380)
                 : typeId === 'send_email' || typeId === 'table_output'
                   ? 520
-                  : typeId === 'table_input' || typeId === 'table_schema'
+                : typeId === 'dolt_repo_source' || typeId === 'checkpoint_read' || typeId === 'checkpoint_write' || typeId === 'quality_check' || typeId === 'dolt_repo_sync' || typeId === 'dolt_change_manifest' || typeId === 'dolt_dump' || typeId === 'dolt_diff_export' || typeId === 'load_to_duckdb' || typeId === 'table_merge' || typeId === 'table_input' || typeId === 'table_schema'
                     ? 160
                   : 120
             ),
@@ -5583,6 +10051,42 @@ function appendCanvasNode(workflow, typeId, options = {}) {
 
 function buildCanvasStarterWorkflow() {
   return prepareCanvasWorkflow(cloneWorkflow(starterWorkflowFixture));
+}
+
+function normalizeCanvasWorkflow(workflow) {
+  if (
+    !workflow ||
+    typeof workflow !== 'object' ||
+    !Array.isArray(workflow.nodes) ||
+    !Array.isArray(workflow.edges)
+  ) {
+    return buildCanvasStarterWorkflow();
+  }
+
+  return prepareCanvasWorkflow(cloneWorkflow(workflow));
+}
+
+function extractCanvasWorkflowDefinition(response) {
+  if (response?.definition) {
+    return normalizeCanvasWorkflow(response.definition);
+  }
+
+  if (response?.workflow) {
+    const fallbackWorkflow = buildCanvasStarterWorkflow();
+    return normalizeCanvasWorkflow({
+      ...fallbackWorkflow,
+      workflow_id: response.workflow.workflow_id ?? fallbackWorkflow.workflow_id,
+      name: response.workflow.name ?? fallbackWorkflow.name,
+      description: response.workflow.description ?? fallbackWorkflow.description,
+      version: response.workflow.version ?? fallbackWorkflow.version
+    });
+  }
+
+  return buildCanvasStarterWorkflow();
+}
+
+function resolveCanvasWorkflowId(response, workflow) {
+  return response?.workflow?.workflow_id ?? workflow?.workflow_id ?? starterWorkflowFixture.workflow_id;
 }
 
 function prepareCanvasWorkflow(workflow) {

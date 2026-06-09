@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
+    path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -14,7 +15,7 @@ use api_contract::{
 };
 use chrono::Utc;
 use node_registry::NodeRegistry;
-use runtime_adapters::{AdapterError, PortValues, RuntimeAdapters};
+use runtime_adapters::{AdapterError, AdapterExecutionContext, PortValues, RuntimeAdapters};
 use serde_json::{json, Value};
 use thiserror::Error;
 use tokio::sync::{broadcast, Notify, RwLock};
@@ -30,6 +31,8 @@ pub struct RuntimeService {
     state: Arc<RwLock<RuntimeState>>,
     connections: Arc<Vec<ConnectionSummary>>,
 }
+
+pub const INTERNAL_PARAM_WORKFLOW_DUCKDB_PATH: &str = "__workflow_duckdb_path";
 
 struct RuntimeState {
     runs: HashMap<String, Arc<RunRecord>>,
@@ -385,9 +388,12 @@ impl RuntimeService {
 
         let runtime = self.clone();
         let workflow = request.workflow;
+        let run_params = request.params;
         let spawned_run_id = run_id.clone();
         tokio::spawn(async move {
-            runtime.execute_run(spawned_run_id, workflow).await;
+            runtime
+                .execute_run(spawned_run_id, workflow, run_params)
+                .await;
         });
 
         Ok(CreateRunResponse {
@@ -462,7 +468,12 @@ impl RuntimeService {
         Some(history)
     }
 
-    async fn execute_run(&self, run_id: String, workflow: WorkflowDefinition) {
+    async fn execute_run(
+        &self,
+        run_id: String,
+        workflow: WorkflowDefinition,
+        run_params: serde_json::Map<String, Value>,
+    ) {
         let Some(record) = self.get_record(&run_id).await else {
             return;
         };
@@ -500,6 +511,18 @@ impl RuntimeService {
             return;
         }
         self.mark_running(&record, &run_id).await;
+
+        let workflow_duckdb_path = run_params
+            .get(INTERNAL_PARAM_WORKFLOW_DUCKDB_PATH)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+        let execution_context = AdapterExecutionContext {
+            workflow_id: Some(workflow.workflow_id.clone()),
+            run_id: Some(run_id.clone()),
+            workflow_duckdb_path,
+        };
 
         let mut outputs = BTreeMap::<(String, String), workflow_schema::TypedValue>::new();
         for node_id in plan {
@@ -570,10 +593,13 @@ impl RuntimeService {
 
             let adapter_execution = {
                 let adapters = Arc::clone(&self.adapters);
+                let execution_context = execution_context.clone();
                 let definition = definition.clone();
                 let node = node.clone();
                 let inputs = inputs.clone();
-                task::spawn_blocking(move || adapters.execute(&definition, &node, &inputs))
+                task::spawn_blocking(move || {
+                    adapters.execute_with_context(&definition, &node, &inputs, &execution_context)
+                })
             };
             let cancellation = record.cancellation_notify.notified();
             tokio::pin!(cancellation);
@@ -1245,6 +1271,547 @@ fn validate_node_config(node: &WorkflowNode) -> Option<ValidationIssue> {
 
             None
         }
+        "dolt_repo_source" => {
+            let connection_ref = node.config.get("connection_ref").and_then(Value::as_str);
+            if connection_ref.map_or(true, |value| value.trim().is_empty()) {
+                return Some(issue(
+                    "invalid_dolt_repo_source_connection_ref",
+                    format!(
+                        "Node `{}` requires a non-empty string `connection_ref` config field.",
+                        node.node_id
+                    ),
+                    Some(format!(
+                        "workflow.nodes.{}.config.connection_ref",
+                        node.node_id
+                    )),
+                ));
+            }
+
+            let repository = node.config.get("repository").and_then(Value::as_str);
+            let Some(repository) = repository.map(str::trim).filter(|value| !value.is_empty())
+            else {
+                return Some(issue(
+                    "invalid_dolt_repo_source_repository",
+                    format!(
+                        "Node `{}` requires a non-empty string `repository` config field.",
+                        node.node_id
+                    ),
+                    Some(format!("workflow.nodes.{}.config.repository", node.node_id)),
+                ));
+            };
+
+            let repository_parts = repository
+                .split('/')
+                .map(str::trim)
+                .filter(|segment| !segment.is_empty())
+                .collect::<Vec<_>>();
+            if repository_parts.len() != 2 {
+                return Some(issue(
+                    "invalid_dolt_repo_source_repository",
+                    format!(
+                        "Node `{}` expects `repository` in `owner/repo` format.",
+                        node.node_id
+                    ),
+                    Some(format!("workflow.nodes.{}.config.repository", node.node_id)),
+                ));
+            }
+
+            let branch = node.config.get("branch").and_then(Value::as_str);
+            if branch.map_or(true, |value| value.trim().is_empty()) {
+                return Some(issue(
+                    "invalid_dolt_repo_source_branch",
+                    format!(
+                        "Node `{}` requires a non-empty string `branch` config field.",
+                        node.node_id
+                    ),
+                    Some(format!("workflow.nodes.{}.config.branch", node.node_id)),
+                ));
+            }
+
+            if let Some(checkout_ref) = node.config.get("checkout_ref") {
+                match checkout_ref.as_str() {
+                    Some(_) => {}
+                    None => {
+                        return Some(issue(
+                            "invalid_dolt_repo_source_checkout_ref",
+                            format!(
+                                "Node `{}` expects optional string `checkout_ref`.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.checkout_ref",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(clone_mode) = node.config.get("clone_mode") {
+                match clone_mode.as_str() {
+                    Some("reuse_local_copy" | "fresh_clone" | "depth_1") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_dolt_repo_source_clone_mode",
+                            format!(
+                                "Node `{}` has unsupported `clone_mode` value.",
+                                node.node_id
+                            ),
+                            Some(format!("workflow.nodes.{}.config.clone_mode", node.node_id)),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(sync_strategy) = node.config.get("sync_strategy") {
+                match sync_strategy.as_str() {
+                    Some("pull_before_execution" | "clone_only" | "manual") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_dolt_repo_source_sync_strategy",
+                            format!(
+                                "Node `{}` has unsupported `sync_strategy` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.sync_strategy",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            None
+        }
+        "checkpoint_read" => {
+            let checkpoint_table = node.config.get("checkpoint_table").and_then(Value::as_str);
+            if checkpoint_table.map_or(true, |value| value.trim().is_empty()) {
+                return Some(issue(
+                    "invalid_checkpoint_read_table",
+                    format!(
+                        "Node `{}` requires a non-empty string `checkpoint_table` config field.",
+                        node.node_id
+                    ),
+                    Some(format!(
+                        "workflow.nodes.{}.config.checkpoint_table",
+                        node.node_id
+                    )),
+                ));
+            }
+
+            let source_repo = node.config.get("source_repo").and_then(Value::as_str);
+            if source_repo.map_or(true, |value| value.trim().is_empty()) {
+                return Some(issue(
+                    "invalid_checkpoint_read_source_repo",
+                    format!(
+                        "Node `{}` requires a non-empty string `source_repo` config field.",
+                        node.node_id
+                    ),
+                    Some(format!(
+                        "workflow.nodes.{}.config.source_repo",
+                        node.node_id
+                    )),
+                ));
+            }
+
+            let branch = node.config.get("branch").and_then(Value::as_str);
+            if branch.map_or(true, |value| value.trim().is_empty()) {
+                return Some(issue(
+                    "invalid_checkpoint_read_branch",
+                    format!(
+                        "Node `{}` requires a non-empty string `branch` config field.",
+                        node.node_id
+                    ),
+                    Some(format!("workflow.nodes.{}.config.branch", node.node_id)),
+                ));
+            }
+
+            if let Some(emit_bootstrap_marker_if_missing) =
+                node.config.get("emit_bootstrap_marker_if_missing")
+            {
+                if !emit_bootstrap_marker_if_missing.is_boolean() {
+                    return Some(issue(
+                        "invalid_checkpoint_read_emit_bootstrap_marker_if_missing",
+                        format!(
+                            "Node `{}` expects `emit_bootstrap_marker_if_missing` to be a boolean.",
+                            node.node_id
+                        ),
+                        Some(format!(
+                            "workflow.nodes.{}.config.emit_bootstrap_marker_if_missing",
+                            node.node_id
+                        )),
+                    ));
+                }
+            }
+
+            if let Some(fail_on_stale_checkpoint) = node.config.get("fail_on_stale_checkpoint") {
+                if !fail_on_stale_checkpoint.is_boolean() {
+                    return Some(issue(
+                        "invalid_checkpoint_read_fail_on_stale_checkpoint",
+                        format!(
+                            "Node `{}` expects `fail_on_stale_checkpoint` to be a boolean.",
+                            node.node_id
+                        ),
+                        Some(format!(
+                            "workflow.nodes.{}.config.fail_on_stale_checkpoint",
+                            node.node_id
+                        )),
+                    ));
+                }
+            }
+
+            None
+        }
+        "checkpoint_write" => {
+            let checkpoint_table = node.config.get("checkpoint_table").and_then(Value::as_str);
+            if checkpoint_table.map_or(true, |value| value.trim().is_empty()) {
+                return Some(issue(
+                    "invalid_checkpoint_write_table",
+                    format!(
+                        "Node `{}` requires a non-empty string `checkpoint_table` config field.",
+                        node.node_id
+                    ),
+                    Some(format!(
+                        "workflow.nodes.{}.config.checkpoint_table",
+                        node.node_id
+                    )),
+                ));
+            }
+
+            if let Some(commit_source) = node.config.get("commit_source") {
+                match commit_source.as_str() {
+                    Some("metadata.current_commit") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_checkpoint_write_commit_source",
+                            format!(
+                                "Node `{}` has unsupported `commit_source` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.commit_source",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(write_timing) = node.config.get("write_timing") {
+                match write_timing.as_str() {
+                    Some("after_merge_success" | "after_quality_gate") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_checkpoint_write_timing",
+                            format!(
+                                "Node `{}` has unsupported `write_timing` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.write_timing",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(only_persist_on_full_success) =
+                node.config.get("only_persist_on_full_success")
+            {
+                if !only_persist_on_full_success.is_boolean() {
+                    return Some(issue(
+                        "invalid_checkpoint_write_only_persist_on_full_success",
+                        format!(
+                            "Node `{}` expects `only_persist_on_full_success` to be a boolean.",
+                            node.node_id
+                        ),
+                        Some(format!(
+                            "workflow.nodes.{}.config.only_persist_on_full_success",
+                            node.node_id
+                        )),
+                    ));
+                }
+            }
+
+            if let Some(advance_on_partial_success) = node.config.get("advance_on_partial_success")
+            {
+                if !advance_on_partial_success.is_boolean() {
+                    return Some(issue(
+                        "invalid_checkpoint_write_advance_on_partial_success",
+                        format!(
+                            "Node `{}` expects `advance_on_partial_success` to be a boolean.",
+                            node.node_id
+                        ),
+                        Some(format!(
+                            "workflow.nodes.{}.config.advance_on_partial_success",
+                            node.node_id
+                        )),
+                    ));
+                }
+            }
+
+            None
+        }
+        "quality_check" => {
+            if let Some(suite_preset) = node.config.get("suite_preset") {
+                match suite_preset.as_str() {
+                    Some("post_merge_ingest_gate" | "custom_rule_bundle") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_quality_check_suite_preset",
+                            format!(
+                                "Node `{}` has unsupported `suite_preset` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.suite_preset",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(schema_drift_rule) = node.config.get("schema_drift_rule") {
+                match schema_drift_rule.as_str() {
+                    Some("fail_on_required_column_drift" | "allow_additive_schema_notes") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_quality_check_schema_drift_rule",
+                            format!(
+                                "Node `{}` has unsupported `schema_drift_rule` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.schema_drift_rule",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(null_key_policy) = node.config.get("null_key_policy") {
+                match null_key_policy.as_str() {
+                    Some("block_on_primary_key_nulls" | "allow_nulls_with_warning") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_quality_check_null_key_policy",
+                            format!(
+                                "Node `{}` has unsupported `null_key_policy` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.null_key_policy",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(warning_budget) = node.config.get("warning_budget") {
+                if warning_budget.as_u64().is_none() {
+                    return Some(issue(
+                        "invalid_quality_check_warning_budget",
+                        format!(
+                            "Node `{}` expects `warning_budget` to be a non-negative integer.",
+                            node.node_id
+                        ),
+                        Some(format!(
+                            "workflow.nodes.{}.config.warning_budget",
+                            node.node_id
+                        )),
+                    ));
+                }
+            }
+
+            if let Some(block_checkpoint_write_on_failure) =
+                node.config.get("block_checkpoint_write_on_failure")
+            {
+                if !block_checkpoint_write_on_failure.is_boolean() {
+                    return Some(issue(
+                        "invalid_quality_check_block_checkpoint_write_on_failure",
+                        format!(
+                            "Node `{}` expects `block_checkpoint_write_on_failure` to be a boolean.",
+                            node.node_id
+                        ),
+                        Some(format!(
+                            "workflow.nodes.{}.config.block_checkpoint_write_on_failure",
+                            node.node_id
+                        )),
+                    ));
+                }
+            }
+
+            if let Some(allow_warning_only_runs_to_continue) =
+                node.config.get("allow_warning_only_runs_to_continue")
+            {
+                if !allow_warning_only_runs_to_continue.is_boolean() {
+                    return Some(issue(
+                        "invalid_quality_check_allow_warning_only_runs_to_continue",
+                        format!(
+                            "Node `{}` expects `allow_warning_only_runs_to_continue` to be a boolean.",
+                            node.node_id
+                        ),
+                        Some(format!(
+                            "workflow.nodes.{}.config.allow_warning_only_runs_to_continue",
+                            node.node_id
+                        )),
+                    ));
+                }
+            }
+
+            None
+        }
+        "dolt_repo_sync" => {
+            if let Some(sync_action) = node.config.get("sync_action") {
+                match sync_action.as_str() {
+                    Some("pull_remote_head" | "fetch_and_checkout" | "refresh_checkout") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_dolt_repo_sync_action",
+                            format!(
+                                "Node `{}` has unsupported `sync_action` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.sync_action",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(no_change_behavior) = node.config.get("no_change_behavior") {
+                match no_change_behavior.as_str() {
+                    Some("emit_current_range" | "emit_no_op_marker") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_dolt_repo_sync_no_change_behavior",
+                            format!(
+                                "Node `{}` has unsupported `no_change_behavior` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.no_change_behavior",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(branch_guard) = node.config.get("branch_guard") {
+                match branch_guard.as_str() {
+                    Some("require_tracked_branch_match" | "allow_detached_head") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_dolt_repo_sync_branch_guard",
+                            format!(
+                                "Node `{}` has unsupported `branch_guard` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.branch_guard",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(dirty_working_copy_policy) = node.config.get("dirty_working_copy_policy") {
+                match dirty_working_copy_policy.as_str() {
+                    Some("fail_if_dirty" | "stash_and_continue") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_dolt_repo_sync_dirty_working_copy_policy",
+                            format!(
+                                "Node `{}` has unsupported `dirty_working_copy_policy` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.dirty_working_copy_policy",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            None
+        }
+        "dolt_change_manifest" => {
+            if let Some(table_scope) = node.config.get("table_scope") {
+                match table_scope.as_str() {
+                    Some("all_tables" | "allowlist") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_dolt_change_manifest_table_scope",
+                            format!(
+                                "Node `{}` has unsupported `table_scope` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.table_scope",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(schema_change_policy) = node.config.get("schema_change_policy") {
+                match schema_change_policy.as_str() {
+                    Some("flag_and_continue" | "fail_run") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_dolt_change_manifest_schema_change_policy",
+                            format!(
+                                "Node `{}` has unsupported `schema_change_policy` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.schema_change_policy",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(selected_tables) = node.config.get("selected_tables") {
+                match selected_tables.as_array() {
+                    Some(values)
+                        if values.iter().all(|value| {
+                            value
+                                .as_str()
+                                .map(|candidate| !candidate.trim().is_empty())
+                                .unwrap_or(false)
+                        }) => {}
+                    Some(values) if values.is_empty() => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_dolt_change_manifest_selected_tables",
+                            format!(
+                                "Node `{}` must store `selected_tables` as an array of non-empty table names.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.selected_tables",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            None
+        }
         "table_schema" => {
             if let Some(catalog) = node.config.get("catalog") {
                 match catalog.as_str() {
@@ -1754,16 +2321,383 @@ fn validate_node_config(node: &WorkflowNode) -> Option<ValidationIssue> {
 
             None
         }
+        "dolt_dump" => {
+            if let Some(output_format) = node.config.get("output_format") {
+                match output_format.as_str() {
+                    Some("csv" | "parquet") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_dolt_dump_output_format",
+                            format!(
+                                "Node `{}` has unsupported `output_format` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.output_format",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(table_selection_mode) = node.config.get("table_selection_mode") {
+                match table_selection_mode.as_str() {
+                    Some("prefer_manifest_scope" | "all_tables" | "manual_tables") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_dolt_dump_table_selection_mode",
+                            format!(
+                                "Node `{}` has unsupported `table_selection_mode` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.table_selection_mode",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(selected_tables) = node.config.get("selected_tables") {
+                match selected_tables.as_array() {
+                    Some(values)
+                        if values.iter().all(|value| {
+                            value
+                                .as_str()
+                                .map(|candidate| !candidate.trim().is_empty())
+                                .unwrap_or(false)
+                        }) => {}
+                    Some(values) if values.is_empty() => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_dolt_dump_selected_tables",
+                            format!(
+                                "Node `{}` must store `selected_tables` as an array of non-empty table names.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.selected_tables",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(artifact_retention) = node.config.get("artifact_retention") {
+                match artifact_retention.as_str() {
+                    Some("keep_latest_success" | "ephemeral_per_run" | "persist_all") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_dolt_dump_artifact_retention",
+                            format!(
+                                "Node `{}` has unsupported `artifact_retention` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.artifact_retention",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(output_directory_policy) = node.config.get("output_directory_policy") {
+                match output_directory_policy.as_str() {
+                    Some("ephemeral_run_bundle" | "stable_repo_cache") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_dolt_dump_output_directory_policy",
+                            format!(
+                                "Node `{}` has unsupported `output_directory_policy` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.output_directory_policy",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            None
+        }
+        "dolt_diff_export" => {
+            if let Some(output_format) = node.config.get("output_format") {
+                match output_format.as_str() {
+                    Some("csv" | "parquet") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_dolt_diff_export_output_format",
+                            format!(
+                                "Node `{}` has unsupported `output_format` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.output_format",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(change_filter) = node.config.get("change_filter") {
+                match change_filter.as_str() {
+                    Some(
+                        "all_changes" | "non_delete_changes" | "added_only" | "modified_only"
+                        | "removed_only",
+                    ) => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_dolt_diff_export_change_filter",
+                            format!(
+                                "Node `{}` has unsupported `change_filter` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.change_filter",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(deleted_row_handling) = node.config.get("deleted_row_handling") {
+                match deleted_row_handling.as_str() {
+                    Some("emit_delete_markers" | "omit_delete_rows") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_dolt_diff_export_deleted_row_handling",
+                            format!(
+                                "Node `{}` has unsupported `deleted_row_handling` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.deleted_row_handling",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            None
+        }
+        "load_to_duckdb" => {
+            let target_schema = node.config.get("target_schema").and_then(Value::as_str);
+            if target_schema.map_or(true, |value| value.trim().is_empty()) {
+                return Some(issue(
+                    "invalid_load_to_duckdb_target_schema",
+                    format!(
+                        "Node `{}` requires a non-empty string `target_schema` config field.",
+                        node.node_id
+                    ),
+                    Some(format!(
+                        "workflow.nodes.{}.config.target_schema",
+                        node.node_id
+                    )),
+                ));
+            }
+
+            if let Some(table_mapping) = node.config.get("table_mapping") {
+                match table_mapping.as_str() {
+                    Some("bundle_aware_staging_names") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_load_to_duckdb_table_mapping",
+                            format!(
+                                "Node `{}` has unsupported `table_mapping` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.table_mapping",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(schema_handling) = node.config.get("schema_handling") {
+                match schema_handling.as_str() {
+                    Some("infer_on_first_load_validate_on_recurring") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_load_to_duckdb_schema_handling",
+                            format!(
+                                "Node `{}` has unsupported `schema_handling` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.schema_handling",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(delta_context_preservation) = node.config.get("delta_context_preservation")
+            {
+                match delta_context_preservation.as_str() {
+                    Some("preserve_commit_range_and_delete_flags") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_load_to_duckdb_delta_context_preservation",
+                            format!(
+                                "Node `{}` has unsupported `delta_context_preservation` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.delta_context_preservation",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            None
+        }
+        "table_merge" => {
+            let target_schema = node.config.get("target_schema").and_then(Value::as_str);
+            if target_schema.map_or(true, |value| value.trim().is_empty()) {
+                return Some(issue(
+                    "invalid_table_merge_target_schema",
+                    format!(
+                        "Node `{}` requires a non-empty string `target_schema` config field.",
+                        node.node_id
+                    ),
+                    Some(format!(
+                        "workflow.nodes.{}.config.target_schema",
+                        node.node_id
+                    )),
+                ));
+            }
+
+            if let Some(write_policy) = node.config.get("write_policy") {
+                match write_policy.as_str() {
+                    Some("upsert" | "append_only" | "snapshot_replace") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_table_merge_write_policy",
+                            format!(
+                                "Node `{}` has unsupported `write_policy` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.write_policy",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(merge_key_columns) = node.config.get("merge_key_columns") {
+                match merge_key_columns {
+                    Value::Array(entries)
+                        if entries.iter().all(|entry| {
+                            entry
+                                .as_str()
+                                .map(|value| !value.trim().is_empty())
+                                .unwrap_or(false)
+                        }) => {}
+                    Value::Array(_) => {
+                        return Some(issue(
+                            "invalid_table_merge_key_columns",
+                            format!(
+                                "Node `{}` expects `merge_key_columns` to contain only non-empty strings.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.merge_key_columns",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                    _ => {
+                        return Some(issue(
+                            "invalid_table_merge_key_columns",
+                            format!(
+                                "Node `{}` expects `merge_key_columns` to be an array of strings.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.merge_key_columns",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(delete_handling) = node.config.get("delete_handling") {
+                match delete_handling.as_str() {
+                    Some("apply_delete_markers" | "ignore_delete_markers") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_table_merge_delete_handling",
+                            format!(
+                                "Node `{}` has unsupported `delete_handling` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.delete_handling",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(schema_drift_behavior) = node.config.get("schema_drift_behavior") {
+                match schema_drift_behavior.as_str() {
+                    Some("fail_and_require_review" | "allow_additive_changes") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_table_merge_schema_drift_behavior",
+                            format!(
+                                "Node `{}` has unsupported `schema_drift_behavior` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.schema_drift_behavior",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            None
+        }
         _ => None,
     }
 }
 
 fn ports_are_compatible(
-    _source_node: &WorkflowNode,
+    source_node: &WorkflowNode,
     source_port: &node_registry::PortDefinition,
     target_node: &WorkflowNode,
     target_port: &node_registry::PortDefinition,
 ) -> bool {
+    if target_node.type_id == "quality_check" && target_port.port_id == "table" {
+        return source_node.type_id == "table_merge"
+            && source_port.data_type == workflow_schema::DataType::TableRef;
+    }
+
+    if target_node.type_id == "checkpoint_write" && target_port.port_id == "table" {
+        return (source_node.type_id == "table_merge" || source_node.type_id == "quality_check")
+            && source_port.data_type == workflow_schema::DataType::TableRef;
+    }
+
     if source_port.data_type == target_port.data_type {
         return true;
     }
@@ -2000,7 +2934,8 @@ fn to_run_error_from_adapter(node: &WorkflowNode, error: AdapterError) -> RunErr
         AdapterError::ExecutionFailed { .. }
         | AdapterError::InvalidConfig { .. }
         | AdapterError::MissingInput { .. }
-        | AdapterError::TextTypeMismatch { .. } => RunErrorCategory::ExecutionError,
+        | AdapterError::TextTypeMismatch { .. }
+        | AdapterError::DatasetRefTypeMismatch { .. } => RunErrorCategory::ExecutionError,
     };
 
     RunErrorSummary {
@@ -2011,12 +2946,31 @@ fn to_run_error_from_adapter(node: &WorkflowNode, error: AdapterError) -> RunErr
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        env, fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
     use api_contract::{CreateRunRequest, RunStatus};
+    use duckdb::Connection as DuckDbConnection;
     use serde_json::json;
     use tokio::time::{sleep, Duration};
     use workflow_schema::{NodePosition, WorkflowDefinition, WorkflowEdge, WorkflowNode};
 
-    use super::RuntimeService;
+    use super::{RuntimeService, INTERNAL_PARAM_WORKFLOW_DUCKDB_PATH};
+
+    fn unique_test_duckdb_path(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        env::temp_dir().join(format!(
+            "stitchly_{label}_{}_{}.duckdb",
+            std::process::id(),
+            nanos
+        ))
+    }
 
     #[tokio::test]
     async fn fixture_workflow_runs_to_completion() {
@@ -2167,6 +3121,252 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dolt_repo_source_can_feed_dolt_dump_during_runtime_execution() {
+        let runtime = RuntimeService::default();
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_dolt_repo_source_dump_runtime".to_string(),
+            version: 1,
+            name: "Dolt Repo Source Dump Runtime".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "dolt_repo_source".to_string(),
+                    type_id: "dolt_repo_source".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Repo Source".to_string()),
+                    config: json!({
+                        "connection_ref": "dolthub_public",
+                        "repository": "post-no-preference/rates",
+                        "branch": "main"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "dolt_dump".to_string(),
+                    type_id: "dolt_dump".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Dump".to_string()),
+                    config: json!({
+                        "output_format": "parquet",
+                        "table_selection_mode": "all_tables",
+                        "artifact_retention": "keep_latest_success",
+                        "output_directory_policy": "ephemeral_run_bundle"
+                    }),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![WorkflowEdge {
+                edge_id: "edge_repo_source_to_dolt_dump".to_string(),
+                source_node_id: "dolt_repo_source".to_string(),
+                source_port_id: "repo_out".to_string(),
+                target_node_id: "dolt_dump".to_string(),
+                target_port_id: "repo".to_string(),
+            }],
+            metadata: Default::default(),
+        };
+
+        let run = runtime
+            .create_run(CreateRunRequest {
+                workflow,
+                trigger: Default::default(),
+                params: json!({}).as_object().cloned().unwrap_or_default(),
+            })
+            .await
+            .expect("run should be created");
+
+        let mut status = RunStatus::Created;
+        for _ in 0..50 {
+            let snapshot = runtime.get_run(&run.run_id).await.expect("run snapshot");
+            status = snapshot.status;
+            if matches!(status, RunStatus::Succeeded | RunStatus::Failed) {
+                break;
+            }
+            sleep(Duration::from_millis(20)).await;
+        }
+
+        assert_eq!(status, RunStatus::Succeeded);
+    }
+
+    #[tokio::test]
+    async fn bootstrap_dolt_ingest_persists_staging_merge_and_checkpoint_tables() {
+        let runtime = RuntimeService::default();
+        let duckdb_path = unique_test_duckdb_path("bootstrap_dolt_ingest");
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_dolt_bootstrap_real_pass".to_string(),
+            version: 1,
+            name: "Dolt Bootstrap Real Pass".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "dolt_repo_source".to_string(),
+                    type_id: "dolt_repo_source".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Repo Source".to_string()),
+                    config: json!({
+                        "connection_ref": "dolthub_public",
+                        "repository": "post-no-preference/rates",
+                        "branch": "main"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "dolt_dump".to_string(),
+                    type_id: "dolt_dump".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Dump".to_string()),
+                    config: json!({
+                        "output_format": "parquet",
+                        "table_selection_mode": "all_tables"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "load_to_duckdb".to_string(),
+                    type_id: "load_to_duckdb".to_string(),
+                    definition_version: 1,
+                    label: Some("Load to DuckDB".to_string()),
+                    config: json!({
+                        "target_schema": "staging"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "table_merge".to_string(),
+                    type_id: "table_merge".to_string(),
+                    definition_version: 1,
+                    label: Some("Table Merge".to_string()),
+                    config: json!({
+                        "target_schema": "tables",
+                        "write_policy": "upsert",
+                        "merge_key_columns": ["curve_date", "tenor"],
+                        "delete_handling": "apply_delete_markers",
+                        "schema_drift_behavior": "fail_and_require_review"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "checkpoint_write".to_string(),
+                    type_id: "checkpoint_write".to_string(),
+                    definition_version: 1,
+                    label: Some("Checkpoint Write".to_string()),
+                    config: json!({
+                        "checkpoint_table": "tables.ingest_checkpoints",
+                        "commit_source": "metadata.current_commit",
+                        "write_timing": "after_merge_success",
+                        "only_persist_on_full_success": true,
+                        "advance_on_partial_success": false
+                    }),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![
+                WorkflowEdge {
+                    edge_id: "edge_repo_source_to_dolt_dump".to_string(),
+                    source_node_id: "dolt_repo_source".to_string(),
+                    source_port_id: "repo_out".to_string(),
+                    target_node_id: "dolt_dump".to_string(),
+                    target_port_id: "repo".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_dolt_dump_to_load".to_string(),
+                    source_node_id: "dolt_dump".to_string(),
+                    source_port_id: "bundle".to_string(),
+                    target_node_id: "load_to_duckdb".to_string(),
+                    target_port_id: "bundle".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_load_to_merge".to_string(),
+                    source_node_id: "load_to_duckdb".to_string(),
+                    source_port_id: "table".to_string(),
+                    target_node_id: "table_merge".to_string(),
+                    target_port_id: "table".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_merge_to_checkpoint".to_string(),
+                    source_node_id: "table_merge".to_string(),
+                    source_port_id: "table".to_string(),
+                    target_node_id: "checkpoint_write".to_string(),
+                    target_port_id: "table".to_string(),
+                },
+            ],
+            metadata: Default::default(),
+        };
+
+        let run = runtime
+            .create_run(CreateRunRequest {
+                workflow,
+                trigger: Default::default(),
+                params: json!({
+                    INTERNAL_PARAM_WORKFLOW_DUCKDB_PATH: duckdb_path.display().to_string()
+                })
+                .as_object()
+                .cloned()
+                .unwrap_or_default(),
+            })
+            .await
+            .expect("run should be created");
+
+        let mut status = RunStatus::Created;
+        for _ in 0..60 {
+            let snapshot = runtime.get_run(&run.run_id).await.expect("run snapshot");
+            status = snapshot.status;
+            if matches!(status, RunStatus::Succeeded | RunStatus::Failed) {
+                break;
+            }
+            sleep(Duration::from_millis(20)).await;
+        }
+
+        assert_eq!(status, RunStatus::Succeeded);
+
+        let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb opens");
+        let staging_exists: i64 = duckdb
+            .query_row(
+                "select count(*)
+                 from information_schema.tables
+                 where table_schema = 'staging'
+                   and table_name = 'rates__us_treasury__snapshot'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("staging table existence query succeeds");
+        let durable_exists: i64 = duckdb
+            .query_row(
+                "select count(*)
+                 from information_schema.tables
+                 where table_schema = 'tables'
+                   and table_name = 'rates__us_treasury__snapshot'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("durable table existence query succeeds");
+        let checkpoint_row: (String, String, String) = duckdb
+            .query_row(
+                "select source_repo, branch, last_synced_commit
+                 from tables.ingest_checkpoints
+                 where source_repo = 'post-no-preference/rates'
+                   and branch = 'main'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("checkpoint row query succeeds");
+
+        assert_eq!(staging_exists, 1);
+        assert_eq!(durable_exists, 1);
+        assert_eq!(
+            checkpoint_row,
+            (
+                "post-no-preference/rates".to_string(),
+                "main".to_string(),
+                "d0f61b4".to_string()
+            )
+        );
+
+        let _ = fs::remove_file(&duckdb_path);
+    }
+
+    #[tokio::test]
     async fn cancellation_requested_during_wait_finishes_run_as_cancelled() {
         let runtime = RuntimeService::default();
         let mut workflow: WorkflowDefinition = serde_json::from_str(include_str!(
@@ -2312,6 +3512,1097 @@ mod tests {
             .errors
             .iter()
             .any(|error| error.code == "invalid_table_output_table_name"));
+    }
+
+    #[test]
+    fn dolt_repo_source_requires_owner_repo_repository_format() {
+        let runtime = RuntimeService::default();
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_dolt_repo_invalid".to_string(),
+            version: 1,
+            name: "Dolt Repo Invalid".to_string(),
+            description: None,
+            nodes: vec![WorkflowNode {
+                node_id: "dolt_repo_source".to_string(),
+                type_id: "dolt_repo_source".to_string(),
+                definition_version: 1,
+                label: Some("Dolt Repo Source".to_string()),
+                config: json!({
+                    "connection_ref": "dolthub_public",
+                    "repository": "earnings",
+                    "branch": "main"
+                }),
+                position: NodePosition::default(),
+            }],
+            edges: vec![],
+            metadata: Default::default(),
+        };
+
+        let validation = runtime.validate_workflow(&workflow);
+        assert!(!validation.valid);
+        assert!(validation
+            .errors
+            .iter()
+            .any(|error| error.code == "invalid_dolt_repo_source_repository"));
+    }
+
+    #[test]
+    fn checkpoint_read_requires_non_empty_source_repo() {
+        let runtime = RuntimeService::default();
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_checkpoint_read_invalid".to_string(),
+            version: 1,
+            name: "Checkpoint Read Invalid".to_string(),
+            description: None,
+            nodes: vec![WorkflowNode {
+                node_id: "checkpoint_read".to_string(),
+                type_id: "checkpoint_read".to_string(),
+                definition_version: 1,
+                label: Some("Checkpoint Read".to_string()),
+                config: json!({
+                    "checkpoint_table": "tables.ingest_checkpoints",
+                    "source_repo": "",
+                    "branch": "main"
+                }),
+                position: NodePosition::default(),
+            }],
+            edges: vec![],
+            metadata: Default::default(),
+        };
+
+        let validation = runtime.validate_workflow(&workflow);
+        assert!(!validation.valid);
+        assert!(validation
+            .errors
+            .iter()
+            .any(|error| error.code == "invalid_checkpoint_read_source_repo"));
+    }
+
+    #[test]
+    fn checkpoint_write_requires_non_empty_checkpoint_table() {
+        let runtime = RuntimeService::default();
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_checkpoint_write_invalid".to_string(),
+            version: 1,
+            name: "Checkpoint Write Invalid".to_string(),
+            description: None,
+            nodes: vec![WorkflowNode {
+                node_id: "checkpoint_write".to_string(),
+                type_id: "checkpoint_write".to_string(),
+                definition_version: 1,
+                label: Some("Checkpoint Write".to_string()),
+                config: json!({
+                    "checkpoint_table": "   ",
+                    "commit_source": "metadata.current_commit",
+                    "write_timing": "after_merge_success"
+                }),
+                position: NodePosition::default(),
+            }],
+            edges: vec![],
+            metadata: Default::default(),
+        };
+
+        let validation = runtime.validate_workflow(&workflow);
+        assert!(!validation.valid);
+        assert!(validation
+            .errors
+            .iter()
+            .any(|error| error.code == "invalid_checkpoint_write_table"));
+    }
+
+    #[test]
+    fn quality_check_requires_non_negative_warning_budget() {
+        let runtime = RuntimeService::default();
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_quality_check_invalid".to_string(),
+            version: 1,
+            name: "Quality Check Invalid".to_string(),
+            description: None,
+            nodes: vec![WorkflowNode {
+                node_id: "quality_check".to_string(),
+                type_id: "quality_check".to_string(),
+                definition_version: 1,
+                label: Some("Quality Check".to_string()),
+                config: json!({
+                    "suite_preset": "post_merge_ingest_gate",
+                    "warning_budget": -1
+                }),
+                position: NodePosition::default(),
+            }],
+            edges: vec![],
+            metadata: Default::default(),
+        };
+
+        let validation = runtime.validate_workflow(&workflow);
+        assert!(!validation.valid);
+        assert!(validation
+            .errors
+            .iter()
+            .any(|error| error.code == "invalid_quality_check_warning_budget"));
+    }
+
+    #[test]
+    fn dolt_repo_sync_rejects_unsupported_sync_action() {
+        let runtime = RuntimeService::default();
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_dolt_repo_sync_invalid".to_string(),
+            version: 1,
+            name: "Dolt Repo Sync Invalid".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "dolt_repo_source".to_string(),
+                    type_id: "dolt_repo_source".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Repo Source".to_string()),
+                    config: json!({
+                        "connection_ref": "dolthub_public",
+                        "repository": "post-no-preference/earnings",
+                        "branch": "main"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "dolt_repo_sync".to_string(),
+                    type_id: "dolt_repo_sync".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Repo Sync".to_string()),
+                    config: json!({
+                        "sync_action": "teleport_head"
+                    }),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![WorkflowEdge {
+                edge_id: "edge_repo_source_to_repo_sync".to_string(),
+                source_node_id: "dolt_repo_source".to_string(),
+                source_port_id: "repo".to_string(),
+                target_node_id: "dolt_repo_sync".to_string(),
+                target_port_id: "repo".to_string(),
+            }],
+            metadata: Default::default(),
+        };
+
+        let validation = runtime.validate_workflow(&workflow);
+        assert!(!validation.valid);
+        assert!(validation
+            .errors
+            .iter()
+            .any(|error| error.code == "invalid_dolt_repo_sync_action"));
+    }
+
+    #[test]
+    fn dolt_change_manifest_rejects_unsupported_schema_change_policy() {
+        let runtime = RuntimeService::default();
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_dolt_change_manifest_invalid".to_string(),
+            version: 1,
+            name: "Dolt Change Manifest Invalid".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "dolt_repo_source".to_string(),
+                    type_id: "dolt_repo_source".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Repo Source".to_string()),
+                    config: json!({
+                        "connection_ref": "dolthub_public",
+                        "repository": "post-no-preference/earnings",
+                        "branch": "main"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "dolt_repo_sync".to_string(),
+                    type_id: "dolt_repo_sync".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Repo Sync".to_string()),
+                    config: json!({}),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "dolt_change_manifest".to_string(),
+                    type_id: "dolt_change_manifest".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Change Manifest".to_string()),
+                    config: json!({
+                        "schema_change_policy": "warn_loudly"
+                    }),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![
+                WorkflowEdge {
+                    edge_id: "edge_repo_source_to_repo_sync".to_string(),
+                    source_node_id: "dolt_repo_source".to_string(),
+                    source_port_id: "repo".to_string(),
+                    target_node_id: "dolt_repo_sync".to_string(),
+                    target_port_id: "repo".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_repo_sync_to_change_manifest".to_string(),
+                    source_node_id: "dolt_repo_sync".to_string(),
+                    source_port_id: "repo_out".to_string(),
+                    target_node_id: "dolt_change_manifest".to_string(),
+                    target_port_id: "repo".to_string(),
+                },
+            ],
+            metadata: Default::default(),
+        };
+
+        let validation = runtime.validate_workflow(&workflow);
+        assert!(!validation.valid);
+        assert!(validation
+            .errors
+            .iter()
+            .any(|error| { error.code == "invalid_dolt_change_manifest_schema_change_policy" }));
+    }
+
+    #[test]
+    fn dolt_dump_rejects_unsupported_output_format() {
+        let runtime = RuntimeService::default();
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_dolt_dump_invalid".to_string(),
+            version: 1,
+            name: "Dolt Dump Invalid".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "dolt_repo_source".to_string(),
+                    type_id: "dolt_repo_source".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Repo Source".to_string()),
+                    config: json!({
+                        "connection_ref": "dolthub_public",
+                        "repository": "post-no-preference/earnings",
+                        "branch": "main"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "dolt_dump".to_string(),
+                    type_id: "dolt_dump".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Dump".to_string()),
+                    config: json!({
+                        "output_format": "jsonl"
+                    }),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![WorkflowEdge {
+                edge_id: "edge_repo_source_to_dolt_dump".to_string(),
+                source_node_id: "dolt_repo_source".to_string(),
+                source_port_id: "repo_out".to_string(),
+                target_node_id: "dolt_dump".to_string(),
+                target_port_id: "repo".to_string(),
+            }],
+            metadata: Default::default(),
+        };
+
+        let validation = runtime.validate_workflow(&workflow);
+        assert!(!validation.valid);
+        assert!(validation
+            .errors
+            .iter()
+            .any(|error| error.code == "invalid_dolt_dump_output_format"));
+    }
+
+    #[test]
+    fn dolt_diff_export_rejects_unsupported_change_filter() {
+        let runtime = RuntimeService::default();
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_dolt_diff_export_invalid".to_string(),
+            version: 1,
+            name: "Dolt Diff Export Invalid".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "dolt_repo_source".to_string(),
+                    type_id: "dolt_repo_source".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Repo Source".to_string()),
+                    config: json!({
+                        "connection_ref": "dolthub_public",
+                        "repository": "post-no-preference/options",
+                        "branch": "main"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "dolt_repo_sync".to_string(),
+                    type_id: "dolt_repo_sync".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Repo Sync".to_string()),
+                    config: json!({}),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "dolt_change_manifest".to_string(),
+                    type_id: "dolt_change_manifest".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Change Manifest".to_string()),
+                    config: json!({}),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "dolt_diff_export".to_string(),
+                    type_id: "dolt_diff_export".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Diff Export".to_string()),
+                    config: json!({
+                        "change_filter": "upserts_only"
+                    }),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![
+                WorkflowEdge {
+                    edge_id: "edge_repo_source_to_dolt_repo_sync".to_string(),
+                    source_node_id: "dolt_repo_source".to_string(),
+                    source_port_id: "repo_out".to_string(),
+                    target_node_id: "dolt_repo_sync".to_string(),
+                    target_port_id: "repo".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_dolt_repo_sync_to_change_manifest".to_string(),
+                    source_node_id: "dolt_repo_sync".to_string(),
+                    source_port_id: "repo_out".to_string(),
+                    target_node_id: "dolt_change_manifest".to_string(),
+                    target_port_id: "repo".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_change_manifest_to_dolt_diff_export".to_string(),
+                    source_node_id: "dolt_change_manifest".to_string(),
+                    source_port_id: "manifest".to_string(),
+                    target_node_id: "dolt_diff_export".to_string(),
+                    target_port_id: "manifest".to_string(),
+                },
+            ],
+            metadata: Default::default(),
+        };
+
+        let validation = runtime.validate_workflow(&workflow);
+        assert!(!validation.valid);
+        assert!(validation
+            .errors
+            .iter()
+            .any(|error| error.code == "invalid_dolt_diff_export_change_filter"));
+    }
+
+    #[test]
+    fn load_to_duckdb_rejects_unsupported_table_mapping() {
+        let runtime = RuntimeService::default();
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_load_to_duckdb_invalid".to_string(),
+            version: 1,
+            name: "Load to DuckDB Invalid".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "dolt_repo_source".to_string(),
+                    type_id: "dolt_repo_source".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Repo Source".to_string()),
+                    config: json!({
+                        "connection_ref": "dolthub_public",
+                        "repository": "post-no-preference/earnings",
+                        "branch": "main"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "dolt_repo_sync".to_string(),
+                    type_id: "dolt_repo_sync".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Repo Sync".to_string()),
+                    config: json!({}),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "dolt_change_manifest".to_string(),
+                    type_id: "dolt_change_manifest".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Change Manifest".to_string()),
+                    config: json!({}),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "dolt_dump".to_string(),
+                    type_id: "dolt_dump".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Dump".to_string()),
+                    config: json!({}),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "load_to_duckdb".to_string(),
+                    type_id: "load_to_duckdb".to_string(),
+                    definition_version: 1,
+                    label: Some("Load to DuckDB".to_string()),
+                    config: json!({
+                        "target_schema": "staging",
+                        "table_mapping": "custom_names"
+                    }),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![
+                WorkflowEdge {
+                    edge_id: "edge_repo_source_to_dolt_repo_sync".to_string(),
+                    source_node_id: "dolt_repo_source".to_string(),
+                    source_port_id: "repo_out".to_string(),
+                    target_node_id: "dolt_repo_sync".to_string(),
+                    target_port_id: "repo".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_dolt_repo_sync_to_change_manifest".to_string(),
+                    source_node_id: "dolt_repo_sync".to_string(),
+                    source_port_id: "repo_out".to_string(),
+                    target_node_id: "dolt_change_manifest".to_string(),
+                    target_port_id: "repo".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_change_manifest_to_dolt_dump".to_string(),
+                    source_node_id: "dolt_change_manifest".to_string(),
+                    source_port_id: "manifest".to_string(),
+                    target_node_id: "dolt_dump".to_string(),
+                    target_port_id: "repo".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_dolt_dump_to_load_to_duckdb".to_string(),
+                    source_node_id: "dolt_dump".to_string(),
+                    source_port_id: "bundle".to_string(),
+                    target_node_id: "load_to_duckdb".to_string(),
+                    target_port_id: "bundle".to_string(),
+                },
+            ],
+            metadata: Default::default(),
+        };
+
+        let validation = runtime.validate_workflow(&workflow);
+        assert!(!validation.valid);
+        assert!(validation
+            .errors
+            .iter()
+            .any(|error| error.code == "invalid_load_to_duckdb_table_mapping"));
+    }
+
+    #[test]
+    fn dolt_dump_can_connect_to_load_to_duckdb() {
+        let runtime = RuntimeService::default();
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_dolt_dump_load_to_duckdb".to_string(),
+            version: 1,
+            name: "Dolt Dump Load".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "dolt_repo_source".to_string(),
+                    type_id: "dolt_repo_source".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Repo Source".to_string()),
+                    config: json!({
+                        "connection_ref": "dolthub_public",
+                        "repository": "post-no-preference/earnings",
+                        "branch": "main"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "dolt_repo_sync".to_string(),
+                    type_id: "dolt_repo_sync".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Repo Sync".to_string()),
+                    config: json!({}),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "dolt_change_manifest".to_string(),
+                    type_id: "dolt_change_manifest".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Change Manifest".to_string()),
+                    config: json!({}),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "dolt_dump".to_string(),
+                    type_id: "dolt_dump".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Dump".to_string()),
+                    config: json!({}),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "load_to_duckdb".to_string(),
+                    type_id: "load_to_duckdb".to_string(),
+                    definition_version: 1,
+                    label: Some("Load to DuckDB".to_string()),
+                    config: json!({
+                        "target_schema": "staging"
+                    }),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![
+                WorkflowEdge {
+                    edge_id: "edge_repo_source_to_dolt_repo_sync".to_string(),
+                    source_node_id: "dolt_repo_source".to_string(),
+                    source_port_id: "repo_out".to_string(),
+                    target_node_id: "dolt_repo_sync".to_string(),
+                    target_port_id: "repo".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_dolt_repo_sync_to_change_manifest".to_string(),
+                    source_node_id: "dolt_repo_sync".to_string(),
+                    source_port_id: "repo_out".to_string(),
+                    target_node_id: "dolt_change_manifest".to_string(),
+                    target_port_id: "repo".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_change_manifest_to_dolt_dump".to_string(),
+                    source_node_id: "dolt_change_manifest".to_string(),
+                    source_port_id: "manifest".to_string(),
+                    target_node_id: "dolt_dump".to_string(),
+                    target_port_id: "repo".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_dolt_dump_to_load_to_duckdb".to_string(),
+                    source_node_id: "dolt_dump".to_string(),
+                    source_port_id: "bundle".to_string(),
+                    target_node_id: "load_to_duckdb".to_string(),
+                    target_port_id: "bundle".to_string(),
+                },
+            ],
+            metadata: Default::default(),
+        };
+
+        let validation = runtime.validate_workflow(&workflow);
+        assert!(validation.valid, "expected valid flow, got: {validation:?}");
+    }
+
+    #[test]
+    fn checkpoint_read_can_connect_to_dolt_repo_sync() {
+        let runtime = RuntimeService::default();
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_checkpoint_read_dolt_repo_sync".to_string(),
+            version: 1,
+            name: "Checkpoint Read Dolt Repo Sync".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "checkpoint_read".to_string(),
+                    type_id: "checkpoint_read".to_string(),
+                    definition_version: 1,
+                    label: Some("Checkpoint Read".to_string()),
+                    config: json!({
+                        "checkpoint_table": "tables.ingest_checkpoints",
+                        "source_repo": "post-no-preference/options",
+                        "branch": "main"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "dolt_repo_source".to_string(),
+                    type_id: "dolt_repo_source".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Repo Source".to_string()),
+                    config: json!({
+                        "connection_ref": "dolthub_public",
+                        "repository": "post-no-preference/options",
+                        "branch": "main"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "dolt_repo_sync".to_string(),
+                    type_id: "dolt_repo_sync".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Repo Sync".to_string()),
+                    config: json!({}),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![
+                WorkflowEdge {
+                    edge_id: "edge_checkpoint_read_to_dolt_repo_sync".to_string(),
+                    source_node_id: "checkpoint_read".to_string(),
+                    source_port_id: "checkpoint".to_string(),
+                    target_node_id: "dolt_repo_sync".to_string(),
+                    target_port_id: "checkpoint".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_repo_source_to_dolt_repo_sync".to_string(),
+                    source_node_id: "dolt_repo_source".to_string(),
+                    source_port_id: "repo_out".to_string(),
+                    target_node_id: "dolt_repo_sync".to_string(),
+                    target_port_id: "repo".to_string(),
+                },
+            ],
+            metadata: Default::default(),
+        };
+
+        let validation = runtime.validate_workflow(&workflow);
+        assert!(validation.valid, "expected valid flow, got: {validation:?}");
+    }
+
+    #[test]
+    fn dolt_diff_export_can_connect_to_load_to_duckdb() {
+        let runtime = RuntimeService::default();
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_dolt_diff_export_load_to_duckdb".to_string(),
+            version: 1,
+            name: "Dolt Diff Export Load".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "dolt_repo_source".to_string(),
+                    type_id: "dolt_repo_source".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Repo Source".to_string()),
+                    config: json!({
+                        "connection_ref": "dolthub_public",
+                        "repository": "post-no-preference/options",
+                        "branch": "main"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "dolt_repo_sync".to_string(),
+                    type_id: "dolt_repo_sync".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Repo Sync".to_string()),
+                    config: json!({}),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "dolt_change_manifest".to_string(),
+                    type_id: "dolt_change_manifest".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Change Manifest".to_string()),
+                    config: json!({}),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "dolt_diff_export".to_string(),
+                    type_id: "dolt_diff_export".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Diff Export".to_string()),
+                    config: json!({}),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "load_to_duckdb".to_string(),
+                    type_id: "load_to_duckdb".to_string(),
+                    definition_version: 1,
+                    label: Some("Load to DuckDB".to_string()),
+                    config: json!({
+                        "target_schema": "staging"
+                    }),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![
+                WorkflowEdge {
+                    edge_id: "edge_repo_source_to_dolt_repo_sync".to_string(),
+                    source_node_id: "dolt_repo_source".to_string(),
+                    source_port_id: "repo_out".to_string(),
+                    target_node_id: "dolt_repo_sync".to_string(),
+                    target_port_id: "repo".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_dolt_repo_sync_to_change_manifest".to_string(),
+                    source_node_id: "dolt_repo_sync".to_string(),
+                    source_port_id: "repo_out".to_string(),
+                    target_node_id: "dolt_change_manifest".to_string(),
+                    target_port_id: "repo".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_change_manifest_to_dolt_diff_export".to_string(),
+                    source_node_id: "dolt_change_manifest".to_string(),
+                    source_port_id: "manifest".to_string(),
+                    target_node_id: "dolt_diff_export".to_string(),
+                    target_port_id: "manifest".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_dolt_diff_export_to_load_to_duckdb".to_string(),
+                    source_node_id: "dolt_diff_export".to_string(),
+                    source_port_id: "bundle".to_string(),
+                    target_node_id: "load_to_duckdb".to_string(),
+                    target_port_id: "bundle".to_string(),
+                },
+            ],
+            metadata: Default::default(),
+        };
+
+        let validation = runtime.validate_workflow(&workflow);
+        assert!(validation.valid, "expected valid flow, got: {validation:?}");
+    }
+
+    #[test]
+    fn load_to_duckdb_can_connect_to_table_merge() {
+        let runtime = RuntimeService::default();
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_load_to_duckdb_table_merge".to_string(),
+            version: 1,
+            name: "Load To DuckDB Table Merge".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "dolt_repo_source".to_string(),
+                    type_id: "dolt_repo_source".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Repo Source".to_string()),
+                    config: json!({
+                        "connection_ref": "dolthub_public",
+                        "repository": "post-no-preference/earnings",
+                        "branch": "main"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "dolt_repo_sync".to_string(),
+                    type_id: "dolt_repo_sync".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Repo Sync".to_string()),
+                    config: json!({}),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "dolt_change_manifest".to_string(),
+                    type_id: "dolt_change_manifest".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Change Manifest".to_string()),
+                    config: json!({}),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "dolt_dump".to_string(),
+                    type_id: "dolt_dump".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Dump".to_string()),
+                    config: json!({}),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "load_to_duckdb".to_string(),
+                    type_id: "load_to_duckdb".to_string(),
+                    definition_version: 1,
+                    label: Some("Load to DuckDB".to_string()),
+                    config: json!({
+                        "target_schema": "staging"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "table_merge".to_string(),
+                    type_id: "table_merge".to_string(),
+                    definition_version: 1,
+                    label: Some("Table Merge".to_string()),
+                    config: json!({
+                        "target_schema": "tables",
+                        "write_policy": "upsert",
+                        "merge_key_columns": ["symbol", "report_date"],
+                        "delete_handling": "apply_delete_markers",
+                        "schema_drift_behavior": "fail_and_require_review"
+                    }),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![
+                WorkflowEdge {
+                    edge_id: "edge_repo_source_to_dolt_repo_sync".to_string(),
+                    source_node_id: "dolt_repo_source".to_string(),
+                    source_port_id: "repo_out".to_string(),
+                    target_node_id: "dolt_repo_sync".to_string(),
+                    target_port_id: "repo".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_dolt_repo_sync_to_change_manifest".to_string(),
+                    source_node_id: "dolt_repo_sync".to_string(),
+                    source_port_id: "repo_out".to_string(),
+                    target_node_id: "dolt_change_manifest".to_string(),
+                    target_port_id: "repo".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_change_manifest_to_dolt_dump".to_string(),
+                    source_node_id: "dolt_change_manifest".to_string(),
+                    source_port_id: "manifest".to_string(),
+                    target_node_id: "dolt_dump".to_string(),
+                    target_port_id: "repo".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_dolt_dump_to_load_to_duckdb".to_string(),
+                    source_node_id: "dolt_dump".to_string(),
+                    source_port_id: "bundle".to_string(),
+                    target_node_id: "load_to_duckdb".to_string(),
+                    target_port_id: "bundle".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_load_to_duckdb_to_table_merge".to_string(),
+                    source_node_id: "load_to_duckdb".to_string(),
+                    source_port_id: "table".to_string(),
+                    target_node_id: "table_merge".to_string(),
+                    target_port_id: "table".to_string(),
+                },
+            ],
+            metadata: Default::default(),
+        };
+
+        let validation = runtime.validate_workflow(&workflow);
+        assert!(validation.valid, "expected valid flow, got: {validation:?}");
+    }
+
+    #[test]
+    fn table_merge_can_connect_to_checkpoint_write() {
+        let runtime = RuntimeService::default();
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_table_merge_checkpoint_write".to_string(),
+            version: 1,
+            name: "Table Merge Checkpoint Write".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "table_input_source".to_string(),
+                    type_id: "table_input".to_string(),
+                    definition_version: 1,
+                    label: Some("Table Input".to_string()),
+                    config: json!({
+                        "catalog": "workflow",
+                        "schema_name": "staging",
+                        "table_name": "earnings_calendar"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "table_merge".to_string(),
+                    type_id: "table_merge".to_string(),
+                    definition_version: 1,
+                    label: Some("Table Merge".to_string()),
+                    config: json!({
+                        "target_schema": "tables",
+                        "write_policy": "upsert",
+                        "merge_key_columns": ["symbol", "report_date"],
+                        "delete_handling": "apply_delete_markers",
+                        "schema_drift_behavior": "fail_and_require_review"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "checkpoint_write".to_string(),
+                    type_id: "checkpoint_write".to_string(),
+                    definition_version: 1,
+                    label: Some("Checkpoint Write".to_string()),
+                    config: json!({
+                        "checkpoint_table": "tables.ingest_checkpoints",
+                        "commit_source": "metadata.current_commit",
+                        "write_timing": "after_merge_success"
+                    }),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![
+                WorkflowEdge {
+                    edge_id: "edge_table_input_to_table_merge".to_string(),
+                    source_node_id: "table_input_source".to_string(),
+                    source_port_id: "table".to_string(),
+                    target_node_id: "table_merge".to_string(),
+                    target_port_id: "table".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_table_merge_to_checkpoint_write".to_string(),
+                    source_node_id: "table_merge".to_string(),
+                    source_port_id: "table".to_string(),
+                    target_node_id: "checkpoint_write".to_string(),
+                    target_port_id: "table".to_string(),
+                },
+            ],
+            metadata: Default::default(),
+        };
+
+        let validation = runtime.validate_workflow(&workflow);
+        assert!(validation.valid, "expected valid flow, got: {validation:?}");
+    }
+
+    #[test]
+    fn table_merge_can_connect_to_quality_check_and_checkpoint_write() {
+        let runtime = RuntimeService::default();
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_table_merge_quality_check_checkpoint_write".to_string(),
+            version: 1,
+            name: "Table Merge Quality Check Checkpoint Write".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "table_input_source".to_string(),
+                    type_id: "table_input".to_string(),
+                    definition_version: 1,
+                    label: Some("Table Input".to_string()),
+                    config: json!({
+                        "catalog": "workflow",
+                        "schema_name": "staging",
+                        "table_name": "earnings_calendar"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "table_merge".to_string(),
+                    type_id: "table_merge".to_string(),
+                    definition_version: 1,
+                    label: Some("Table Merge".to_string()),
+                    config: json!({
+                        "target_schema": "tables",
+                        "write_policy": "upsert",
+                        "merge_key_columns": ["symbol", "report_date"],
+                        "delete_handling": "apply_delete_markers",
+                        "schema_drift_behavior": "fail_and_require_review"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "quality_check".to_string(),
+                    type_id: "quality_check".to_string(),
+                    definition_version: 1,
+                    label: Some("Quality Check".to_string()),
+                    config: json!({
+                        "suite_preset": "post_merge_ingest_gate",
+                        "schema_drift_rule": "fail_on_required_column_drift",
+                        "null_key_policy": "block_on_primary_key_nulls",
+                        "warning_budget": 2,
+                        "block_checkpoint_write_on_failure": true,
+                        "allow_warning_only_runs_to_continue": true
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "checkpoint_write".to_string(),
+                    type_id: "checkpoint_write".to_string(),
+                    definition_version: 1,
+                    label: Some("Checkpoint Write".to_string()),
+                    config: json!({
+                        "checkpoint_table": "tables.ingest_checkpoints",
+                        "commit_source": "metadata.current_commit",
+                        "write_timing": "after_quality_gate"
+                    }),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![
+                WorkflowEdge {
+                    edge_id: "edge_table_input_to_table_merge".to_string(),
+                    source_node_id: "table_input_source".to_string(),
+                    source_port_id: "table".to_string(),
+                    target_node_id: "table_merge".to_string(),
+                    target_port_id: "table".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_table_merge_to_quality_check".to_string(),
+                    source_node_id: "table_merge".to_string(),
+                    source_port_id: "table".to_string(),
+                    target_node_id: "quality_check".to_string(),
+                    target_port_id: "table".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_quality_check_to_checkpoint_write".to_string(),
+                    source_node_id: "quality_check".to_string(),
+                    source_port_id: "table".to_string(),
+                    target_node_id: "checkpoint_write".to_string(),
+                    target_port_id: "table".to_string(),
+                },
+            ],
+            metadata: Default::default(),
+        };
+
+        let validation = runtime.validate_workflow(&workflow);
+        assert!(validation.valid, "expected valid flow, got: {validation:?}");
+    }
+
+    #[test]
+    fn table_merge_can_connect_to_table_output() {
+        let runtime = RuntimeService::default();
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_table_merge_table_output".to_string(),
+            version: 1,
+            name: "Table Merge Table Output".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "table_input_source".to_string(),
+                    type_id: "table_input".to_string(),
+                    definition_version: 1,
+                    label: Some("Table Input".to_string()),
+                    config: json!({
+                        "catalog": "workspace",
+                        "schema_name": "staging",
+                        "table_name": "earnings_calendar"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "table_merge".to_string(),
+                    type_id: "table_merge".to_string(),
+                    definition_version: 1,
+                    label: Some("Table Merge".to_string()),
+                    config: json!({
+                        "target_schema": "tables",
+                        "write_policy": "upsert",
+                        "merge_key_columns": ["symbol", "report_date"],
+                        "delete_handling": "apply_delete_markers",
+                        "schema_drift_behavior": "fail_and_require_review"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "table_output".to_string(),
+                    type_id: "table_output".to_string(),
+                    definition_version: 1,
+                    label: Some("Table Output".to_string()),
+                    config: json!({
+                        "target_schema": "outputs",
+                        "table_name": "published_tables",
+                        "input_shape": "source_table",
+                        "write_mode": "append"
+                    }),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![
+                WorkflowEdge {
+                    edge_id: "edge_table_input_to_table_merge".to_string(),
+                    source_node_id: "table_input_source".to_string(),
+                    source_port_id: "table".to_string(),
+                    target_node_id: "table_merge".to_string(),
+                    target_port_id: "table".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_table_merge_to_table_output".to_string(),
+                    source_node_id: "table_merge".to_string(),
+                    source_port_id: "table".to_string(),
+                    target_node_id: "table_output".to_string(),
+                    target_port_id: "text".to_string(),
+                },
+            ],
+            metadata: Default::default(),
+        };
+
+        let validation = runtime.validate_workflow(&workflow);
+        assert!(validation.valid, "expected valid flow, got: {validation:?}");
     }
 
     #[test]

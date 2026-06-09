@@ -190,6 +190,153 @@ const BUILTIN_NODE_CARD_FALLBACKS = {
       density: 'comfortable'
     }
   },
+  checkpoint_read: {
+    variant: 'compute',
+    icon_key: 'checkpoint_read',
+    top_chip: {
+      visible: false,
+      text: null
+    },
+    header: {
+      title_source: 'instance_label_or_display_name',
+      show_overflow_menu: true
+    },
+    rows: [
+      {
+        row_id: 'source_repo',
+        kind: 'kv',
+        label: 'Repo',
+        value: { source: 'config', path: 'source_repo' },
+        formatter: 'text',
+        icon_key: 'label',
+        truncate: false
+      },
+      {
+        row_id: 'branch',
+        kind: 'kv',
+        label: 'Branch',
+        value: { source: 'config', path: 'branch' },
+        formatter: 'text',
+        icon_key: 'status',
+        truncate: false
+      }
+    ],
+    footer: {
+      kind: 'metric',
+      label: 'Checkpoint store',
+      value: { source: 'config', path: 'checkpoint_table' },
+      formatter: 'text',
+      icon_key: 'metric'
+    },
+    handles: {
+      input_layout: 'none',
+      output_layout: 'single_right',
+      show_labels: 'never',
+      align_to_rows: true
+    },
+    size: {
+      width: 336,
+      density: 'comfortable'
+    }
+  },
+  checkpoint_write: {
+    variant: 'compute',
+    icon_key: 'checkpoint_write',
+    top_chip: {
+      visible: false,
+      text: null
+    },
+    header: {
+      title_source: 'instance_label_or_display_name',
+      show_overflow_menu: true
+    },
+    rows: [
+      {
+        row_id: 'checkpoint_table',
+        kind: 'kv',
+        label: 'Checkpoint',
+        value: { source: 'config', path: 'checkpoint_table' },
+        formatter: 'text',
+        icon_key: 'metric',
+        truncate: false
+      },
+      {
+        row_id: 'write_timing',
+        kind: 'kv',
+        label: 'Timing',
+        value: { source: 'config', path: 'write_timing' },
+        formatter: 'text',
+        icon_key: 'status',
+        truncate: false
+      }
+    ],
+    footer: {
+      kind: 'metric',
+      label: 'Commit source',
+      value: { source: 'config', path: 'commit_source' },
+      formatter: 'text',
+      icon_key: 'logic'
+    },
+    handles: {
+      input_layout: 'single_left',
+      output_layout: 'single_right',
+      show_labels: 'never',
+      align_to_rows: true
+    },
+    size: {
+      width: 336,
+      density: 'comfortable'
+    }
+  },
+  quality_check: {
+    variant: 'compute',
+    icon_key: 'quality_check',
+    top_chip: {
+      visible: false,
+      text: null
+    },
+    header: {
+      title_source: 'instance_label_or_display_name',
+      show_overflow_menu: true
+    },
+    rows: [
+      {
+        row_id: 'suite_preset',
+        kind: 'kv',
+        label: 'Suite',
+        value: { source: 'config', path: 'suite_preset' },
+        formatter: 'text',
+        icon_key: 'logic',
+        truncate: false
+      },
+      {
+        row_id: 'warning_budget',
+        kind: 'kv',
+        label: 'Budget',
+        value: { source: 'config', path: 'warning_budget' },
+        formatter: 'text',
+        icon_key: 'metric',
+        truncate: false
+      }
+    ],
+    footer: {
+      kind: 'metric',
+      label: 'Gate',
+      value: { source: 'config', path: 'block_checkpoint_write_on_failure' },
+      formatter: 'text',
+      icon_key: 'status'
+    },
+    handles: {
+      input_layout: 'single_left',
+      output_layout: 'single_right',
+      show_labels: 'never',
+      align_to_rows: true
+    },
+    size: {
+      width: 336,
+      density: 'comfortable'
+    }
+  },
   table_output: {
     variant: 'output',
     icon_key: 'table_output',
@@ -240,6 +387,55 @@ const BUILTIN_NODE_CARD_FALLBACKS = {
     handles: {
       input_layout: 'single_left',
       output_layout: 'none',
+      show_labels: 'never',
+      align_to_rows: true
+    },
+    size: {
+      width: 336,
+      density: 'comfortable'
+    }
+  },
+  table_merge: {
+    variant: 'compute',
+    icon_key: 'logic',
+    top_chip: {
+      visible: false,
+      text: null
+    },
+    header: {
+      title_source: 'instance_label_or_display_name',
+      show_overflow_menu: true
+    },
+    rows: [
+      {
+        row_id: 'write_policy',
+        kind: 'kv',
+        label: 'Policy',
+        value: { source: 'config', path: 'write_policy' },
+        formatter: 'text',
+        icon_key: 'logic',
+        truncate: false
+      },
+      {
+        row_id: 'target_schema',
+        kind: 'kv',
+        label: 'Target',
+        value: { source: 'config', path: 'target_schema' },
+        formatter: 'text',
+        icon_key: 'table_output',
+        truncate: false
+      }
+    ],
+    footer: {
+      kind: 'metric',
+      label: 'Delete handling',
+      value: { source: 'config', path: 'delete_handling' },
+      formatter: 'text',
+      icon_key: 'status'
+    },
+    handles: {
+      input_layout: 'single_left',
+      output_layout: 'single_right',
       show_labels: 'never',
       align_to_rows: true
     },
@@ -300,15 +496,24 @@ const BUILTIN_NODE_CARD_FALLBACKS = {
 }
 
 const ICON_LABELS = {
+  dolt_change_manifest: 'd',
+  dolt_diff_export: 'd',
+  dolt_dump: 'd',
+  dolt_repo_source: 'd',
+  dolt_repo_sync: 'd',
   duration: 'D',
   email: '@',
   label: 'T',
   logic: '</>',
   metric: '#',
+  checkpoint_read: 'R',
+  checkpoint_write: 'W',
+  quality_check: 'Q',
   preview_output: 'O',
   send_email: '@',
   sparkles: 'O',
   status: 'S',
+  table_merge: 'G',
   table_input: '[]',
   table_output: '[]',
   text_input: 'T',
@@ -482,6 +687,26 @@ function formatBoundValue(value, formatter) {
 
 function buildNodeCardContext({ workflow, node, nodeDefinitions }) {
   const previewResolver = createTextPreviewResolver(workflow, nodeDefinitions)
+  const doltRepoCard = buildDoltRepoCardDerivedValues(node?.config ?? {})
+  const doltRepoSyncCard = buildDoltRepoSyncCardDerivedValues(
+    workflow,
+    node?.node_id,
+    node?.config ?? {}
+  )
+  const doltChangeManifestCard = buildDoltChangeManifestCardDerivedValues(
+    workflow,
+    node?.node_id,
+    node?.config ?? {}
+  )
+  const doltDiffExportCard = buildDoltDiffExportCardDerivedValues(
+    workflow,
+    node?.node_id,
+    node?.config ?? {}
+  )
+  const loadToDuckDbCard = buildLoadToDuckDbCardDerivedValues(
+    workflow,
+    node?.node_id
+  )
 
   return {
     config: node?.config ?? {},
@@ -497,8 +722,401 @@ function buildNodeCardContext({ workflow, node, nodeDefinitions }) {
       last_status: 'idle'
     },
     derived: {
-      char_count: typeof node?.config?.text === 'string' ? node.config.text.length : 0
+      char_count: typeof node?.config?.text === 'string' ? node.config.text.length : 0,
+      dolt_current_commit: doltRepoCard.currentCommit,
+      dolt_repo_family: doltRepoCard.repoFamily,
+      dolt_sync_strategy: doltRepoCard.syncStrategy,
+      dolt_sync_action: doltRepoSyncCard.syncAction,
+      dolt_sync_current_commit: doltRepoSyncCard.currentCommit,
+      dolt_sync_previous_commit: doltRepoSyncCard.previousCommit,
+      dolt_manifest_range: doltChangeManifestCard.range,
+      dolt_manifest_scope: doltChangeManifestCard.scope,
+      dolt_manifest_schema_drift: doltChangeManifestCard.schemaDrift,
+      dolt_diff_bundle: doltDiffExportCard.bundle,
+      dolt_diff_filter: doltDiffExportCard.filter,
+      dolt_diff_range: doltDiffExportCard.range,
+      load_bundle_mode: loadToDuckDbCard.bundleMode,
+      load_merge_context: loadToDuckDbCard.mergeContext
     }
+  }
+}
+
+function buildDoltRepoCardDerivedValues(config = {}) {
+  const repository = typeof config.repository === 'string' ? config.repository.trim() : ''
+  const checkoutRef =
+    typeof config.checkout_ref === 'string' && config.checkout_ref.trim()
+      ? config.checkout_ref.trim()
+      : null
+  const profile = resolveMockDoltRepoCardProfile(repository)
+  const currentCommit = checkoutRef
+    ? checkoutRef.slice(0, 12)
+    : profile?.currentCommit ?? 'pending_sync'
+
+  return {
+    currentCommit,
+    repoFamily: profile?.repoFamily ?? deriveDoltRepoFamily(repository),
+    syncStrategy: humanizeToken(
+      config.sync_strategy === 'clone_only' || config.sync_strategy === 'manual'
+        ? config.sync_strategy
+        : 'pull_before_execution'
+    )
+  }
+}
+
+function resolveMockDoltRepoCardProfile(repository) {
+  switch (repository) {
+    case 'post-no-preference/earnings':
+      return {
+        repoFamily: 'earnings',
+        previousCommit: '92fd7ac',
+        currentCommit: 'a34ef9c'
+      }
+    case 'post-no-preference/options':
+      return {
+        repoFamily: 'options',
+        previousCommit: 'ac31f0b',
+        currentCommit: 'b91c2aa'
+      }
+    case 'post-no-preference/rates':
+      return {
+        repoFamily: 'rates',
+        previousCommit: 'c83f10d',
+        currentCommit: 'd0f61b4'
+      }
+    default:
+      return null
+  }
+}
+
+function buildDoltRepoSyncCardDerivedValues(workflow, nodeId, config = {}) {
+  const sourceConfig = resolveConnectedDoltRepoSourceCardConfig(workflow, nodeId)
+  const repository =
+    typeof sourceConfig?.repository === 'string' && sourceConfig.repository.trim()
+      ? sourceConfig.repository.trim()
+      : 'post-no-preference/earnings'
+  const profile = resolveMockDoltRepoCardProfile(repository)
+  const checkoutRef =
+    typeof sourceConfig?.checkout_ref === 'string' && sourceConfig.checkout_ref.trim()
+      ? sourceConfig.checkout_ref.trim()
+      : ''
+  const syncAction =
+    config?.sync_action === 'fetch_and_checkout' || config?.sync_action === 'refresh_checkout'
+      ? config.sync_action
+      : 'pull_remote_head'
+
+  return {
+    currentCommit: checkoutRef
+      ? checkoutRef.slice(0, 12)
+      : profile?.currentCommit ?? 'pending_sync',
+    previousCommit: profile?.previousCommit ?? 'pending_checkpoint',
+    syncAction: humanizeToken(syncAction)
+  }
+}
+
+function buildDoltChangeManifestCardDerivedValues(workflow, nodeId, config = {}) {
+  const syncContext = resolveConnectedDoltRepoSyncCardContext(workflow, nodeId)
+  const sourceConfig = syncContext?.sourceConfig ?? null
+  const repository =
+    typeof sourceConfig?.repository === 'string' && sourceConfig.repository.trim()
+      ? sourceConfig.repository.trim()
+      : 'post-no-preference/earnings'
+  const repoProfile = resolveMockDoltRepoCardProfile(repository)
+  const manifestProfile = resolveMockDoltChangeManifestProfile(repository)
+  const checkoutRef =
+    typeof sourceConfig?.checkout_ref === 'string' && sourceConfig.checkout_ref.trim()
+      ? sourceConfig.checkout_ref.trim()
+      : ''
+  const previousCommit = repoProfile?.previousCommit ?? 'pending_checkpoint'
+  const currentCommit = checkoutRef
+    ? checkoutRef.slice(0, 12)
+    : repoProfile?.currentCommit ?? 'pending_sync'
+  const selectedTables = normalizeSelectedTableNames(config?.selected_tables)
+  const tableScope = config?.table_scope === 'allowlist' ? 'allowlist' : 'all_tables'
+  const changedTables = filterManifestTablesForScope(
+    manifestProfile?.changedTables ?? [],
+    tableScope,
+    selectedTables
+  )
+  const schemaFlags = filterManifestTablesForScope(
+    manifestProfile?.schemaChangedTables ?? [],
+    tableScope,
+    selectedTables
+  )
+
+  return {
+    range: `${previousCommit} -> ${currentCommit}`,
+    scope:
+      tableScope === 'allowlist'
+        ? selectedTables.length > 0
+          ? `${selectedTables.length} selected`
+          : 'selected tables'
+        : 'all tables',
+    schemaDrift:
+      schemaFlags.length > 0
+        ? `${schemaFlags.length} table${schemaFlags.length === 1 ? '' : 's'} flagged`
+        : changedTables.length > 0
+          ? 'no drift'
+          : 'pending scope'
+  }
+}
+
+function buildDoltDiffExportCardDerivedValues(workflow, nodeId, config = {}) {
+  const manifestContext = resolveConnectedDoltDiffExportCardContext(workflow, nodeId)
+  const repository =
+    typeof manifestContext?.sourceConfig?.repository === 'string' &&
+    manifestContext.sourceConfig.repository.trim()
+      ? manifestContext.sourceConfig.repository.trim()
+      : 'post-no-preference/earnings'
+  const repoProfile = resolveMockDoltRepoCardProfile(repository)
+  const checkoutRef =
+    typeof manifestContext?.sourceConfig?.checkout_ref === 'string' &&
+    manifestContext.sourceConfig.checkout_ref.trim()
+      ? manifestContext.sourceConfig.checkout_ref.trim()
+      : ''
+  const previousCommit = repoProfile?.previousCommit ?? 'pending_checkpoint'
+  const currentCommit = checkoutRef
+    ? checkoutRef.slice(0, 12)
+    : repoProfile?.currentCommit ?? 'pending_sync'
+
+  return {
+    bundle: 'directory_ref',
+    filter: describeDoltDiffExportChangeFilter(config?.change_filter),
+    range: `${previousCommit} -> ${currentCommit}`
+  }
+}
+
+function buildLoadToDuckDbCardDerivedValues(workflow, nodeId) {
+  const inputEdge = workflow?.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'bundle'
+  )
+  const sourceNode = workflow?.nodes?.find(
+    (node) => node.node_id === inputEdge?.source_node_id
+  )
+
+  if (sourceNode?.type_id === 'dolt_diff_export') {
+    const diffCard = buildDoltDiffExportCardDerivedValues(
+      workflow,
+      sourceNode.node_id,
+      sourceNode.config ?? {}
+    )
+    return {
+      bundleMode: 'delta bundle',
+      mergeContext: diffCard.range
+    }
+  }
+
+  if (sourceNode?.type_id === 'dolt_dump') {
+    const dumpContext = resolveConnectedDoltDumpCardContext(workflow, sourceNode.node_id)
+    const repository =
+      typeof dumpContext?.sourceConfig?.repository === 'string' &&
+      dumpContext.sourceConfig.repository.trim()
+        ? dumpContext.sourceConfig.repository.trim()
+        : 'post-no-preference/earnings'
+    const profile = resolveMockDoltRepoCardProfile(repository)
+    const checkoutRef =
+      typeof dumpContext?.sourceConfig?.checkout_ref === 'string' &&
+      dumpContext.sourceConfig.checkout_ref.trim()
+        ? dumpContext.sourceConfig.checkout_ref.trim()
+        : ''
+
+    return {
+      bundleMode: 'snapshot bundle',
+      mergeContext: checkoutRef
+        ? checkoutRef.slice(0, 12)
+        : profile?.currentCommit ?? 'pending_sync'
+    }
+  }
+
+  return {
+    bundleMode: 'dump + diff aware',
+    mergeContext: 'load manifest'
+  }
+}
+
+function resolveConnectedDoltRepoSourceCardConfig(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return null
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'repo'
+  )
+  if (!incomingEdge) {
+    return null
+  }
+
+  const sourceNode = workflow.nodes?.find(
+    (node) =>
+      node.node_id === incomingEdge.source_node_id && node.type_id === 'dolt_repo_source'
+  )
+
+  return sourceNode?.config ?? null
+}
+
+function resolveConnectedDoltRepoSyncCardContext(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return null
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'repo'
+  )
+  if (!incomingEdge) {
+    return null
+  }
+
+  const syncNode = workflow.nodes?.find(
+    (node) =>
+      node.node_id === incomingEdge.source_node_id && node.type_id === 'dolt_repo_sync'
+  )
+  if (!syncNode) {
+    return null
+  }
+
+  return {
+    sourceConfig: resolveConnectedDoltRepoSourceCardConfig(workflow, syncNode.node_id),
+    syncConfig: syncNode.config ?? {}
+  }
+}
+
+function resolveConnectedDoltDumpCardContext(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return null
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'repo'
+  )
+  if (!incomingEdge) {
+    return null
+  }
+
+  const sourceNode = workflow.nodes?.find((node) => node.node_id === incomingEdge.source_node_id)
+  if (!sourceNode) {
+    return null
+  }
+
+  if (sourceNode.type_id === 'dolt_repo_source') {
+    return {
+      sourceConfig: sourceNode.config ?? null
+    }
+  }
+
+  if (sourceNode.type_id === 'dolt_repo_sync') {
+    return {
+      sourceConfig: resolveConnectedDoltRepoSourceCardConfig(workflow, sourceNode.node_id)
+    }
+  }
+
+  if (sourceNode.type_id === 'dolt_change_manifest') {
+    return {
+      sourceConfig: resolveConnectedDoltRepoSyncCardContext(workflow, sourceNode.node_id)
+        ?.sourceConfig ?? null
+    }
+  }
+
+  return null
+}
+
+function resolveConnectedDoltDiffExportCardContext(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return null
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'manifest'
+  )
+  if (!incomingEdge) {
+    return null
+  }
+
+  const manifestNode = workflow.nodes?.find(
+    (node) =>
+      node.node_id === incomingEdge.source_node_id && node.type_id === 'dolt_change_manifest'
+  )
+  if (!manifestNode) {
+    return null
+  }
+
+  return {
+    manifestConfig: manifestNode.config ?? {},
+    sourceConfig: resolveConnectedDoltRepoSyncCardContext(workflow, manifestNode.node_id)
+      ?.sourceConfig ?? null
+  }
+}
+
+function resolveMockDoltChangeManifestProfile(repository) {
+  switch (repository) {
+    case 'post-no-preference/earnings':
+      return {
+        changedTables: ['earnings_calendar', 'eps_history', 'income_statement'],
+        schemaChangedTables: ['income_statement']
+      }
+    case 'post-no-preference/options':
+      return {
+        changedTables: ['option_chain', 'volatility_history'],
+        schemaChangedTables: []
+      }
+    case 'post-no-preference/rates':
+      return {
+        changedTables: ['us_treasury'],
+        schemaChangedTables: []
+      }
+    default:
+      return null
+  }
+}
+
+function normalizeSelectedTableNames(value) {
+  if (Array.isArray(value)) {
+    return [...new Set(value.map((entry) => (typeof entry === 'string' ? entry.trim() : '')).filter(Boolean))]
+  }
+
+  if (typeof value === 'string') {
+    return [...new Set(value.split(',').map((entry) => entry.trim()).filter(Boolean))]
+  }
+
+  return []
+}
+
+function filterManifestTablesForScope(changedTables, tableScope, selectedTables) {
+  if (tableScope !== 'allowlist') {
+    return [...changedTables]
+  }
+
+  if (selectedTables.length === 0) {
+    return []
+  }
+
+  const selectedSet = new Set(selectedTables)
+  return changedTables.filter((tableName) => selectedSet.has(tableName))
+}
+
+function deriveDoltRepoFamily(repository) {
+  if (!repository) {
+    return 'repo'
+  }
+
+  const segments = repository
+    .split('/')
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+
+  return segments[segments.length - 1] ?? 'repo'
+}
+
+function describeDoltDiffExportChangeFilter(changeFilter) {
+  switch (changeFilter) {
+    case 'non_delete_changes':
+      return 'Non-delete changes'
+    case 'added_only':
+      return 'Added only'
+    case 'modified_only':
+      return 'Modified only'
+    case 'removed_only':
+      return 'Removed only'
+    default:
+      return 'All changes'
   }
 }
 

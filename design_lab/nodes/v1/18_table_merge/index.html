@@ -570,7 +570,7 @@
               </div>
               <div class="node-card__header-meta">
                 <span class="node-card__header-dot" aria-hidden="true"></span>
-                <span>1 input</span>
+                <span>1 in · 1 out</span>
               </div>
             </header>
             <section class="node-card__body">
@@ -586,10 +586,16 @@
                   <strong class="node-card__summary-target">symbol, report_date</strong>
                 </div>
               </div>
+              <div class="node-card__row node-card__row--summary">
+                <div class="node-card__summary-head">
+                  <span class="node-card__summary-label">Deletes</span>
+                  <strong class="node-card__summary-target">markers on</strong>
+                </div>
+              </div>
             </section>
             <footer class="node-card__footer">
               <span class="node-card__footer-meta"><span class="node-card__footer-icon" aria-hidden="true">@</span><span>Target</span></span>
-              <strong>tables.*</strong>
+              <strong>tables durable</strong>
             </footer>
             <span class="node-card__handle node-card__handle--left" aria-hidden="true"></span>
             <span class="node-card__handle node-card__handle--right" aria-hidden="true"></span>
@@ -608,7 +614,7 @@
               </div>
               <div class="node-card__header-meta">
                 <span class="node-card__header-dot" aria-hidden="true"></span>
-                <span>1 output</span>
+                <span>1 input</span>
               </div>
             </header>
             <section class="node-card__body">
@@ -668,6 +674,10 @@
             </div>
             <div class="node-panel__fields">
               <div class="node-panel__field">
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Input source set</span><span class="node-panel__field-hint">landed staging</span></div>
+                <div class="node-panel__control"><span>staging.fundamentals__filing__dolthub__entity__snapshot</span></div>
+              </div>
+              <div class="node-panel__field">
                 <div class="node-panel__field-head"><span class="node-panel__field-label">Target table family</span><span class="node-panel__field-hint">durable layer</span></div>
                 <div class="node-panel__control"><span>tables.fundamentals__filing__dolthub__entity__normalized</span></div>
               </div>
@@ -688,6 +698,17 @@
           <section class="node-panel__contract">
             <div class="node-panel__section-head">
               <div>
+                <div class="node-panel__section-kicker">Input contract</div>
+                <h3 class="node-panel__section-title">What raw landing hands to merge</h3>
+              </div>
+            </div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Landed table set</span><strong class="node-panel__contract-value">table_ref[]</strong></div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Delete intent</span><strong class="node-panel__contract-value">metadata.delete_markers</strong></div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Batch lineage</span><strong class="node-panel__contract-value">metadata.load_manifest_ref</strong></div>
+          </section>
+          <section class="node-panel__contract">
+            <div class="node-panel__section-head">
+              <div>
                 <div class="node-panel__section-kicker">Output contract</div>
                 <h3 class="node-panel__section-title">What downstream tables trust</h3>
               </div>
@@ -697,8 +718,8 @@
             <div class="node-panel__contract-row"><span class="node-panel__contract-label">Reconcile summary</span><strong class="node-panel__contract-value">metadata.merge_summary</strong></div>
           </section>
           <section class="node-panel__notes">
-            <div><span class="node-panel__note-label">Boundary</span><p class="node-panel__note-copy">This node is where correctness policy lives. It should not be collapsed into the raw load step, because raw landing and durable truth have different needs.</p></div>
-            <div><span class="node-panel__note-label">Why separate from output</span><p class="node-panel__note-copy">Many workflows will stop at durable internal `tables` long before they publish into `outputs`, so merge should stand on its own.</p></div>
+            <div><span class="node-panel__note-label">Boundary</span><p class="node-panel__note-copy">This node is where correctness policy lives. Raw landing should stay fast and append-friendly, while merge owns business keys, deletes, and durable table truth.</p></div>
+            <div><span class="node-panel__note-label">Why separate from output</span><p class="node-panel__note-copy">Many workflows stop at durable internal `tables` long before they publish into `outputs`, so merge should stand on its own as the normalized-storage boundary.</p></div>
           </section>
           <section class="node-panel__subsection" aria-label="Execution timing">
             <p class="node-panel__subsection-title">Execution timing</p>
@@ -707,7 +728,7 @@
           </section>
           <footer class="node-panel__footer">
             <div class="node-panel__footer-row"><span class="node-panel__footer-label">Best downstream pair</span><span class="node-panel__footer-value">`table_output` or transform nodes</span></div>
-            <button class="node-panel__button" type="button">Stage node direction</button>
+            <button class="node-panel__button" type="button">Save merge draft</button>
           </footer>
         </aside>
       </section>

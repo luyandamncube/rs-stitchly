@@ -270,10 +270,10 @@
         <div class="flow-scene">
           <div class="flow-caption">
             <span class="flow-caption__eyebrow">Node Study 14</span>
-            <h1>Dolt change manifest as table-aware change detection</h1>
+            <h1>Dolt change manifest as scoped change detection</h1>
             <p>
-              This study treats manifest generation as the thin layer that decides which tables changed,
-              how much they changed, and whether schema drift needs special handling.
+              This study treats manifest generation as the thin layer that reads a resolved commit range,
+              decides which tables changed, and flags schema drift before any export work begins.
             </p>
           </div>
           <svg class="flow-connection" viewBox="0 0 860 804" preserveAspectRatio="none" aria-hidden="true">
@@ -294,14 +294,14 @@
             </header>
             <section class="node-card__body">
               <div class="node-card__row node-card__row--summary"><div class="node-card__summary-head"><span class="node-card__summary-label">Range</span><strong class="node-card__summary-target">92fd7ac -> a34ef9c</strong></div></div>
-              <div class="node-card__row node-card__row--summary"><div class="node-card__summary-head"><span class="node-card__summary-label">Changed tables</span><strong class="node-card__summary-target">3 tables</strong></div></div>
+              <div class="node-card__row node-card__row--summary"><div class="node-card__summary-head"><span class="node-card__summary-label">Scope</span><strong class="node-card__summary-target">all tables</strong></div></div>
             </section>
             <footer class="node-card__footer"><span class="node-card__footer-meta"><span class="node-card__footer-icon" aria-hidden="true">!</span><span>Schema drift</span></span><strong>1 table flagged</strong></footer>
             <span class="node-card__handle node-card__handle--left" aria-hidden="true"></span>
             <span class="node-card__handle node-card__handle--right" aria-hidden="true"></span>
           </article>
 
-          <div class="flow-node__hint" aria-hidden="true"><span>emits</span><strong>`changed_tables[]`, row counts, schema flags</strong></div>
+          <div class="flow-node__hint" aria-hidden="true"><span>emits</span><strong>manifest handle + `changed_tables[]` + schema flags</strong></div>
 
           <article class="node-card node-card--diff flow-node flow-node--diff" aria-label="Dolt diff export node">
             <header class="node-card__header"><div class="node-card__heading"><span class="node-card__icon node-card__icon--dolt" aria-hidden="true"><svg class="dolt-mark" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 16C1.791 16 0 14.209 0 12V8C0 5.791 1.791 4 4 4H6V1.75C6 0.784 6.784 0 7.75 0C8.716 0 9.5 0.784 9.5 1.75V12C9.5 14.209 7.709 16 5.5 16H4ZM4 7.5C3.724 7.5 3.5 7.724 3.5 8V12C3.5 12.276 3.724 12.5 4 12.5H5.5C5.776 12.5 6 12.276 6 12V7.5H4Z" fill="currentColor"/></svg></span><div class="node-card__title-copy"><strong>Diff Export</strong><span class="node-card__title-subtitle">dolt_diff_export</span></div></div><div class="node-card__header-meta"><span class="node-card__header-dot" aria-hidden="true"></span><span>1 output</span></div></header>
@@ -319,7 +319,7 @@
           <header class="node-panel__header">
             <div class="node-panel__title-group">
               <span class="node-panel__title-icon node-panel__title-icon--dolt" aria-hidden="true"><svg class="dolt-mark" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 16C1.791 16 0 14.209 0 12V8C0 5.791 1.791 4 4 4H6V1.75C6 0.784 6.784 0 7.75 0C8.716 0 9.5 0.784 9.5 1.75V12C9.5 14.209 7.709 16 5.5 16H4ZM4 7.5C3.724 7.5 3.5 7.724 3.5 8V12C3.5 12.276 3.724 12.5 4 12.5H5.5C5.776 12.5 6 12.276 6 12V7.5H4Z" fill="currentColor"/></svg></span>
-              <div><div class="node-panel__eyebrow">Node config</div><h2 class="node-panel__title">Dolt Change Manifest</h2><p class="node-panel__subtitle">Detect changed tables between two Dolt commits.</p></div>
+              <div><div class="node-panel__eyebrow">Node config</div><h2 class="node-panel__title">Dolt Change Manifest</h2><p class="node-panel__subtitle">Detect changed tables from an upstream resolved Dolt commit range.</p></div>
             </div>
             <div class="node-panel__header-meta"><span class="node-panel__status"><span class="node-panel__status-dot" aria-hidden="true"></span>Ready</span></div>
           </header>
@@ -327,33 +327,35 @@
           <section class="node-panel__summary">
             <div class="node-panel__section-head"><div><div class="node-panel__section-kicker">Diff scope</div><h3 class="node-panel__section-title">Manifest preview</h3></div></div>
             <div class="node-panel__summary-grid">
-              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Selected tables</span><strong class="node-panel__summary-value">all tables</strong></div>
-              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Changed tables</span><strong class="node-panel__summary-value">3 / 10</strong></div>
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Table scope</span><strong class="node-panel__summary-value">all tables</strong></div>
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Changed tables</span><strong class="node-panel__summary-value">3 tables</strong></div>
               <div class="node-panel__summary-card"><span class="node-panel__summary-label">Schema drift</span><strong class="node-panel__summary-value">1 flagged</strong></div>
-              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Deleted rows</span><strong class="node-panel__summary-value">tracked</strong></div>
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Row counts</span><strong class="node-panel__summary-value">best effort</strong></div>
             </div>
           </section>
 
           <section class="node-panel__section">
-            <div class="node-panel__section-head"><div><div class="node-panel__section-kicker">Range input</div><h3 class="node-panel__section-title">How the manifest is computed</h3></div></div>
+            <div class="node-panel__section-head"><div><div class="node-panel__section-kicker">Upstream input</div><h3 class="node-panel__section-title">How the manifest is computed</h3></div></div>
             <div class="node-panel__fields">
-              <div class="node-panel__field"><div class="node-panel__field-head"><span class="node-panel__field-label">Previous commit</span><span class="node-panel__field-hint">from sync/checkpoint</span></div><div class="node-panel__control"><span class="node-panel__control-code">92fd7ac</span></div></div>
-              <div class="node-panel__field"><div class="node-panel__field-head"><span class="node-panel__field-label">Current commit</span><span class="node-panel__field-hint">from sync</span></div><div class="node-panel__control"><span class="node-panel__control-code">a34ef9c</span></div></div>
+              <div class="node-panel__field"><div class="node-panel__field-head"><span class="node-panel__field-label">Input repo handle</span><span class="node-panel__field-hint">from sync node</span></div><div class="node-panel__control"><span class="node-panel__control-code">post-no-preference/earnings</span></div></div>
+              <div class="node-panel__field"><div class="node-panel__field-head"><span class="node-panel__field-label">Resolved range</span><span class="node-panel__field-hint">workflow managed</span></div><div class="node-panel__pill-row"><span class="node-panel__pill-label">Previous -> current</span><strong class="node-panel__pill-value">92fd7ac -> a34ef9c</strong></div></div>
               <div class="node-panel__field"><div class="node-panel__field-head"><span class="node-panel__field-label">Table scope</span><span class="node-panel__field-hint">filter early</span></div><div class="node-panel__control"><span>All tables in repo</span><span class="node-panel__caret" aria-hidden="true">v</span></div></div>
-              <div class="node-panel__field"><div class="node-panel__field-head"><span class="node-panel__field-label">Include schema changes</span><span class="node-panel__field-hint">drift detection</span></div><div class="node-panel__control"><span>Yes, flag separately</span><span class="node-panel__caret" aria-hidden="true">v</span></div></div>
+              <div class="node-panel__field"><div class="node-panel__field-head"><span class="node-panel__field-label">Schema change policy</span><span class="node-panel__field-hint">drift handling</span></div><div class="node-panel__control"><span>Flag and continue</span><span class="node-panel__caret" aria-hidden="true">v</span></div></div>
             </div>
           </section>
 
           <section class="node-panel__contract">
             <div class="node-panel__section-head"><div><div class="node-panel__section-kicker">Output contract</div><h3 class="node-panel__section-title">What downstream steps consume</h3></div></div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Manifest handle</span><strong class="node-panel__contract-value">change_manifest_ref</strong></div>
             <div class="node-panel__contract-row"><span class="node-panel__contract-label">Changed tables list</span><strong class="node-panel__contract-value">metadata.changed_tables[]</strong></div>
-            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Row change counts</span><strong class="node-panel__contract-value">metadata.row_change_summary</strong></div>
             <div class="node-panel__contract-row"><span class="node-panel__contract-label">Schema change flags</span><strong class="node-panel__contract-value">metadata.schema_change_flags</strong></div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Row change counts</span><strong class="node-panel__contract-value">metadata.row_change_summary (optional)</strong></div>
           </section>
 
           <section class="node-panel__notes">
-            <div><span class="node-panel__note-label">Boundary</span><p class="node-panel__note-copy">The manifest node decides what changed. It should not export files yet and it should not choose DuckDB load policy.</p></div>
+            <div><span class="node-panel__note-label">Boundary</span><p class="node-panel__note-copy">The manifest node decides what changed from a synced range. It should not export files yet and it should not choose DuckDB load policy.</p></div>
             <div><span class="node-panel__note-label">Fallback path</span><p class="node-panel__note-copy">Even if row-level diff export is not ready yet, this node still gives us enough information to only re-dump changed tables.</p></div>
+            <div><span class="node-panel__note-label">Best effort</span><p class="node-panel__note-copy">Row-level counts are helpful when available, but they should not be required for the manifest to remain useful.</p></div>
           </section>
 
           <section class="node-panel__subsection" aria-label="Execution timing">

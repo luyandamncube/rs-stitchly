@@ -112,6 +112,7 @@ const NODE_SHELF_GROUPS = [
       { typeId: 'text_input', label: 'Text Input', implemented: true },
       { typeId: 'json_input', label: 'JSON Input', implemented: false },
       { typeId: 'file_input', label: 'File Input', implemented: false },
+      { typeId: 'dolt_repo_source', label: 'Dolt Repo Source', implemented: true },
       { typeId: 'table_schema', label: 'Table Schema', implemented: true },
       { typeId: 'table_input', label: 'Table Input', implemented: true },
       { typeId: 'object_store_input', label: 'Object Store Input', implemented: false }
@@ -122,6 +123,9 @@ const NODE_SHELF_GROUPS = [
     label: 'Compute',
     icon: 'C',
     items: [
+      { typeId: 'checkpoint_read', label: 'Checkpoint Read', implemented: true },
+      { typeId: 'dolt_repo_sync', label: 'Dolt Repo Sync', implemented: true },
+      { typeId: 'dolt_change_manifest', label: 'Dolt Change Manifest', implemented: true },
       { typeId: 'api_request', label: 'API Request', implemented: false },
       { typeId: 'python_script', label: 'Python Script', implemented: false },
       { typeId: 'transform', label: 'Transform', implemented: false },
@@ -135,6 +139,10 @@ const NODE_SHELF_GROUPS = [
     label: 'Data Movement',
     icon: 'D',
     items: [
+      { typeId: 'dolt_dump', label: 'Dolt Dump', implemented: true },
+      { typeId: 'dolt_diff_export', label: 'Dolt Diff Export', implemented: true },
+      { typeId: 'load_to_duckdb', label: 'Load to DuckDB', implemented: true },
+      { typeId: 'table_merge', label: 'Table Merge', implemented: true },
       { typeId: 'extract', label: 'Extract', implemented: false },
       { typeId: 'load', label: 'Load', implemented: false },
       { typeId: 'materialize', label: 'Materialize', implemented: false }
@@ -145,6 +153,8 @@ const NODE_SHELF_GROUPS = [
     label: 'Control',
     icon: 'F',
     items: [
+      { typeId: 'quality_check', label: 'Quality Check', implemented: true },
+      { typeId: 'checkpoint_write', label: 'Checkpoint Write', implemented: true },
       { typeId: 'branch', label: 'Branch', implemented: false },
       { typeId: 'merge', label: 'Merge', implemented: false },
       { typeId: 'map', label: 'Map', implemented: false },
@@ -172,7 +182,6 @@ const NODE_SHELF_GROUPS = [
     icon: 'S',
     items: [
       { typeId: 'cache', label: 'Cache', implemented: false },
-      { typeId: 'quality_check', label: 'Quality Check', implemented: false },
       { typeId: 'debug', label: 'Debug', implemented: false },
       { typeId: 'note', label: 'Note', implemented: false }
     ]
@@ -761,6 +770,20 @@ function CanvasWorkflowRoute({
       cancelled = true;
     };
   }, [session.active_workspace_id, session.workspaces, workflowId, workspaceHintId]);
+
+  useEffect(() => {
+    if (
+      !workflowId ||
+      !resolvedWorkspace?.workspace_id ||
+      workspaceHintId === resolvedWorkspace.workspace_id
+    ) {
+      return;
+    }
+
+    navigate(buildWorkflowPath(workflowId, resolvedWorkspace.workspace_id), {
+      replace: true
+    });
+  }, [navigate, resolvedWorkspace, workflowId, workspaceHintId]);
 
   if (!workflowId) {
     return <Navigate replace to={getDefaultAppPath(session)} />;
@@ -4901,6 +4924,73 @@ function dataColumnTypeBadge(type) {
 
 function CanvasShelfItemIcon({ groupId, typeId }) {
   switch (typeId) {
+    case 'quality_check':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <path
+            d="M5.1 10.3L8.1 13.3L14.9 6.7"
+            stroke="currentColor"
+            strokeWidth="1.45"
+            strokeLinecap="square"
+            strokeLinejoin="miter"
+          />
+          <circle cx="10" cy="10" r="6.25" stroke="currentColor" strokeWidth="1.3" />
+        </svg>
+      );
+    case 'checkpoint_write':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <path
+            d="M6 4.9H12.5L15 7.4V15.1H6V4.9Z"
+            stroke="currentColor"
+            strokeWidth="1.3"
+            strokeLinejoin="miter"
+          />
+          <path
+            d="M12.3 5.1V7.6H14.8M7.9 10.25L9.5 11.85L12.35 9"
+            stroke="currentColor"
+            strokeWidth="1.25"
+            strokeLinecap="square"
+            strokeLinejoin="miter"
+          />
+        </svg>
+      );
+    case 'checkpoint_read':
+      return (
+        <svg viewBox="0 0 20 20" fill="none">
+          <circle cx="10" cy="10" r="5.75" stroke="currentColor" strokeWidth="1.35" />
+          <path
+            d="M10 6.9V10.15L12.35 11.65M6.25 6.85L4.8 8.15M6.25 13.15L4.8 11.85"
+            stroke="currentColor"
+            strokeWidth="1.3"
+            strokeLinecap="square"
+          />
+        </svg>
+      );
+    case 'dolt_repo_source':
+    case 'dolt_repo_sync':
+    case 'dolt_change_manifest':
+    case 'dolt_dump':
+    case 'dolt_diff_export':
+      return (
+        <svg viewBox="0 0 16 16" fill="none">
+          <path
+            d="M4 16C1.791 16 0 14.209 0 12V8C0 5.791 1.791 4 4 4H6V1.75C6 0.784 6.784 0 7.75 0C8.716 0 9.5 0.784 9.5 1.75V12C9.5 14.209 7.709 16 5.5 16H4ZM4 7.5C3.724 7.5 3.5 7.724 3.5 8V12C3.5 12.276 3.724 12.5 4 12.5H5.5C5.776 12.5 6 12.276 6 12V7.5H4Z"
+            fill="currentColor"
+          />
+        </svg>
+      );
+    case 'load_to_duckdb':
+      return (
+        <svg viewBox="0 0 16 16" fill="none">
+          <circle cx="8" cy="8" fill="currentColor" r="8" />
+          <circle cx="5.2" cy="8" fill="#f8d106" r="3.1" />
+          <path
+            d="M10.2 6.5H11.65C12.6777 6.5 13.5 7.32235 13.5 8.35C13.5 9.37765 12.6777 10.2 11.65 10.2H10.2V6.5Z"
+            fill="#f8d106"
+          />
+        </svg>
+      );
     case 'preview_output':
       return (
         <svg viewBox="0 0 20 20" fill="none">
@@ -4946,6 +5036,7 @@ function CanvasShelfItemIcon({ groupId, typeId }) {
       );
     case 'table_input':
     case 'table_output':
+    case 'table_merge':
       return (
         <svg viewBox="0 0 20 20" fill="none">
           <rect x="4.4" y="4.6" width="11.2" height="10.8" rx="1.3" stroke="currentColor" strokeWidth="1.25" />

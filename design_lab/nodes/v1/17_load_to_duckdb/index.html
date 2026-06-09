@@ -571,10 +571,11 @@
         <div class="flow-scene">
           <div class="flow-caption">
             <span class="flow-caption__eyebrow">Node Study 17</span>
-            <h1>Load to DuckDB as append-only raw landing</h1>
+            <h1>Load to DuckDB as bundle-aware staging landing</h1>
             <p>
-              This study keeps the load step centered on `staging` landing behavior, batch stamping,
-              and file-format-aware ingestion, while leaving durable reconcile policy to `table_merge`.
+              This study keeps the load step centered on `staging` landing behavior for both
+              `dolt_dump` and `dolt_diff_export`, preserving merge context while leaving durable
+              reconcile policy to `table_merge`.
             </p>
           </div>
           <svg class="flow-connection" viewBox="0 0 860 804" preserveAspectRatio="none" aria-hidden="true">
@@ -615,20 +616,20 @@
               </div>
               <div class="node-card__row node-card__row--summary">
                 <div class="node-card__summary-head">
-                  <span class="node-card__summary-label">Batch mode</span>
-                  <strong class="node-card__summary-target">append raw batch</strong>
+                  <span class="node-card__summary-label">Bundle mode</span>
+                  <strong class="node-card__summary-target">dump + diff aware</strong>
                 </div>
               </div>
             </section>
             <footer class="node-card__footer">
-              <span class="node-card__footer-meta"><span class="node-card__footer-icon" aria-hidden="true">#</span><span>Stamped cols</span></span>
-              <strong>5 metadata cols</strong>
+              <span class="node-card__footer-meta"><span class="node-card__footer-icon" aria-hidden="true">#</span><span>Merge context</span></span>
+              <strong>load manifest</strong>
             </footer>
             <span class="node-card__handle node-card__handle--left" aria-hidden="true"></span>
             <span class="node-card__handle node-card__handle--right" aria-hidden="true"></span>
           </article>
 
-          <div class="flow-node__hint" aria-hidden="true"><span>emits</span><strong>`table_ref[]` in `staging`</strong></div>
+          <div class="flow-node__hint" aria-hidden="true"><span>emits</span><strong>`table_ref[]` + `load_manifest_ref` in `staging`</strong></div>
 
           <article class="node-card node-card--merge flow-node flow-node--merge" aria-label="Table merge node">
             <header class="node-card__header">
@@ -683,7 +684,7 @@
               <div>
                 <div class="node-panel__eyebrow">Node config</div>
                 <h2 class="node-panel__title">Load To DuckDB</h2>
-                <p class="node-panel__subtitle">Land artifact bundles into `staging` tables with ingest metadata.</p>
+                <p class="node-panel__subtitle">Land full-table or delta bundles into `staging` tables with merge-aware ingest metadata.</p>
               </div>
             </div>
             <div class="node-panel__header-meta"><span class="node-panel__status"><span class="node-panel__status-dot" aria-hidden="true"></span>Ready</span></div>
@@ -692,39 +693,51 @@
             <div class="node-panel__section-head">
               <div>
                 <div class="node-panel__section-kicker">Landing shape</div>
-                <h3 class="node-panel__section-title">Raw batch ingest</h3>
+                <h3 class="node-panel__section-title">Bundle-aware staging ingest</h3>
               </div>
             </div>
             <div class="node-panel__summary-grid">
               <div class="node-panel__summary-card"><span class="node-panel__summary-label">Target schema</span><strong class="node-panel__summary-value">staging</strong></div>
-              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Input format</span><strong class="node-panel__summary-value">parquet</strong></div>
-              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Write mode</span><strong class="node-panel__summary-value">append only</strong></div>
-              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Stamped columns</span><strong class="node-panel__summary-value">source + batch metadata</strong></div>
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Input contract</span><strong class="node-panel__summary-value">dump + diff bundles</strong></div>
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Schema handling</span><strong class="node-panel__summary-value">infer first, validate later</strong></div>
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Merge context</span><strong class="node-panel__summary-value">commit + delete aware</strong></div>
             </div>
           </section>
           <section class="node-panel__section">
             <div class="node-panel__section-head">
               <div>
                 <div class="node-panel__section-kicker">Load behavior</div>
-                <h3 class="node-panel__section-title">How files become staging tables</h3>
+                <h3 class="node-panel__section-title">How bundles become staging tables</h3>
               </div>
             </div>
             <div class="node-panel__fields">
+              <div class="node-panel__field">
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Input bundle</span><span class="node-panel__field-hint">upstream contract</span></div>
+                <div class="node-panel__control"><span>Auto-detect `dolt_dump_bundle` / `dolt_diff_export_bundle`</span></div>
+              </div>
               <div class="node-panel__field">
                 <div class="node-panel__field-head"><span class="node-panel__field-label">Target schema</span><span class="node-panel__field-hint">landing zone</span></div>
                 <div class="node-panel__control"><span>staging</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
               </div>
               <div class="node-panel__field">
-                <div class="node-panel__field-head"><span class="node-panel__field-label">Table mapping</span><span class="node-panel__field-hint">one file per table</span></div>
-                <div class="node-panel__control"><span>Mirror source table names</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Table mapping</span><span class="node-panel__field-hint">full vs delta landing</span></div>
+                <div class="node-panel__control"><span>Bundle-aware staging names</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
               </div>
               <div class="node-panel__field">
-                <div class="node-panel__field-head"><span class="node-panel__field-label">Schema inference</span><span class="node-panel__field-hint">type fidelity</span></div>
-                <div class="node-panel__control"><span>Infer and persist</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Format handling</span><span class="node-panel__field-hint">from `directory_ref.format`</span></div>
+                <div class="node-panel__control"><span>Read bundle format at runtime</span></div>
+              </div>
+              <div class="node-panel__field">
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Schema handling</span><span class="node-panel__field-hint">bootstrap vs recurring</span></div>
+                <div class="node-panel__control"><span>Infer on first load, validate on recurring loads</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
+              </div>
+              <div class="node-panel__field">
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Delta context preservation</span><span class="node-panel__field-hint">merge-aware</span></div>
+                <div class="node-panel__control"><span>Preserve commit range and delete flags</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
               </div>
               <div class="node-panel__field">
                 <div class="node-panel__field-head"><span class="node-panel__field-label">Metadata stamping</span><span class="node-panel__field-hint">lineage</span></div>
-                <div class="node-panel__pill-row"><span class="node-panel__pill-label">Added on ingest</span><strong class="node-panel__pill-value">source_repo, source_table, source_commit, ingested_at, batch_id</strong></div>
+                <div class="node-panel__pill-row"><span class="node-panel__pill-label">Added on ingest</span><strong class="node-panel__pill-value">source_repo, source_table, batch_id, ingested_at, bundle_kind, previous_commit, current_commit, delete_rows_present</strong></div>
               </div>
             </div>
           </section>
@@ -736,12 +749,15 @@
               </div>
             </div>
             <div class="node-panel__contract-row"><span class="node-panel__contract-label">Staging table refs</span><strong class="node-panel__contract-value">table_ref[]</strong></div>
-            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Load manifest</span><strong class="node-panel__contract-value">metadata.loaded_tables[]</strong></div>
-            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Batch metadata</span><strong class="node-panel__contract-value">metadata.batch_id</strong></div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Load manifest handle</span><strong class="node-panel__contract-value">load_manifest_ref</strong></div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Loaded table summary</span><strong class="node-panel__contract-value">metadata.loaded_tables[]</strong></div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Bundle kind</span><strong class="node-panel__contract-value">metadata.bundle_kind</strong></div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Merge context</span><strong class="node-panel__contract-value">metadata.previous_commit, metadata.current_commit, metadata.delete_rows_present</strong></div>
           </section>
           <section class="node-panel__notes">
             <div><span class="node-panel__note-label">Boundary</span><p class="node-panel__note-copy">This node only lands raw or delta files into `staging`. It should not decide durable merge policy.</p></div>
             <div><span class="node-panel__note-label">Why append only here</span><p class="node-panel__note-copy">Append-only landing gives us fast ingest, replayability, and easier debugging. Correctness decisions happen later in `table_merge`.</p></div>
+            <div><span class="node-panel__note-label">Bundle-aware by design</span><p class="node-panel__note-copy">Full-table bootstrap bundles and row-level delta bundles should land through the same node, but with enough preserved context for `table_merge` to stay delete-aware.</p></div>
           </section>
           <section class="node-panel__subsection" aria-label="Execution timing">
             <p class="node-panel__subsection-title">Execution timing</p>

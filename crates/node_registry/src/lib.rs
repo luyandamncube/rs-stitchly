@@ -706,6 +706,1209 @@ pub fn builtin_node_definitions() -> Vec<NodeDefinition> {
             },
         },
         NodeDefinition {
+            type_id: "dolt_repo_source".to_string(),
+            version: 1,
+            display_name: "Dolt Repo Source".to_string(),
+            category: "input".to_string(),
+            description:
+                "Prepares a reusable Dolt working copy and emits repo metadata for downstream sync or export nodes."
+                    .to_string(),
+            inputs: vec![],
+            outputs: vec![PortDefinition {
+                port_id: "repo_out".to_string(),
+                display_name: "Repo".to_string(),
+                direction: PortDirection::Output,
+                data_type: DataType::DatasetRef,
+                required: false,
+                multiple: false,
+                description: Some("Dolt repo reference plus checkout metadata.".to_string()),
+            }],
+            config_schema: json!({
+                "type": "object",
+                "required": ["connection_ref", "repository", "branch"],
+                "properties": {
+                    "connection_ref": {
+                        "type": "string",
+                        "default": "dolthub_public"
+                    },
+                    "repository": {
+                        "type": "string",
+                        "default": "post-no-preference/earnings"
+                    },
+                    "branch": {
+                        "type": "string",
+                        "default": "main"
+                    },
+                    "checkout_ref": {
+                        "type": "string",
+                        "default": ""
+                    },
+                    "clone_mode": {
+                        "type": "string",
+                        "enum": ["reuse_local_copy", "fresh_clone", "depth_1"],
+                        "default": "reuse_local_copy"
+                    },
+                    "sync_strategy": {
+                        "type": "string",
+                        "enum": ["pull_before_execution", "clone_only", "manual"],
+                        "default": "pull_before_execution"
+                    }
+                }
+            }),
+            runtime: RuntimeBinding {
+                executor_kind: ExecutorKind::RustNative,
+                adapter_id: None,
+                isolation_mode: IsolationMode::InProcess,
+            },
+            capabilities: NodeCapabilities {
+                reads_external_state: true,
+                supports_preview: true,
+                requires_connection: true,
+                may_emit_structured_logs: true,
+                ..NodeCapabilities::default()
+            },
+            ui: NodeUi {
+                icon: "dolt_repo_source".to_string(),
+                color_token: "var(--node-input)".to_string(),
+                default_width: 336,
+                default_height: 176,
+                help_text: Some(
+                    "Track a Dolt repository checkout before sync, dump, or diff export nodes."
+                        .to_string(),
+                ),
+                node_card: Some(NodeCardUi {
+                    variant: "input".to_string(),
+                    icon_key: "dolt_repo_source".to_string(),
+                    top_chip: hidden_top_chip(),
+                    header: standard_header(),
+                    rows: vec![
+                        node_card_row(
+                            "repository",
+                            "kv",
+                            "Repo",
+                            "config",
+                            "repository",
+                            "text",
+                            Some("dolt_repo_source"),
+                            true,
+                        ),
+                        node_card_row(
+                            "branch",
+                            "kv",
+                            "Branch",
+                            "config",
+                            "branch",
+                            "text",
+                            Some("logic"),
+                            false,
+                        ),
+                        node_card_row(
+                            "sync_strategy",
+                            "kv",
+                            "Sync",
+                            "config",
+                            "sync_strategy",
+                            "text",
+                            Some("metric"),
+                            false,
+                        ),
+                    ],
+                    footer: Some(node_card_footer(
+                        "metric",
+                        "Current commit",
+                        "derived",
+                        "dolt_current_commit",
+                        "text",
+                        Some("status"),
+                    )),
+                    handles: node_card_handles("none", "single_right"),
+                    size: node_card_size(336),
+                }),
+            },
+        },
+        NodeDefinition {
+            type_id: "checkpoint_read".to_string(),
+            version: 1,
+            display_name: "Checkpoint Read".to_string(),
+            category: "compute".to_string(),
+            description:
+                "Recovers the last successful ingest position for a repo and branch before recurring sync resumes."
+                    .to_string(),
+            inputs: vec![],
+            outputs: vec![PortDefinition {
+                port_id: "checkpoint".to_string(),
+                display_name: "Checkpoint".to_string(),
+                direction: PortDirection::Output,
+                data_type: DataType::Json,
+                required: false,
+                multiple: false,
+                description: Some(
+                    "Checkpoint context carrying the previous successful commit and success metadata."
+                        .to_string(),
+                ),
+            }],
+            config_schema: json!({
+                "type": "object",
+                "required": ["checkpoint_table", "source_repo", "branch"],
+                "properties": {
+                    "checkpoint_table": {
+                        "type": "string",
+                        "default": "tables.ingest_checkpoints"
+                    },
+                    "source_repo": {
+                        "type": "string",
+                        "default": "post-no-preference/earnings"
+                    },
+                    "branch": {
+                        "type": "string",
+                        "default": "main"
+                    },
+                    "emit_bootstrap_marker_if_missing": {
+                        "type": "boolean",
+                        "default": true
+                    },
+                    "fail_on_stale_checkpoint": {
+                        "type": "boolean",
+                        "default": false
+                    }
+                }
+            }),
+            runtime: RuntimeBinding {
+                executor_kind: ExecutorKind::RustNative,
+                adapter_id: None,
+                isolation_mode: IsolationMode::InProcess,
+            },
+            capabilities: NodeCapabilities {
+                reads_external_state: true,
+                supports_preview: true,
+                may_emit_structured_logs: true,
+                produces_durable_artifacts: false,
+                ..NodeCapabilities::default()
+            },
+            ui: NodeUi {
+                icon: "checkpoint_read".to_string(),
+                color_token: "var(--node-input)".to_string(),
+                default_width: 336,
+                default_height: 176,
+                help_text: Some(
+                    "Read the last successful commit boundary before recurring repo sync begins."
+                        .to_string(),
+                ),
+                node_card: Some(NodeCardUi {
+                    variant: "compute".to_string(),
+                    icon_key: "checkpoint_read".to_string(),
+                    top_chip: hidden_top_chip(),
+                    header: standard_header(),
+                    rows: vec![
+                        node_card_row(
+                            "source_repo",
+                            "kv",
+                            "Repo",
+                            "config",
+                            "source_repo",
+                            "text",
+                            Some("label"),
+                            true,
+                        ),
+                        node_card_row(
+                            "branch",
+                            "kv",
+                            "Branch",
+                            "config",
+                            "branch",
+                            "text",
+                            Some("status"),
+                            false,
+                        ),
+                    ],
+                    footer: Some(node_card_footer(
+                        "metric",
+                        "Checkpoint store",
+                        "config",
+                        "checkpoint_table",
+                        "text",
+                        Some("metric"),
+                    )),
+                    handles: node_card_handles("none", "single_right"),
+                    size: node_card_size(336),
+                }),
+            },
+        },
+        NodeDefinition {
+            type_id: "checkpoint_write".to_string(),
+            version: 1,
+            display_name: "Checkpoint Write".to_string(),
+            category: "control".to_string(),
+            description:
+                "Persists the new ingest checkpoint only after upstream durable table work is safe to acknowledge."
+                    .to_string(),
+            inputs: vec![PortDefinition {
+                port_id: "table".to_string(),
+                display_name: "Table".to_string(),
+                direction: PortDirection::Input,
+                data_type: DataType::TableRef,
+                required: true,
+                multiple: false,
+                description: Some(
+                    "Durable workflow table reference carrying upstream commit and merge metadata."
+                        .to_string(),
+                ),
+            }],
+            outputs: vec![PortDefinition {
+                port_id: "table".to_string(),
+                display_name: "Table".to_string(),
+                direction: PortDirection::Output,
+                data_type: DataType::TableRef,
+                required: false,
+                multiple: false,
+                description: Some(
+                    "The same durable table reference enriched with checkpoint persistence metadata."
+                        .to_string(),
+                ),
+            }],
+            config_schema: json!({
+                "type": "object",
+                "required": ["checkpoint_table"],
+                "properties": {
+                    "checkpoint_table": {
+                        "type": "string",
+                        "default": "tables.ingest_checkpoints"
+                    },
+                    "commit_source": {
+                        "type": "string",
+                        "enum": ["metadata.current_commit"],
+                        "default": "metadata.current_commit"
+                    },
+                    "write_timing": {
+                        "type": "string",
+                        "enum": ["after_merge_success", "after_quality_gate"],
+                        "default": "after_merge_success"
+                    },
+                    "only_persist_on_full_success": {
+                        "type": "boolean",
+                        "default": true
+                    },
+                    "advance_on_partial_success": {
+                        "type": "boolean",
+                        "default": false
+                    }
+                }
+            }),
+            runtime: RuntimeBinding {
+                executor_kind: ExecutorKind::RustNative,
+                adapter_id: None,
+                isolation_mode: IsolationMode::InProcess,
+            },
+            capabilities: NodeCapabilities {
+                writes_external_state: true,
+                supports_preview: true,
+                may_emit_structured_logs: true,
+                produces_durable_artifacts: true,
+                ..NodeCapabilities::default()
+            },
+            ui: NodeUi {
+                icon: "checkpoint_write".to_string(),
+                color_token: "var(--node-compute)".to_string(),
+                default_width: 336,
+                default_height: 176,
+                help_text: Some(
+                    "Advance the persisted commit boundary only after the durable ingest state is safe."
+                        .to_string(),
+                ),
+                node_card: Some(NodeCardUi {
+                    variant: "compute".to_string(),
+                    icon_key: "checkpoint_write".to_string(),
+                    top_chip: hidden_top_chip(),
+                    header: standard_header(),
+                    rows: vec![
+                        node_card_row(
+                            "checkpoint_table",
+                            "kv",
+                            "Checkpoint",
+                            "config",
+                            "checkpoint_table",
+                            "text",
+                            Some("metric"),
+                            false,
+                        ),
+                        node_card_row(
+                            "write_timing",
+                            "kv",
+                            "Timing",
+                            "config",
+                            "write_timing",
+                            "text",
+                            Some("status"),
+                            false,
+                        ),
+                    ],
+                    footer: Some(node_card_footer(
+                        "metric",
+                        "Commit source",
+                        "config",
+                        "commit_source",
+                        "text",
+                        Some("logic"),
+                    )),
+                    handles: node_card_handles("single_left", "single_right"),
+                    size: node_card_size(336),
+                }),
+            },
+        },
+        NodeDefinition {
+            type_id: "quality_check".to_string(),
+            version: 1,
+            display_name: "Quality Check".to_string(),
+            category: "control".to_string(),
+            description:
+                "Applies post-merge validation rules and gates whether checkpoint advancement may continue."
+                    .to_string(),
+            inputs: vec![PortDefinition {
+                port_id: "table".to_string(),
+                display_name: "Table".to_string(),
+                direction: PortDirection::Input,
+                data_type: DataType::TableRef,
+                required: true,
+                multiple: false,
+                description: Some(
+                    "Durable workflow table reference ready for post-merge validation.".to_string(),
+                ),
+            }],
+            outputs: vec![PortDefinition {
+                port_id: "table".to_string(),
+                display_name: "Table".to_string(),
+                direction: PortDirection::Output,
+                data_type: DataType::TableRef,
+                required: false,
+                multiple: false,
+                description: Some(
+                    "The same durable table reference enriched with quality gate metadata."
+                        .to_string(),
+                ),
+            }],
+            config_schema: json!({
+                "type": "object",
+                "properties": {
+                    "suite_preset": {
+                        "type": "string",
+                        "enum": ["post_merge_ingest_gate", "custom_rule_bundle"],
+                        "default": "post_merge_ingest_gate"
+                    },
+                    "schema_drift_rule": {
+                        "type": "string",
+                        "enum": ["fail_on_required_column_drift", "allow_additive_schema_notes"],
+                        "default": "fail_on_required_column_drift"
+                    },
+                    "null_key_policy": {
+                        "type": "string",
+                        "enum": ["block_on_primary_key_nulls", "allow_nulls_with_warning"],
+                        "default": "block_on_primary_key_nulls"
+                    },
+                    "warning_budget": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "default": 2
+                    },
+                    "block_checkpoint_write_on_failure": {
+                        "type": "boolean",
+                        "default": true
+                    },
+                    "allow_warning_only_runs_to_continue": {
+                        "type": "boolean",
+                        "default": true
+                    }
+                }
+            }),
+            runtime: RuntimeBinding {
+                executor_kind: ExecutorKind::RustNative,
+                adapter_id: None,
+                isolation_mode: IsolationMode::InProcess,
+            },
+            capabilities: NodeCapabilities {
+                supports_preview: true,
+                may_emit_structured_logs: true,
+                produces_durable_artifacts: true,
+                ..NodeCapabilities::default()
+            },
+            ui: NodeUi {
+                icon: "quality_check".to_string(),
+                color_token: "var(--node-compute)".to_string(),
+                default_width: 336,
+                default_height: 176,
+                help_text: Some(
+                    "Run a post-merge rule bundle before advancing checkpoint state or downstream publication."
+                        .to_string(),
+                ),
+                node_card: Some(NodeCardUi {
+                    variant: "compute".to_string(),
+                    icon_key: "quality_check".to_string(),
+                    top_chip: hidden_top_chip(),
+                    header: standard_header(),
+                    rows: vec![
+                        node_card_row(
+                            "suite_preset",
+                            "kv",
+                            "Suite",
+                            "config",
+                            "suite_preset",
+                            "text",
+                            Some("logic"),
+                            false,
+                        ),
+                        node_card_row(
+                            "warning_budget",
+                            "kv",
+                            "Budget",
+                            "config",
+                            "warning_budget",
+                            "text",
+                            Some("metric"),
+                            false,
+                        ),
+                    ],
+                    footer: Some(node_card_footer(
+                        "metric",
+                        "Schema drift",
+                        "config",
+                        "schema_drift_rule",
+                        "text",
+                        Some("status"),
+                    )),
+                    handles: node_card_handles("single_left", "single_right"),
+                    size: node_card_size(336),
+                }),
+            },
+        },
+        NodeDefinition {
+            type_id: "dolt_repo_sync".to_string(),
+            version: 1,
+            display_name: "Dolt Repo Sync".to_string(),
+            category: "compute".to_string(),
+            description:
+                "Advances a Dolt repo handle and resolves the previous/current commit range for recurring ingest."
+                    .to_string(),
+            inputs: vec![
+                PortDefinition {
+                    port_id: "repo".to_string(),
+                    display_name: "Repo".to_string(),
+                    direction: PortDirection::Input,
+                    data_type: DataType::DatasetRef,
+                    required: true,
+                    multiple: false,
+                    description: Some("Upstream Dolt repo reference from a source node.".to_string()),
+                },
+                PortDefinition {
+                    port_id: "checkpoint".to_string(),
+                    display_name: "Checkpoint".to_string(),
+                    direction: PortDirection::Input,
+                    data_type: DataType::Json,
+                    required: false,
+                    multiple: false,
+                    description: Some(
+                        "Optional checkpoint context that overrides the previous commit boundary."
+                            .to_string(),
+                    ),
+                },
+            ],
+            outputs: vec![PortDefinition {
+                port_id: "repo_out".to_string(),
+                display_name: "Repo".to_string(),
+                direction: PortDirection::Output,
+                data_type: DataType::DatasetRef,
+                required: false,
+                multiple: false,
+                description: Some(
+                    "Synced Dolt repo reference plus resolved commit-range metadata.".to_string(),
+                ),
+            }],
+            config_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sync_action": {
+                        "type": "string",
+                        "enum": ["pull_remote_head", "fetch_and_checkout", "refresh_checkout"],
+                        "default": "pull_remote_head"
+                    },
+                    "no_change_behavior": {
+                        "type": "string",
+                        "enum": ["emit_current_range", "emit_no_op_marker"],
+                        "default": "emit_current_range"
+                    },
+                    "branch_guard": {
+                        "type": "string",
+                        "enum": ["require_tracked_branch_match", "allow_detached_head"],
+                        "default": "require_tracked_branch_match"
+                    },
+                    "dirty_working_copy_policy": {
+                        "type": "string",
+                        "enum": ["fail_if_dirty", "stash_and_continue"],
+                        "default": "fail_if_dirty"
+                    }
+                }
+            }),
+            runtime: RuntimeBinding {
+                executor_kind: ExecutorKind::RustNative,
+                adapter_id: None,
+                isolation_mode: IsolationMode::InProcess,
+            },
+            capabilities: NodeCapabilities {
+                reads_external_state: true,
+                supports_preview: true,
+                may_emit_structured_logs: true,
+                ..NodeCapabilities::default()
+            },
+            ui: NodeUi {
+                icon: "dolt_repo_sync".to_string(),
+                color_token: "var(--node-input)".to_string(),
+                default_width: 336,
+                default_height: 176,
+                help_text: Some(
+                    "Resolve the recurring commit range between a checkpointed repo copy and the latest remote state."
+                        .to_string(),
+                ),
+                node_card: Some(NodeCardUi {
+                    variant: "compute".to_string(),
+                    icon_key: "dolt_repo_sync".to_string(),
+                    top_chip: hidden_top_chip(),
+                    header: standard_header(),
+                    rows: vec![
+                        node_card_row(
+                            "previous_commit",
+                            "kv",
+                            "From",
+                            "derived",
+                            "dolt_sync_previous_commit",
+                            "text",
+                            Some("metric"),
+                            false,
+                        ),
+                        node_card_row(
+                            "current_commit",
+                            "kv",
+                            "To",
+                            "derived",
+                            "dolt_sync_current_commit",
+                            "text",
+                            Some("status"),
+                            false,
+                        ),
+                    ],
+                    footer: Some(node_card_footer(
+                        "metric",
+                        "Sync action",
+                        "derived",
+                        "dolt_sync_action",
+                        "text",
+                        Some("logic"),
+                    )),
+                    handles: node_card_handles("single_left", "single_right"),
+                    size: node_card_size(336),
+                }),
+            },
+        },
+        NodeDefinition {
+            type_id: "dolt_change_manifest".to_string(),
+            version: 1,
+            display_name: "Dolt Change Manifest".to_string(),
+            category: "compute".to_string(),
+            description:
+                "Computes a scoped changed-table manifest from an upstream Dolt commit range."
+                    .to_string(),
+            inputs: vec![PortDefinition {
+                port_id: "repo".to_string(),
+                display_name: "Repo".to_string(),
+                direction: PortDirection::Input,
+                data_type: DataType::DatasetRef,
+                required: true,
+                multiple: false,
+                description: Some(
+                    "Synced Dolt repo reference with resolved commit-range metadata."
+                        .to_string(),
+                ),
+            }],
+            outputs: vec![PortDefinition {
+                port_id: "manifest".to_string(),
+                display_name: "Manifest".to_string(),
+                direction: PortDirection::Output,
+                data_type: DataType::DatasetRef,
+                required: false,
+                multiple: false,
+                description: Some(
+                    "Changed-table manifest reference plus schema-drift metadata."
+                        .to_string(),
+                ),
+            }],
+            config_schema: json!({
+                "type": "object",
+                "properties": {
+                    "table_scope": {
+                        "type": "string",
+                        "enum": ["all_tables", "allowlist"],
+                        "default": "all_tables"
+                    },
+                    "selected_tables": {
+                        "type": "array",
+                        "default": [],
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "schema_change_policy": {
+                        "type": "string",
+                        "enum": ["flag_and_continue", "fail_run"],
+                        "default": "flag_and_continue"
+                    }
+                }
+            }),
+            runtime: RuntimeBinding {
+                executor_kind: ExecutorKind::RustNative,
+                adapter_id: None,
+                isolation_mode: IsolationMode::InProcess,
+            },
+            capabilities: NodeCapabilities {
+                reads_external_state: true,
+                supports_preview: true,
+                may_emit_structured_logs: true,
+                ..NodeCapabilities::default()
+            },
+            ui: NodeUi {
+                icon: "dolt_change_manifest".to_string(),
+                color_token: "var(--node-input)".to_string(),
+                default_width: 336,
+                default_height: 176,
+                help_text: Some(
+                    "Scope changed tables from a resolved Dolt range before diff export or selective re-dump."
+                        .to_string(),
+                ),
+                node_card: Some(NodeCardUi {
+                    variant: "compute".to_string(),
+                    icon_key: "dolt_change_manifest".to_string(),
+                    top_chip: hidden_top_chip(),
+                    header: standard_header(),
+                    rows: vec![
+                        node_card_row(
+                            "range",
+                            "kv",
+                            "Range",
+                            "derived",
+                            "dolt_manifest_range",
+                            "text",
+                            Some("metric"),
+                            false,
+                        ),
+                        node_card_row(
+                            "scope",
+                            "kv",
+                            "Scope",
+                            "derived",
+                            "dolt_manifest_scope",
+                            "text",
+                            Some("logic"),
+                            false,
+                        ),
+                    ],
+                    footer: Some(node_card_footer(
+                        "metric",
+                        "Schema drift",
+                        "derived",
+                        "dolt_manifest_schema_drift",
+                        "text",
+                        Some("status"),
+                    )),
+                    handles: node_card_handles("single_left", "single_right"),
+                    size: node_card_size(336),
+                }),
+            },
+        },
+        NodeDefinition {
+            type_id: "dolt_dump".to_string(),
+            version: 1,
+            display_name: "Dolt Dump".to_string(),
+            category: "data_movement".to_string(),
+            description:
+                "Exports whole Dolt tables into a bundle directory for downstream raw landing."
+                    .to_string(),
+            inputs: vec![PortDefinition {
+                port_id: "repo".to_string(),
+                display_name: "Repo".to_string(),
+                direction: PortDirection::Input,
+                data_type: DataType::DatasetRef,
+                required: true,
+                multiple: false,
+                description: Some(
+                    "Upstream Dolt repo or manifest dataset that resolves the export scope."
+                        .to_string(),
+                ),
+            }],
+            outputs: vec![PortDefinition {
+                port_id: "bundle".to_string(),
+                display_name: "Bundle".to_string(),
+                direction: PortDirection::Output,
+                data_type: DataType::DirectoryRef,
+                required: false,
+                multiple: false,
+                description: Some(
+                    "Directory reference for the exported file bundle and manifest metadata."
+                        .to_string(),
+                ),
+            }],
+            config_schema: json!({
+                "type": "object",
+                "properties": {
+                    "output_format": {
+                        "type": "string",
+                        "enum": ["csv", "parquet"],
+                        "default": "parquet"
+                    },
+                    "table_selection_mode": {
+                        "type": "string",
+                        "enum": ["prefer_manifest_scope", "all_tables", "manual_tables"],
+                        "default": "prefer_manifest_scope"
+                    },
+                    "selected_tables": {
+                        "type": "array",
+                        "default": [],
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "artifact_retention": {
+                        "type": "string",
+                        "enum": ["keep_latest_success", "ephemeral_per_run", "persist_all"],
+                        "default": "keep_latest_success"
+                    },
+                    "output_directory_policy": {
+                        "type": "string",
+                        "enum": ["ephemeral_run_bundle", "stable_repo_cache"],
+                        "default": "ephemeral_run_bundle"
+                    }
+                }
+            }),
+            runtime: RuntimeBinding {
+                executor_kind: ExecutorKind::RustNative,
+                adapter_id: None,
+                isolation_mode: IsolationMode::InProcess,
+            },
+            capabilities: NodeCapabilities {
+                reads_external_state: true,
+                writes_external_state: true,
+                produces_durable_artifacts: true,
+                supports_preview: true,
+                may_emit_structured_logs: true,
+                ..NodeCapabilities::default()
+            },
+            ui: NodeUi {
+                icon: "dolt_dump".to_string(),
+                color_token: "var(--node-input)".to_string(),
+                default_width: 336,
+                default_height: 176,
+                help_text: Some(
+                    "Export Dolt tables into a reusable CSV or Parquet bundle before DuckDB load."
+                        .to_string(),
+                ),
+                node_card: Some(NodeCardUi {
+                    variant: "data_movement".to_string(),
+                    icon_key: "dolt_dump".to_string(),
+                    top_chip: hidden_top_chip(),
+                    header: standard_header(),
+                    rows: vec![
+                        node_card_row(
+                            "output_format",
+                            "kv",
+                            "Format",
+                            "config",
+                            "output_format",
+                            "text",
+                            Some("logic"),
+                            false,
+                        ),
+                        node_card_row(
+                            "table_selection_mode",
+                            "kv",
+                            "Tables",
+                            "config",
+                            "table_selection_mode",
+                            "text",
+                            Some("metric"),
+                            false,
+                        ),
+                    ],
+                    footer: Some(node_card_footer(
+                        "metric",
+                        "Bundle",
+                        "derived",
+                        "dolt_dump_bundle",
+                        "text",
+                        Some("status"),
+                    )),
+                    handles: node_card_handles("single_left", "single_right"),
+                    size: node_card_size(336),
+                }),
+            },
+        },
+        NodeDefinition {
+            type_id: "dolt_diff_export".to_string(),
+            version: 1,
+            display_name: "Dolt Diff Export".to_string(),
+            category: "data_movement".to_string(),
+            description:
+                "Exports row-level Dolt deltas from a scoped change manifest into a reusable bundle."
+                    .to_string(),
+            inputs: vec![PortDefinition {
+                port_id: "manifest".to_string(),
+                display_name: "Manifest".to_string(),
+                direction: PortDirection::Input,
+                data_type: DataType::DatasetRef,
+                required: true,
+                multiple: false,
+                description: Some(
+                    "Upstream Dolt change manifest that resolves commit range and changed-table scope."
+                        .to_string(),
+                ),
+            }],
+            outputs: vec![PortDefinition {
+                port_id: "bundle".to_string(),
+                display_name: "Bundle".to_string(),
+                direction: PortDirection::Output,
+                data_type: DataType::DirectoryRef,
+                required: false,
+                multiple: false,
+                description: Some(
+                    "Directory reference for row-level delta files plus per-table diff metadata."
+                        .to_string(),
+                ),
+            }],
+            config_schema: json!({
+                "type": "object",
+                "properties": {
+                    "output_format": {
+                        "type": "string",
+                        "enum": ["csv", "parquet"],
+                        "default": "parquet"
+                    },
+                    "change_filter": {
+                        "type": "string",
+                        "enum": [
+                            "all_changes",
+                            "non_delete_changes",
+                            "added_only",
+                            "modified_only",
+                            "removed_only"
+                        ],
+                        "default": "all_changes"
+                    },
+                    "deleted_row_handling": {
+                        "type": "string",
+                        "enum": ["emit_delete_markers", "omit_delete_rows"],
+                        "default": "emit_delete_markers"
+                    }
+                }
+            }),
+            runtime: RuntimeBinding {
+                executor_kind: ExecutorKind::RustNative,
+                adapter_id: None,
+                isolation_mode: IsolationMode::InProcess,
+            },
+            capabilities: NodeCapabilities {
+                reads_external_state: true,
+                writes_external_state: true,
+                produces_durable_artifacts: true,
+                supports_preview: true,
+                may_emit_structured_logs: true,
+                ..NodeCapabilities::default()
+            },
+            ui: NodeUi {
+                icon: "dolt_diff_export".to_string(),
+                color_token: "var(--node-input)".to_string(),
+                default_width: 336,
+                default_height: 176,
+                help_text: Some(
+                    "Export row-level Dolt deltas from a change manifest before downstream staging and merge."
+                        .to_string(),
+                ),
+                node_card: Some(NodeCardUi {
+                    variant: "data_movement".to_string(),
+                    icon_key: "dolt_diff_export".to_string(),
+                    top_chip: hidden_top_chip(),
+                    header: standard_header(),
+                    rows: vec![
+                        node_card_row(
+                            "range",
+                            "kv",
+                            "Range",
+                            "derived",
+                            "dolt_diff_range",
+                            "text",
+                            Some("metric"),
+                            false,
+                        ),
+                        node_card_row(
+                            "filter",
+                            "kv",
+                            "Filter",
+                            "derived",
+                            "dolt_diff_filter",
+                            "text",
+                            Some("logic"),
+                            false,
+                        ),
+                    ],
+                    footer: Some(node_card_footer(
+                        "metric",
+                        "Bundle",
+                        "derived",
+                        "dolt_diff_bundle",
+                        "text",
+                        Some("status"),
+                    )),
+                    handles: node_card_handles("single_left", "single_right"),
+                    size: node_card_size(336),
+                }),
+            },
+        },
+        NodeDefinition {
+            type_id: "load_to_duckdb".to_string(),
+            version: 1,
+            display_name: "Load to DuckDB".to_string(),
+            category: "data_movement".to_string(),
+            description:
+                "Loads Dolt dump or diff bundles into workflow-local DuckDB staging tables."
+                    .to_string(),
+            inputs: vec![PortDefinition {
+                port_id: "bundle".to_string(),
+                display_name: "Bundle".to_string(),
+                direction: PortDirection::Input,
+                data_type: DataType::DirectoryRef,
+                required: true,
+                multiple: false,
+                description: Some(
+                    "Directory reference for either a Dolt dump bundle or a Dolt diff export bundle."
+                        .to_string(),
+                ),
+            }],
+            outputs: vec![PortDefinition {
+                port_id: "table".to_string(),
+                display_name: "Table".to_string(),
+                direction: PortDirection::Output,
+                data_type: DataType::TableRef,
+                required: false,
+                multiple: false,
+                description: Some(
+                    "Workflow-local staging table reference plus load manifest metadata for downstream merge steps."
+                        .to_string(),
+                ),
+            }],
+            config_schema: json!({
+                "type": "object",
+                "required": ["target_schema"],
+                "properties": {
+                    "target_schema": {
+                        "type": "string",
+                        "default": "staging"
+                    },
+                    "table_mapping": {
+                        "type": "string",
+                        "enum": ["bundle_aware_staging_names"],
+                        "default": "bundle_aware_staging_names"
+                    },
+                    "schema_handling": {
+                        "type": "string",
+                        "enum": ["infer_on_first_load_validate_on_recurring"],
+                        "default": "infer_on_first_load_validate_on_recurring"
+                    },
+                    "delta_context_preservation": {
+                        "type": "string",
+                        "enum": ["preserve_commit_range_and_delete_flags"],
+                        "default": "preserve_commit_range_and_delete_flags"
+                    }
+                }
+            }),
+            runtime: RuntimeBinding {
+                executor_kind: ExecutorKind::RustNative,
+                adapter_id: None,
+                isolation_mode: IsolationMode::InProcess,
+            },
+            capabilities: NodeCapabilities {
+                reads_external_state: true,
+                writes_external_state: true,
+                produces_durable_artifacts: true,
+                supports_preview: true,
+                may_emit_structured_logs: true,
+                ..NodeCapabilities::default()
+            },
+            ui: NodeUi {
+                icon: "load_to_duckdb".to_string(),
+                color_token: "var(--node-input)".to_string(),
+                default_width: 336,
+                default_height: 176,
+                help_text: Some(
+                    "Land Dolt snapshot or delta bundles into workflow-local DuckDB staging tables before merge."
+                        .to_string(),
+                ),
+                node_card: Some(NodeCardUi {
+                    variant: "data_movement".to_string(),
+                    icon_key: "table_output".to_string(),
+                    top_chip: hidden_top_chip(),
+                    header: standard_header(),
+                    rows: vec![
+                        node_card_row(
+                            "target_schema",
+                            "kv",
+                            "Target",
+                            "config",
+                            "target_schema",
+                            "text",
+                            Some("table_output"),
+                            false,
+                        ),
+                        node_card_row(
+                            "bundle_mode",
+                            "kv",
+                            "Bundle mode",
+                            "derived",
+                            "load_bundle_mode",
+                            "text",
+                            Some("logic"),
+                            false,
+                        ),
+                    ],
+                    footer: Some(node_card_footer(
+                        "metric",
+                        "Merge context",
+                        "derived",
+                        "load_merge_context",
+                        "text",
+                        Some("status"),
+                    )),
+                    handles: node_card_handles("single_left", "single_right"),
+                    size: node_card_size(336),
+                }),
+            },
+        },
+        NodeDefinition {
+            type_id: "table_merge".to_string(),
+            version: 1,
+            display_name: "Table Merge".to_string(),
+            category: "data_movement".to_string(),
+            description:
+                "Reconciles staged table batches into durable workflow-owned tables using an explicit merge policy."
+                    .to_string(),
+            inputs: vec![PortDefinition {
+                port_id: "table".to_string(),
+                display_name: "Table".to_string(),
+                direction: PortDirection::Input,
+                data_type: DataType::TableRef,
+                required: true,
+                multiple: false,
+                description: Some(
+                    "Workflow-local staged table reference plus merge metadata from upstream landing steps."
+                        .to_string(),
+                ),
+            }],
+            outputs: vec![PortDefinition {
+                port_id: "table".to_string(),
+                display_name: "Table".to_string(),
+                direction: PortDirection::Output,
+                data_type: DataType::TableRef,
+                required: false,
+                multiple: false,
+                description: Some(
+                    "Durable workflow table reference after merge policy has been applied."
+                        .to_string(),
+                ),
+            }],
+            config_schema: json!({
+                "type": "object",
+                "required": ["target_schema"],
+                "properties": {
+                    "target_schema": {
+                        "type": "string",
+                        "default": "tables"
+                    },
+                    "write_policy": {
+                        "type": "string",
+                        "enum": ["upsert", "append_only", "snapshot_replace"],
+                        "default": "upsert"
+                    },
+                    "merge_key_columns": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "default": ["symbol", "report_date"]
+                    },
+                    "delete_handling": {
+                        "type": "string",
+                        "enum": ["apply_delete_markers", "ignore_delete_markers"],
+                        "default": "apply_delete_markers"
+                    },
+                    "schema_drift_behavior": {
+                        "type": "string",
+                        "enum": ["fail_and_require_review", "allow_additive_changes"],
+                        "default": "fail_and_require_review"
+                    }
+                }
+            }),
+            runtime: RuntimeBinding {
+                executor_kind: ExecutorKind::RustNative,
+                adapter_id: None,
+                isolation_mode: IsolationMode::InProcess,
+            },
+            capabilities: NodeCapabilities {
+                writes_external_state: true,
+                produces_durable_artifacts: true,
+                supports_preview: true,
+                may_emit_structured_logs: true,
+                ..NodeCapabilities::default()
+            },
+            ui: NodeUi {
+                icon: "table_output".to_string(),
+                color_token: "var(--node-input)".to_string(),
+                default_width: 336,
+                default_height: 176,
+                help_text: Some(
+                    "Reconcile staged table batches into durable workflow tables before publish or checkpoint steps."
+                        .to_string(),
+                ),
+                node_card: Some(NodeCardUi {
+                    variant: "data_movement".to_string(),
+                    icon_key: "logic".to_string(),
+                    top_chip: hidden_top_chip(),
+                    header: standard_header(),
+                    rows: vec![
+                        node_card_row(
+                            "write_policy",
+                            "kv",
+                            "Policy",
+                            "config",
+                            "write_policy",
+                            "text",
+                            Some("logic"),
+                            false,
+                        ),
+                        node_card_row(
+                            "delete_handling",
+                            "kv",
+                            "Deletes",
+                            "config",
+                            "delete_handling",
+                            "text",
+                            Some("metric"),
+                            false,
+                        ),
+                    ],
+                    footer: Some(node_card_footer(
+                        "metric",
+                        "Target",
+                        "config",
+                        "target_schema",
+                        "text",
+                        Some("status"),
+                    )),
+                    handles: node_card_handles("single_left", "single_right"),
+                    size: node_card_size(336),
+                }),
+            },
+        },
+        NodeDefinition {
             type_id: "table_schema".to_string(),
             version: 1,
             display_name: "Table Schema".to_string(),

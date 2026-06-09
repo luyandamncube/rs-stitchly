@@ -1,26 +1,22 @@
 # 02 Schedule Trigger
 
-This sample studies the `Schedule trigger` node from the reference set using
-the shared `v1` node-language stylesheet.
+Type: `surface-study`
 
-## Intent
+Purpose:
 
-- Mirror the reference composition:
-  - floating `Start` chip
-  - icon + type-name header
-  - compact cadence row
-  - grouped `Last run` panel
-  - single right-side output handle
-- Keep the Stitchly dark `True Black + Lava Core` palette instead of the light
-  reference theme.
-- Reuse only shared primitives from
-  [`../shared.css`](../shared.css) so the design language stays system-driven.
+- modernize the original `schedule_trigger` study so it matches the newer Dolt-era node shell
+- treat schedule as an operational control surface rather than just a starter chip
+- show how recurring run windows feed downstream checkpoint-aware ingest flows
 
-## Review Focus
+What this sample is testing:
 
-- Is the `Start` chip spacing and placement close enough to the reference?
-- Does the cadence row feel compact enough relative to the larger grouped panel?
-- Is the grouped `Last run` block visually balanced for a trigger node without a
-  footer row?
-- Does the trigger icon feel like a good placeholder, or should we refine the
-  symbol style next?
+- a compact trigger card with `Cadence`, `Timezone`, and `Next fire`
+- a config panel focused on catch-up policy, dedupe, and emitted run-window metadata
+- a clearer downstream handoff into `checkpoint_read`
+- a more operator-facing tone for recurring workflow orchestration
+
+Still unresolved:
+
+- whether cron and interval modes should share one field or split into separate layouts
+- whether missed-window handling belongs in the main config or an advanced section
+- whether run dedupe should be visualized as a protection badge on the node card

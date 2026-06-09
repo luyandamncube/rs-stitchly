@@ -10,6 +10,7 @@ import {
   useConnection
 } from '@xyflow/react'
 import { getDraggedNodeType } from '../lib/canvasDnD'
+import { humanizeToken } from '../lib/shell'
 import {
   canConnect,
   connectWorkflowNodes,
@@ -47,7 +48,17 @@ const EMPTY_CANVAS_DEBUG_STATE = {
 }
 
 const NODE_TYPES = {
+  checkpoint_read: memo(CheckpointReadNode),
+  checkpoint_write: memo(CheckpointWriteNode),
+  quality_check: memo(QualityCheckNode),
+  dolt_change_manifest: memo(DoltChangeManifestNode),
+  dolt_diff_export: memo(DoltDiffExportNode),
+  dolt_dump: memo(DoltDumpNode),
+  dolt_repo_source: memo(DoltRepoSourceNode),
+  dolt_repo_sync: memo(DoltRepoSyncNode),
+  load_to_duckdb: memo(LoadToDuckDbNode),
   send_email: memo(SendEmailNode),
+  table_merge: memo(TableMergeNode),
   table_input: memo(TableInputNode),
   table_output: memo(TableOutputNode),
   table_schema: memo(TableSchemaNode),
@@ -999,6 +1010,894 @@ function TableSchemaNode({ data, dragging, selected }) {
   )
 }
 
+function DoltRepoSourceNode({ data, dragging, selected }) {
+  const runtime = data.uiState?.runtime ?? null
+  const nodeLabel = data.node?.label ?? data.label ?? 'Dolt Repo Source'
+  const config = normalizeDoltRepoSourceNodeConfig(data.node?.config)
+  const runtimeState = runtime?.status ?? null
+  const executionWait = getNodeExecutionWaitState(data.node?.config)
+
+  return (
+    <div
+      className={buildWorkflowNodeCardClassName(
+        'workflow-node-card--input-reference workflow-node-card--dolt-repo-source',
+        {
+          dragging,
+          hovered: Boolean(data.uiState?.interaction?.hovered),
+          selected
+        }
+      )}
+      data-runtime-state={runtimeState ?? undefined}
+      title={buildNodeRuntimeTitle(runtime, 'Click to select. Drag to move. Double-click to inspect.')}
+    >
+      <header className="workflow-node-card__header">
+        <div className="workflow-node-card__heading">
+          <span
+            className="workflow-node-card__icon workflow-node-card__icon--dolt"
+            aria-hidden="true"
+          >
+            <DoltRepoSourceMark />
+          </span>
+          <strong>{nodeLabel}</strong>
+        </div>
+        <div className="workflow-node-card__tools">
+          {executionWait.enabled ? (
+            <NodeExecutionWaitIcon
+              className="workflow-node-card__delay-icon"
+              hasAfterWait={executionWait.hasAfterWait}
+              hasBeforeWait={executionWait.hasBeforeWait}
+            />
+          ) : null}
+          <span className="workflow-node-card__menu" aria-hidden="true">
+            ...
+          </span>
+        </div>
+      </header>
+
+      <section className="workflow-node-card__body">
+        <div className="workflow-node-card__row workflow-node-card__row--summary">
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Repo</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.repository}
+            </span>
+          </div>
+
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Branch</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.branch}
+            </span>
+          </div>
+
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Sync</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.sync_label}
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <footer className="workflow-node-card__footer">
+        <span className="workflow-node-card__footer-meta">Current commit</span>
+        <strong>{config.current_commit}</strong>
+      </footer>
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="repo_out"
+        position={Position.Right}
+        type="source"
+      />
+    </div>
+  )
+}
+
+function DoltRepoSyncNode({ data, dragging, selected }) {
+  const runtime = data.uiState?.runtime ?? null
+  const nodeLabel = data.node?.label ?? data.label ?? 'Dolt Repo Sync'
+  const config = normalizeDoltRepoSyncNodeConfig(
+    data.node?.config,
+    data.workflow,
+    data.node?.node_id
+  )
+  const runtimeState = runtime?.status ?? null
+  const executionWait = getNodeExecutionWaitState(data.node?.config)
+
+  return (
+    <div
+      className={buildWorkflowNodeCardClassName(
+        'workflow-node-card--input-reference workflow-node-card--dolt-repo-sync',
+        {
+          dragging,
+          hovered: Boolean(data.uiState?.interaction?.hovered),
+          selected
+        }
+      )}
+      data-runtime-state={runtimeState ?? undefined}
+      title={buildNodeRuntimeTitle(runtime, 'Click to select. Drag to move. Double-click to inspect.')}
+    >
+      <header className="workflow-node-card__header">
+        <div className="workflow-node-card__heading">
+          <span
+            className="workflow-node-card__icon workflow-node-card__icon--dolt"
+            aria-hidden="true"
+          >
+            <DoltRepoSourceMark />
+          </span>
+          <strong>{nodeLabel}</strong>
+        </div>
+        <div className="workflow-node-card__tools">
+          {executionWait.enabled ? (
+            <NodeExecutionWaitIcon
+              className="workflow-node-card__delay-icon"
+              hasAfterWait={executionWait.hasAfterWait}
+              hasBeforeWait={executionWait.hasBeforeWait}
+            />
+          ) : null}
+          <span className="workflow-node-card__menu" aria-hidden="true">
+            ...
+          </span>
+        </div>
+      </header>
+
+      <section className="workflow-node-card__body">
+        <div className="workflow-node-card__row workflow-node-card__row--summary">
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">From</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.previous_commit}
+            </span>
+          </div>
+
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">To</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.current_commit}
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <footer className="workflow-node-card__footer">
+        <span className="workflow-node-card__footer-meta">Sync action</span>
+        <strong>{config.sync_action_label}</strong>
+      </footer>
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="repo"
+        position={Position.Left}
+        style={{ top: '38%' }}
+        type="target"
+      />
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="checkpoint"
+        position={Position.Left}
+        style={{ top: '72%' }}
+        type="target"
+      />
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="repo_out"
+        position={Position.Right}
+        type="source"
+      />
+    </div>
+  )
+}
+
+function CheckpointReadNode({ data, dragging, selected }) {
+  const runtime = data.uiState?.runtime ?? null
+  const nodeLabel = data.node?.label ?? data.label ?? 'Checkpoint Read'
+  const config = normalizeCheckpointReadNodeConfig(data.node?.config)
+  const runtimeState = runtime?.status ?? null
+  const executionWait = getNodeExecutionWaitState(data.node?.config)
+
+  return (
+    <div
+      className={buildWorkflowNodeCardClassName(
+        'workflow-node-card--input-reference workflow-node-card--checkpoint-read',
+        {
+          dragging,
+          hovered: Boolean(data.uiState?.interaction?.hovered),
+          selected
+        }
+      )}
+      data-runtime-state={runtimeState ?? undefined}
+      title={buildNodeRuntimeTitle(runtime, 'Click to select. Drag to move. Double-click to inspect.')}
+    >
+      <header className="workflow-node-card__header">
+        <div className="workflow-node-card__heading">
+          <span className="workflow-node-card__icon" aria-hidden="true">
+            R
+          </span>
+          <strong>{nodeLabel}</strong>
+        </div>
+        <div className="workflow-node-card__tools">
+          {executionWait.enabled ? (
+            <NodeExecutionWaitIcon
+              className="workflow-node-card__delay-icon"
+              hasAfterWait={executionWait.hasAfterWait}
+              hasBeforeWait={executionWait.hasBeforeWait}
+            />
+          ) : null}
+          <span className="workflow-node-card__menu" aria-hidden="true">
+            ...
+          </span>
+        </div>
+      </header>
+
+      <section className="workflow-node-card__body">
+        <div className="workflow-node-card__row workflow-node-card__row--summary">
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Scope</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.scope_label}
+            </span>
+          </div>
+
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Fallback</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.fallback_label}
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <footer className="workflow-node-card__footer">
+        <span className="workflow-node-card__footer-meta">Last commit</span>
+        <strong>{config.last_commit_label}</strong>
+      </footer>
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="checkpoint"
+        position={Position.Right}
+        type="source"
+      />
+    </div>
+  )
+}
+
+function CheckpointWriteNode({ data, dragging, selected }) {
+  const runtime = data.uiState?.runtime ?? null
+  const nodeLabel = data.node?.label ?? data.label ?? 'Checkpoint Write'
+  const config = normalizeCheckpointWriteNodeConfig(
+    data.node?.config,
+    data.workflow,
+    data.node?.node_id
+  )
+  const runtimeState = runtime?.status ?? null
+  const executionWait = getNodeExecutionWaitState(data.node?.config)
+
+  return (
+    <div
+      className={buildWorkflowNodeCardClassName(
+        'workflow-node-card--input-reference workflow-node-card--checkpoint-write',
+        {
+          dragging,
+          hovered: Boolean(data.uiState?.interaction?.hovered),
+          selected
+        }
+      )}
+      data-runtime-state={runtimeState ?? undefined}
+      title={buildNodeRuntimeTitle(runtime, 'Click to select. Drag to move. Double-click to inspect.')}
+    >
+      <header className="workflow-node-card__header">
+        <div className="workflow-node-card__heading">
+          <span className="workflow-node-card__icon" aria-hidden="true">
+            W
+          </span>
+          <strong>{nodeLabel}</strong>
+        </div>
+        <div className="workflow-node-card__tools">
+          {executionWait.enabled ? (
+            <NodeExecutionWaitIcon
+              className="workflow-node-card__delay-icon"
+              hasAfterWait={executionWait.hasAfterWait}
+              hasBeforeWait={executionWait.hasBeforeWait}
+            />
+          ) : null}
+          <span className="workflow-node-card__menu" aria-hidden="true">
+            ...
+          </span>
+        </div>
+      </header>
+
+      <section className="workflow-node-card__body">
+        <div className="workflow-node-card__row workflow-node-card__row--summary">
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Write gate</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.write_gate_label}
+            </span>
+          </div>
+
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Scope</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.scope_label}
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <footer className="workflow-node-card__footer">
+        <span className="workflow-node-card__footer-meta">Commit source</span>
+        <strong>{config.commit_source_label}</strong>
+      </footer>
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="table"
+        position={Position.Left}
+        type="target"
+      />
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="table"
+        position={Position.Right}
+        type="source"
+      />
+    </div>
+  )
+}
+
+function QualityCheckNode({ data, dragging, selected }) {
+  const runtime = data.uiState?.runtime ?? null
+  const nodeLabel = data.node?.label ?? data.label ?? 'Quality Check'
+  const config = normalizeQualityCheckNodeConfig(
+    data.node?.config,
+    data.workflow,
+    data.node?.node_id
+  )
+  const runtimeState = runtime?.status ?? null
+  const executionWait = getNodeExecutionWaitState(data.node?.config)
+
+  return (
+    <div
+      className={buildWorkflowNodeCardClassName(
+        'workflow-node-card--input-reference workflow-node-card--quality-check',
+        {
+          dragging,
+          hovered: Boolean(data.uiState?.interaction?.hovered),
+          selected
+        }
+      )}
+      data-runtime-state={runtimeState ?? undefined}
+      title={buildNodeRuntimeTitle(runtime, 'Click to select. Drag to move. Double-click to inspect.')}
+    >
+      <header className="workflow-node-card__header">
+        <div className="workflow-node-card__heading">
+          <span className="workflow-node-card__icon" aria-hidden="true">
+            Q
+          </span>
+          <strong>{nodeLabel}</strong>
+        </div>
+        <div className="workflow-node-card__tools">
+          {executionWait.enabled ? (
+            <NodeExecutionWaitIcon
+              className="workflow-node-card__delay-icon"
+              hasAfterWait={executionWait.hasAfterWait}
+              hasBeforeWait={executionWait.hasBeforeWait}
+            />
+          ) : null}
+          <span className="workflow-node-card__menu" aria-hidden="true">
+            ...
+          </span>
+        </div>
+      </header>
+
+      <section className="workflow-node-card__body">
+        <div className="workflow-node-card__row workflow-node-card__row--summary">
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Suite</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.suite_label}
+            </span>
+          </div>
+
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Gate</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.gate_label}
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <footer className="workflow-node-card__footer">
+        <span className="workflow-node-card__footer-meta">Last result</span>
+        <strong>{config.last_result_label}</strong>
+      </footer>
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="table"
+        position={Position.Left}
+        type="target"
+      />
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="table"
+        position={Position.Right}
+        type="source"
+      />
+    </div>
+  )
+}
+
+function DoltChangeManifestNode({ data, dragging, selected }) {
+  const runtime = data.uiState?.runtime ?? null
+  const nodeLabel = data.node?.label ?? data.label ?? 'Dolt Change Manifest'
+  const config = normalizeDoltChangeManifestNodeConfig(
+    data.node?.config,
+    data.workflow,
+    data.node?.node_id
+  )
+  const runtimeState = runtime?.status ?? null
+  const executionWait = getNodeExecutionWaitState(data.node?.config)
+
+  return (
+    <div
+      className={buildWorkflowNodeCardClassName(
+        'workflow-node-card--input-reference workflow-node-card--dolt-change-manifest',
+        {
+          dragging,
+          hovered: Boolean(data.uiState?.interaction?.hovered),
+          selected
+        }
+      )}
+      data-runtime-state={runtimeState ?? undefined}
+      title={buildNodeRuntimeTitle(runtime, 'Click to select. Drag to move. Double-click to inspect.')}
+    >
+      <header className="workflow-node-card__header">
+        <div className="workflow-node-card__heading">
+          <span
+            className="workflow-node-card__icon workflow-node-card__icon--dolt"
+            aria-hidden="true"
+          >
+            <DoltRepoSourceMark />
+          </span>
+          <strong>{nodeLabel}</strong>
+        </div>
+        <div className="workflow-node-card__tools">
+          {executionWait.enabled ? (
+            <NodeExecutionWaitIcon
+              className="workflow-node-card__delay-icon"
+              hasAfterWait={executionWait.hasAfterWait}
+              hasBeforeWait={executionWait.hasBeforeWait}
+            />
+          ) : null}
+          <span className="workflow-node-card__menu" aria-hidden="true">
+            ...
+          </span>
+        </div>
+      </header>
+
+      <section className="workflow-node-card__body">
+        <div className="workflow-node-card__row workflow-node-card__row--summary">
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Range</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.range_label}
+            </span>
+          </div>
+
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Scope</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.scope_label}
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <footer className="workflow-node-card__footer">
+        <span className="workflow-node-card__footer-meta">Schema drift</span>
+        <strong>{config.schema_drift_label}</strong>
+      </footer>
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="repo"
+        position={Position.Left}
+        type="target"
+      />
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="manifest"
+        position={Position.Right}
+        type="source"
+      />
+    </div>
+  )
+}
+
+function DoltDumpNode({ data, dragging, selected }) {
+  const runtime = data.uiState?.runtime ?? null
+  const nodeLabel = data.node?.label ?? data.label ?? 'Dolt Dump'
+  const config = normalizeDoltDumpNodeConfig(
+    data.node?.config,
+    data.workflow,
+    data.node?.node_id
+  )
+  const runtimeState = runtime?.status ?? null
+  const executionWait = getNodeExecutionWaitState(data.node?.config)
+
+  return (
+    <div
+      className={buildWorkflowNodeCardClassName(
+        'workflow-node-card--input-reference workflow-node-card--dolt-dump',
+        {
+          dragging,
+          hovered: Boolean(data.uiState?.interaction?.hovered),
+          selected
+        }
+      )}
+      data-runtime-state={runtimeState ?? undefined}
+      title={buildNodeRuntimeTitle(runtime, 'Click to select. Drag to move. Double-click to inspect.')}
+    >
+      <header className="workflow-node-card__header">
+        <div className="workflow-node-card__heading">
+          <span
+            className="workflow-node-card__icon workflow-node-card__icon--dolt"
+            aria-hidden="true"
+          >
+            <DoltRepoSourceMark />
+          </span>
+          <strong>{nodeLabel}</strong>
+        </div>
+        <div className="workflow-node-card__tools">
+          {executionWait.enabled ? (
+            <NodeExecutionWaitIcon
+              className="workflow-node-card__delay-icon"
+              hasAfterWait={executionWait.hasAfterWait}
+              hasBeforeWait={executionWait.hasBeforeWait}
+            />
+          ) : null}
+          <span className="workflow-node-card__menu" aria-hidden="true">
+            ...
+          </span>
+        </div>
+      </header>
+
+      <section className="workflow-node-card__body">
+        <div className="workflow-node-card__row workflow-node-card__row--summary">
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Format</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.format_label}
+            </span>
+          </div>
+
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Tables</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.table_label}
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <footer className="workflow-node-card__footer">
+        <span className="workflow-node-card__footer-meta">Bundle</span>
+        <strong>{config.bundle_label}</strong>
+      </footer>
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="repo"
+        position={Position.Left}
+        type="target"
+      />
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="bundle"
+        position={Position.Right}
+        type="source"
+      />
+    </div>
+  )
+}
+
+function DoltDiffExportNode({ data, dragging, selected }) {
+  const runtime = data.uiState?.runtime ?? null
+  const nodeLabel = data.node?.label ?? data.label ?? 'Dolt Diff Export'
+  const config = normalizeDoltDiffExportNodeConfig(
+    data.node?.config,
+    data.workflow,
+    data.node?.node_id
+  )
+  const runtimeState = runtime?.status ?? null
+  const executionWait = getNodeExecutionWaitState(data.node?.config)
+
+  return (
+    <div
+      className={buildWorkflowNodeCardClassName(
+        'workflow-node-card--input-reference workflow-node-card--dolt-diff-export',
+        {
+          dragging,
+          hovered: Boolean(data.uiState?.interaction?.hovered),
+          selected
+        }
+      )}
+      data-runtime-state={runtimeState ?? undefined}
+      title={buildNodeRuntimeTitle(runtime, 'Click to select. Drag to move. Double-click to inspect.')}
+    >
+      <header className="workflow-node-card__header">
+        <div className="workflow-node-card__heading">
+          <span
+            className="workflow-node-card__icon workflow-node-card__icon--dolt"
+            aria-hidden="true"
+          >
+            <DoltRepoSourceMark />
+          </span>
+          <strong>{nodeLabel}</strong>
+        </div>
+        <div className="workflow-node-card__tools">
+          {executionWait.enabled ? (
+            <NodeExecutionWaitIcon
+              className="workflow-node-card__delay-icon"
+              hasAfterWait={executionWait.hasAfterWait}
+              hasBeforeWait={executionWait.hasBeforeWait}
+            />
+          ) : null}
+          <span className="workflow-node-card__menu" aria-hidden="true">
+            ...
+          </span>
+        </div>
+      </header>
+
+      <section className="workflow-node-card__body">
+        <div className="workflow-node-card__row workflow-node-card__row--summary">
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Range</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.range_label}
+            </span>
+          </div>
+
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Filter</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.filter_label}
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <footer className="workflow-node-card__footer">
+        <span className="workflow-node-card__footer-meta">Bundle</span>
+        <strong>{config.bundle_label}</strong>
+      </footer>
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="manifest"
+        position={Position.Left}
+        type="target"
+      />
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="bundle"
+        position={Position.Right}
+        type="source"
+      />
+    </div>
+  )
+}
+
+function LoadToDuckDbNode({ data, dragging, selected }) {
+  const runtime = data.uiState?.runtime ?? null
+  const nodeLabel = data.node?.label ?? data.label ?? 'Load to DuckDB'
+  const config = normalizeLoadToDuckDbNodeConfig(
+    data.node?.config,
+    data.workflow,
+    data.node?.node_id
+  )
+  const runtimeState = runtime?.status ?? null
+  const executionWait = getNodeExecutionWaitState(data.node?.config)
+
+  return (
+    <div
+      className={buildWorkflowNodeCardClassName(
+        'workflow-node-card--input-reference workflow-node-card--load-to-duckdb',
+        {
+          dragging,
+          hovered: Boolean(data.uiState?.interaction?.hovered),
+          selected
+        }
+      )}
+      data-runtime-state={runtimeState ?? undefined}
+      title={buildNodeRuntimeTitle(runtime, 'Click to select. Drag to move. Double-click to inspect.')}
+    >
+      <header className="workflow-node-card__header">
+        <div className="workflow-node-card__heading">
+          <span
+            className="workflow-node-card__icon workflow-node-card__icon--duckdb"
+            aria-hidden="true"
+          >
+            <DuckDbMark />
+          </span>
+          <strong>{nodeLabel}</strong>
+        </div>
+        <div className="workflow-node-card__tools">
+          {executionWait.enabled ? (
+            <NodeExecutionWaitIcon
+              className="workflow-node-card__delay-icon"
+              hasAfterWait={executionWait.hasAfterWait}
+              hasBeforeWait={executionWait.hasBeforeWait}
+            />
+          ) : null}
+          <span className="workflow-node-card__menu" aria-hidden="true">
+            ...
+          </span>
+        </div>
+      </header>
+
+      <section className="workflow-node-card__body">
+        <div className="workflow-node-card__row workflow-node-card__row--summary">
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Target</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.target_label}
+            </span>
+          </div>
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Bundle mode</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.bundle_mode_label}
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <footer className="workflow-node-card__footer">
+        <span className="workflow-node-card__footer-meta">Merge context</span>
+        <strong>{config.merge_context_label}</strong>
+      </footer>
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="bundle"
+        position={Position.Left}
+        type="target"
+      />
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="table"
+        position={Position.Right}
+        type="source"
+      />
+    </div>
+  )
+}
+
+function TableMergeNode({ data, dragging, selected }) {
+  const runtime = data.uiState?.runtime ?? null
+  const nodeLabel = data.node?.label ?? data.label ?? 'Table Merge'
+  const config = normalizeTableMergeNodeConfig(data.node?.config)
+  const runtimeState = runtime?.status ?? null
+  const executionWait = getNodeExecutionWaitState(data.node?.config)
+
+  return (
+    <div
+      className={buildWorkflowNodeCardClassName(
+        'workflow-node-card--input-reference workflow-node-card--table-merge',
+        {
+          dragging,
+          hovered: Boolean(data.uiState?.interaction?.hovered),
+          selected
+        }
+      )}
+      data-runtime-state={runtimeState ?? undefined}
+      title={buildNodeRuntimeTitle(runtime, 'Click to select. Drag to move. Double-click to inspect.')}
+    >
+      <header className="workflow-node-card__header">
+        <div className="workflow-node-card__heading">
+          <span className="workflow-node-card__icon" aria-hidden="true">
+            G
+          </span>
+          <strong>{nodeLabel}</strong>
+        </div>
+        <div className="workflow-node-card__tools">
+          {executionWait.enabled ? (
+            <NodeExecutionWaitIcon
+              className="workflow-node-card__delay-icon"
+              hasAfterWait={executionWait.hasAfterWait}
+              hasBeforeWait={executionWait.hasBeforeWait}
+            />
+          ) : null}
+          <span className="workflow-node-card__menu" aria-hidden="true">
+            ...
+          </span>
+        </div>
+      </header>
+
+      <section className="workflow-node-card__body">
+        <div className="workflow-node-card__row workflow-node-card__row--summary">
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Policy</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.write_policy_label}
+            </span>
+          </div>
+
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Key</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.key_label}
+            </span>
+          </div>
+
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Deletes</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.delete_handling_label}
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <footer className="workflow-node-card__footer">
+        <span className="workflow-node-card__footer-meta">Target</span>
+        <strong>{config.target_label}</strong>
+      </footer>
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="table"
+        position={Position.Left}
+        type="target"
+      />
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="table"
+        position={Position.Right}
+        type="source"
+      />
+    </div>
+  )
+}
+
+function DoltRepoSourceMark() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none">
+      <path
+        d="M4 16C1.791 16 0 14.209 0 12V8C0 5.791 1.791 4 4 4H6V1.75C6 0.784 6.784 0 7.75 0C8.716 0 9.5 0.784 9.5 1.75V12C9.5 14.209 7.709 16 5.5 16H4ZM4 7.5C3.724 7.5 3.5 7.724 3.5 8V12C3.5 12.276 3.724 12.5 4 12.5H5.5C5.776 12.5 6 12.276 6 12V7.5H4Z"
+        fill="currentColor"
+      />
+    </svg>
+  )
+}
+
+function DuckDbMark() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none">
+      <circle cx="8" cy="8" r="8" fill="currentColor" />
+      <circle cx="5.2" cy="8" r="3.1" fill="#f8d106" />
+      <path
+        d="M10.2 6.5H11.65C12.6777 6.5 13.5 7.32235 13.5 8.35C13.5 9.37765 12.6777 10.2 11.65 10.2H10.2V6.5Z"
+        fill="#f8d106"
+      />
+    </svg>
+  )
+}
+
 function StitchlyNode({ data, dragging, selected }) {
   const card = data.card
   const hovered = Boolean(data.uiState?.interaction?.hovered)
@@ -1241,6 +2140,811 @@ function normalizeTableSchemaNodeConfig(config = {}) {
     table_label: tables.length === 1 ? primaryTable.table_name : `${tables.length} tables`,
     total_columns: totalColumns
   }
+}
+
+function normalizeDoltRepoSourceNodeConfig(config = {}) {
+  const repository =
+    typeof config?.repository === 'string' && config.repository.trim()
+      ? config.repository.trim()
+      : 'post-no-preference/earnings'
+  const profile = resolveMockDoltRepoSourceNodeProfile(repository)
+  const checkoutRef =
+    typeof config?.checkout_ref === 'string' && config.checkout_ref.trim()
+      ? config.checkout_ref.trim()
+      : ''
+  const syncStrategy =
+    config?.sync_strategy === 'clone_only' || config?.sync_strategy === 'manual'
+      ? config.sync_strategy
+      : 'pull_before_execution'
+
+  return {
+    branch:
+      typeof config?.branch === 'string' && config.branch.trim()
+        ? config.branch.trim()
+        : 'main',
+    current_commit: checkoutRef
+      ? checkoutRef.slice(0, 12)
+      : profile?.current_commit ?? 'pending_sync',
+    repository,
+    sync_label: describeDoltRepoSourceNodeSyncStrategy(syncStrategy)
+  }
+}
+
+function resolveMockCheckpointReadNodeState(config = {}) {
+  const sourceRepo =
+    typeof config?.source_repo === 'string' && config.source_repo.trim()
+      ? config.source_repo.trim()
+      : 'post-no-preference/earnings'
+  const branch =
+    typeof config?.branch === 'string' && config.branch.trim() ? config.branch.trim() : 'main'
+  const checkpointTable =
+    typeof config?.checkpoint_table === 'string' && config.checkpoint_table.trim()
+      ? config.checkpoint_table.trim()
+      : 'tables.ingest_checkpoints'
+  const emitBootstrapMarkerIfMissing = config?.emit_bootstrap_marker_if_missing !== false
+  const failOnStaleCheckpoint = config?.fail_on_stale_checkpoint === true
+  const profile = resolveMockDoltRepoSourceNodeProfile(sourceRepo)
+
+  if (!profile) {
+    return {
+      branch,
+      checkpoint_table: checkpointTable,
+      emit_bootstrap_marker_if_missing: emitBootstrapMarkerIfMissing,
+      fail_on_stale_checkpoint: failOnStaleCheckpoint,
+      has_checkpoint: false,
+      last_ingest_mode: emitBootstrapMarkerIfMissing ? 'bootstrap_pending' : 'checkpoint_required',
+      last_success_at: null,
+      last_synced_commit: null,
+      scope_label: 'repo checkpoint',
+      source_repo: sourceRepo,
+      stale_checkpoint: false
+    }
+  }
+
+  const lastSuccessAt =
+    sourceRepo === 'post-no-preference/options'
+      ? '2026-06-08T14:22:11Z'
+      : sourceRepo === 'post-no-preference/rates'
+        ? '2026-06-08T09:15:42Z'
+        : '2026-06-07T18:04:09Z'
+
+  return {
+    branch,
+    checkpoint_table: checkpointTable,
+    emit_bootstrap_marker_if_missing: emitBootstrapMarkerIfMissing,
+    fail_on_stale_checkpoint: failOnStaleCheckpoint,
+    has_checkpoint: true,
+    last_ingest_mode: sourceRepo === 'post-no-preference/earnings' ? 'bootstrap_refresh' : 'recurring_delta',
+    last_success_at: lastSuccessAt,
+    last_synced_commit: profile.previous_commit ?? null,
+    scope_label: 'repo checkpoint',
+    source_repo: sourceRepo,
+    stale_checkpoint: false
+  }
+}
+
+function resolveMockDoltRepoSourceNodeProfile(repository) {
+  switch (repository) {
+    case 'post-no-preference/earnings':
+      return {
+        previous_commit: '92fd7ac',
+        current_commit: 'a34ef9c'
+      }
+    case 'post-no-preference/options':
+      return {
+        previous_commit: 'ac31f0b',
+        current_commit: 'b91c2aa'
+      }
+    case 'post-no-preference/rates':
+      return {
+        previous_commit: 'c83f10d',
+        current_commit: 'd0f61b4'
+      }
+    default:
+      return null
+  }
+}
+
+function describeDoltRepoSourceNodeSyncStrategy(syncStrategy) {
+  switch (syncStrategy) {
+    case 'clone_only':
+      return 'Clone only'
+    case 'manual':
+      return 'Manual'
+    default:
+      return humanizeToken('pull_before_execution')
+  }
+}
+
+function normalizeCheckpointReadNodeConfig(config = {}) {
+  const checkpointState = resolveMockCheckpointReadNodeState(config)
+
+  return {
+    fallback_label: checkpointState.emit_bootstrap_marker_if_missing
+      ? 'bootstrap marker'
+      : 'fail if missing',
+    last_commit_label: checkpointState.last_synced_commit ?? 'bootstrap pending',
+    scope_label: checkpointState.scope_label
+  }
+}
+
+function normalizeCheckpointWriteNodeConfig(config = {}, workflow = null, nodeId = null) {
+  const checkpointContext = resolveConnectedCheckpointWriteNodeContext(workflow, nodeId)
+  const onlyPersistOnFullSuccess = config?.only_persist_on_full_success !== false
+  const advanceOnPartialSuccess = config?.advance_on_partial_success === true
+  const commitSource =
+    config?.commit_source === 'metadata.current_commit'
+      ? 'metadata.current_commit'
+      : 'metadata.current_commit'
+
+  return {
+    commit_source_label: commitSource,
+    scope_label: checkpointContext?.scopeLabel ?? 'repo + branch',
+    write_gate_label: onlyPersistOnFullSuccess && !advanceOnPartialSuccess
+      ? 'success only'
+      : advanceOnPartialSuccess
+        ? 'partial allowed'
+        : 'durable success',
+  }
+}
+
+function normalizeQualityCheckNodeConfig(config = {}, workflow = null, nodeId = null) {
+  const qualityState = resolveMockQualityCheckNodeState(
+    config,
+    resolveConnectedQualityCheckNodeContext(workflow, nodeId)
+  )
+
+  return {
+    gate_label: qualityState.block_checkpoint_write_on_failure
+      ? 'checkpoint + publish'
+      : 'advisory only',
+    last_result_label:
+      qualityState.gate_status === 'pass'
+        ? 'passed'
+        : qualityState.gate_status === 'fail'
+          ? `${qualityState.failing_rules.length || 1} failure`
+          : `${qualityState.warning_rules.length || 1} warnings`,
+    suite_label: describeQualityCheckSuitePreset(qualityState.suite_preset)
+  }
+}
+
+function normalizeDoltRepoSyncNodeConfig(config = {}, workflow = null, nodeId = null) {
+  const sourceConfig = resolveConnectedDoltRepoSourceNodeConfig(workflow, nodeId)
+  const checkpointContext = resolveConnectedCheckpointReadNodeContext(workflow, nodeId)
+  const repository =
+    typeof sourceConfig?.repository === 'string' && sourceConfig.repository.trim()
+      ? sourceConfig.repository.trim()
+      : 'post-no-preference/earnings'
+  const profile = resolveMockDoltRepoSourceNodeProfile(repository)
+  const checkoutRef =
+    typeof sourceConfig?.checkout_ref === 'string' && sourceConfig.checkout_ref.trim()
+      ? sourceConfig.checkout_ref.trim()
+      : ''
+  const syncAction =
+    config?.sync_action === 'fetch_and_checkout' || config?.sync_action === 'refresh_checkout'
+      ? config.sync_action
+      : 'pull_remote_head'
+
+  return {
+    current_commit: checkoutRef
+      ? checkoutRef.slice(0, 12)
+      : profile?.current_commit ?? 'pending_sync',
+    previous_commit: checkpointContext
+      ? checkpointContext.last_synced_commit ?? 'pending_checkpoint'
+      : profile?.previous_commit ?? 'pending_checkpoint',
+    sync_action_label: describeDoltRepoSyncNodeAction(syncAction)
+  }
+}
+
+function normalizeDoltChangeManifestNodeConfig(config = {}, workflow = null, nodeId = null) {
+  const syncContext = resolveConnectedDoltRepoSyncNodeContext(workflow, nodeId)
+  const sourceConfig = syncContext?.sourceConfig ?? null
+  const repository =
+    typeof sourceConfig?.repository === 'string' && sourceConfig.repository.trim()
+      ? sourceConfig.repository.trim()
+      : 'post-no-preference/earnings'
+  const profile = resolveMockDoltRepoSourceNodeProfile(repository)
+  const checkoutRef =
+    typeof sourceConfig?.checkout_ref === 'string' && sourceConfig.checkout_ref.trim()
+      ? sourceConfig.checkout_ref.trim()
+      : ''
+  const selectedTables = normalizeDoltChangeManifestSelectedTables(config?.selected_tables)
+  const tableScope = config?.table_scope === 'allowlist' ? 'allowlist' : 'all_tables'
+  const manifestProfile = resolveMockDoltChangeManifestNodeProfile(repository)
+  const changedTables = filterDoltChangeManifestTables(
+    manifestProfile?.changed_tables ?? [],
+    tableScope,
+    selectedTables
+  )
+  const schemaChangedTables = filterDoltChangeManifestTables(
+    manifestProfile?.schema_changed_tables ?? [],
+    tableScope,
+    selectedTables
+  )
+
+  return {
+    range_label: `${profile?.previous_commit ?? 'pending_checkpoint'} -> ${
+      checkoutRef ? checkoutRef.slice(0, 12) : profile?.current_commit ?? 'pending_sync'
+    }`,
+    scope_label:
+      tableScope === 'allowlist'
+        ? selectedTables.length > 0
+          ? `${selectedTables.length} selected`
+          : 'selected tables'
+        : 'all tables',
+    schema_drift_label:
+      schemaChangedTables.length > 0
+        ? `${schemaChangedTables.length} table${schemaChangedTables.length === 1 ? '' : 's'} flagged`
+        : changedTables.length > 0
+          ? 'No drift'
+          : 'Pending scope'
+  }
+}
+
+function normalizeDoltDumpNodeConfig(config = {}, workflow = null, nodeId = null) {
+  const sourceContext = resolveConnectedDoltDumpNodeContext(workflow, nodeId)
+  const tableSelectionMode =
+    config?.table_selection_mode === 'all_tables' || config?.table_selection_mode === 'manual_tables'
+      ? config.table_selection_mode
+      : 'prefer_manifest_scope'
+  const selectedTables = normalizeDoltDumpSelectedTables(config?.selected_tables)
+  const formatLabel = config?.output_format === 'csv' ? 'csv' : 'parquet'
+  const tableLabel =
+    tableSelectionMode === 'manual_tables'
+      ? selectedTables.length > 0
+        ? `${selectedTables.length} selected`
+        : 'selected tables'
+      : tableSelectionMode === 'prefer_manifest_scope' && sourceContext?.sourceTypeId === 'dolt_change_manifest'
+        ? sourceContext.changedTables.length > 0
+          ? `${sourceContext.changedTables.length} changed`
+          : 'changed tables'
+        : 'all tables'
+
+  return {
+    bundle_label: 'directory_ref',
+    format_label: formatLabel,
+    repository: sourceContext?.repository ?? 'post-no-preference/earnings',
+    table_label: tableLabel
+  }
+}
+
+function normalizeDoltDiffExportNodeConfig(config = {}, workflow = null, nodeId = null) {
+  const sourceContext = resolveConnectedDoltDiffExportNodeContext(workflow, nodeId)
+
+  return {
+    bundle_label: 'directory_ref',
+    filter_label: describeDoltDiffExportFilter(config?.change_filter),
+    range_label: `${sourceContext?.previousCommit ?? 'pending_checkpoint'} -> ${
+      sourceContext?.currentCommit ?? 'pending_sync'
+    }`
+  }
+}
+
+function normalizeTableMergeNodeConfig(config = {}) {
+  const writePolicy =
+    config?.write_policy === 'append_only' || config?.write_policy === 'snapshot_replace'
+      ? config.write_policy
+      : 'upsert'
+  const mergeKeyColumns = Array.isArray(config?.merge_key_columns)
+    ? config.merge_key_columns
+        .map((value) => (typeof value === 'string' ? value.trim() : ''))
+        .filter(Boolean)
+    : []
+  const deleteHandling =
+    config?.delete_handling === 'ignore_delete_markers'
+      ? 'ignore_delete_markers'
+      : 'apply_delete_markers'
+
+  return {
+    delete_handling_label:
+      deleteHandling === 'ignore_delete_markers' ? 'markers off' : 'markers on',
+    key_label: mergeKeyColumns.length > 0 ? mergeKeyColumns.join(', ') : 'No key',
+    target_label:
+      typeof config?.target_schema === 'string' && config.target_schema.trim()
+        ? `${config.target_schema.trim()} durable`
+        : 'tables durable',
+    write_policy_label:
+      writePolicy === 'append_only'
+        ? 'append only'
+        : writePolicy === 'snapshot_replace'
+          ? 'snapshot replace'
+          : 'upsert'
+  }
+}
+
+function normalizeLoadToDuckDbNodeConfig(config = {}, workflow = null, nodeId = null) {
+  const sourceContext = resolveConnectedLoadToDuckDbNodeContext(workflow, nodeId)
+
+  return {
+    bundle_mode_label:
+      sourceContext?.sourceTypeId === 'dolt_diff_export'
+        ? 'delta bundle'
+        : sourceContext?.sourceTypeId === 'dolt_dump'
+          ? 'snapshot bundle'
+          : 'dump + diff aware',
+    merge_context_label:
+      sourceContext?.sourceTypeId === 'dolt_diff_export'
+        ? 'load manifest'
+        : sourceContext?.currentCommit
+          ? sourceContext.currentCommit
+          : 'load manifest',
+    target_label:
+      typeof config?.target_schema === 'string' && config.target_schema.trim()
+        ? config.target_schema.trim()
+        : 'staging'
+  }
+}
+
+function resolveConnectedDoltRepoSourceNodeConfig(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return null
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'repo'
+  )
+  if (!incomingEdge) {
+    return null
+  }
+
+  const sourceNode = workflow.nodes?.find(
+    (node) =>
+      node.node_id === incomingEdge.source_node_id && node.type_id === 'dolt_repo_source'
+  )
+
+  return sourceNode?.config ?? null
+}
+
+function resolveConnectedDoltRepoSyncNodeContext(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return null
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'repo'
+  )
+  if (!incomingEdge) {
+    return null
+  }
+
+  const syncNode = workflow.nodes?.find(
+    (node) =>
+      node.node_id === incomingEdge.source_node_id && node.type_id === 'dolt_repo_sync'
+  )
+  if (!syncNode) {
+    return null
+  }
+
+  return {
+    checkpointContext: resolveConnectedCheckpointReadNodeContext(workflow, syncNode.node_id),
+    sourceConfig: resolveConnectedDoltRepoSourceNodeConfig(workflow, syncNode.node_id),
+    syncConfig: syncNode.config ?? {}
+  }
+}
+
+function resolveConnectedCheckpointReadNodeContext(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return null
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'checkpoint'
+  )
+  if (!incomingEdge) {
+    return null
+  }
+
+  const sourceNode = workflow.nodes?.find(
+    (node) =>
+      node.node_id === incomingEdge.source_node_id && node.type_id === 'checkpoint_read'
+  )
+  if (!sourceNode) {
+    return null
+  }
+
+  return resolveMockCheckpointReadNodeState(sourceNode.config)
+}
+
+function resolveConnectedDoltDumpNodeContext(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return null
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'repo'
+  )
+  if (!incomingEdge) {
+    return null
+  }
+
+  const sourceNode = workflow.nodes?.find((node) => node.node_id === incomingEdge.source_node_id)
+  if (!sourceNode) {
+    return null
+  }
+
+  if (sourceNode.type_id === 'dolt_repo_source') {
+    const repository =
+      typeof sourceNode.config?.repository === 'string' && sourceNode.config.repository.trim()
+        ? sourceNode.config.repository.trim()
+        : 'post-no-preference/earnings'
+
+    return {
+      changedTables: [],
+      repository,
+      sourceConfig: sourceNode.config ?? null,
+      sourceTypeId: sourceNode.type_id
+    }
+  }
+
+  if (sourceNode.type_id === 'dolt_repo_sync') {
+    const sourceConfig = resolveConnectedDoltRepoSourceNodeConfig(workflow, sourceNode.node_id)
+    const repository =
+      typeof sourceConfig?.repository === 'string' && sourceConfig.repository.trim()
+        ? sourceConfig.repository.trim()
+        : 'post-no-preference/earnings'
+
+    return {
+      changedTables: [],
+      repository,
+      sourceConfig,
+      sourceTypeId: sourceNode.type_id
+    }
+  }
+
+  if (sourceNode.type_id === 'dolt_change_manifest') {
+    const syncContext = resolveConnectedDoltRepoSyncNodeContext(workflow, sourceNode.node_id)
+    const repository =
+      typeof syncContext?.sourceConfig?.repository === 'string' &&
+      syncContext.sourceConfig.repository.trim()
+        ? syncContext.sourceConfig.repository.trim()
+        : 'post-no-preference/earnings'
+
+    return {
+      changedTables: resolveMockDoltDumpManifestTables(repository, sourceNode.config),
+      repository,
+      sourceConfig: syncContext?.sourceConfig ?? null,
+      sourceTypeId: sourceNode.type_id
+    }
+  }
+
+  return null
+}
+
+function resolveConnectedDoltDiffExportNodeContext(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return null
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'manifest'
+  )
+  if (!incomingEdge) {
+    return null
+  }
+
+  const sourceNode = workflow.nodes?.find(
+    (node) =>
+      node.node_id === incomingEdge.source_node_id && node.type_id === 'dolt_change_manifest'
+  )
+  if (!sourceNode) {
+    return null
+  }
+
+  const syncContext = resolveConnectedDoltRepoSyncNodeContext(workflow, sourceNode.node_id)
+  const repository =
+    typeof syncContext?.sourceConfig?.repository === 'string' &&
+    syncContext.sourceConfig.repository.trim()
+      ? syncContext.sourceConfig.repository.trim()
+      : 'post-no-preference/earnings'
+  const profile = resolveMockDoltRepoSourceNodeProfile(repository)
+  const checkoutRef =
+    typeof syncContext?.sourceConfig?.checkout_ref === 'string' &&
+    syncContext.sourceConfig.checkout_ref.trim()
+      ? syncContext.sourceConfig.checkout_ref.trim()
+      : ''
+
+  return {
+    sourceConfig: syncContext?.sourceConfig ?? null,
+    currentCommit: checkoutRef
+      ? checkoutRef.slice(0, 12)
+      : profile?.current_commit ?? 'pending_sync',
+    previousCommit: profile?.previous_commit ?? 'pending_checkpoint'
+  }
+}
+
+function resolveConnectedLoadToDuckDbNodeContext(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return null
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'bundle'
+  )
+  if (!incomingEdge) {
+    return null
+  }
+
+  const sourceNode = workflow.nodes?.find((node) => node.node_id === incomingEdge.source_node_id)
+  if (!sourceNode) {
+    return null
+  }
+
+  if (sourceNode.type_id === 'dolt_dump') {
+    const dumpContext = resolveConnectedDoltDumpNodeContext(workflow, sourceNode.node_id)
+    const repository =
+      typeof dumpContext?.repository === 'string' && dumpContext.repository.trim()
+        ? dumpContext.repository.trim()
+        : 'post-no-preference/earnings'
+    const profile = resolveMockDoltRepoSourceNodeProfile(repository)
+    return {
+      branch:
+        typeof dumpContext?.sourceConfig?.branch === 'string' &&
+        dumpContext.sourceConfig.branch.trim()
+          ? dumpContext.sourceConfig.branch.trim()
+          : 'main',
+      currentCommit: profile?.current_commit ?? 'pending_sync',
+      previousCommit: null,
+      repository,
+      sourceTypeId: sourceNode.type_id
+    }
+  }
+
+  if (sourceNode.type_id === 'dolt_diff_export') {
+    const diffContext = resolveConnectedDoltDiffExportNodeContext(workflow, sourceNode.node_id)
+    return {
+      branch:
+        typeof diffContext?.sourceConfig?.branch === 'string' &&
+        diffContext.sourceConfig.branch.trim()
+          ? diffContext.sourceConfig.branch.trim()
+          : 'main',
+      currentCommit: diffContext?.currentCommit ?? 'pending_sync',
+      previousCommit: diffContext?.previousCommit ?? 'pending_checkpoint',
+      repository:
+        typeof diffContext?.sourceConfig?.repository === 'string' &&
+        diffContext.sourceConfig.repository.trim()
+          ? diffContext.sourceConfig.repository.trim()
+          : 'post-no-preference/earnings',
+      sourceTypeId: sourceNode.type_id
+    }
+  }
+
+  return null
+}
+
+function resolveConnectedCheckpointWriteNodeContext(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return null
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'table'
+  )
+  if (!incomingEdge) {
+    return null
+  }
+
+  const sourceNode = workflow.nodes?.find((node) => node.node_id === incomingEdge.source_node_id)
+  if (!sourceNode) {
+    return null
+  }
+
+  if (sourceNode.type_id === 'table_merge') {
+    const loadContext = resolveConnectedLoadToDuckDbNodeContext(workflow, sourceNode.node_id)
+    if (!loadContext) {
+      return {
+        scopeLabel: 'repo + branch'
+      }
+    }
+
+    return {
+      branch: loadContext.branch ?? 'main',
+      currentCommit: loadContext.currentCommit ?? 'pending_sync',
+      previousCommit: loadContext.previousCommit ?? null,
+      repository: loadContext.repository ?? 'post-no-preference/earnings',
+      scopeLabel: 'repo + branch'
+    }
+  }
+
+  if (sourceNode.type_id === 'quality_check') {
+    const qualityContext = resolveConnectedQualityCheckNodeContext(workflow, sourceNode.node_id)
+    if (!qualityContext) {
+      return {
+        scopeLabel: 'repo + branch'
+      }
+    }
+
+    return {
+      branch: qualityContext.branch ?? 'main',
+      currentCommit: qualityContext.currentCommit ?? 'pending_sync',
+      previousCommit: qualityContext.previousCommit ?? null,
+      repository: qualityContext.repository ?? 'post-no-preference/earnings',
+      scopeLabel: qualityContext.scopeLabel ?? 'repo + branch'
+    }
+  }
+
+  return {
+    scopeLabel: 'repo + branch'
+  }
+}
+
+function resolveConnectedQualityCheckNodeContext(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return null
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'table'
+  )
+  if (!incomingEdge) {
+    return null
+  }
+
+  const sourceNode = workflow.nodes?.find((node) => node.node_id === incomingEdge.source_node_id)
+  if (!sourceNode || sourceNode.type_id !== 'table_merge') {
+    return null
+  }
+
+  const loadContext = resolveConnectedLoadToDuckDbNodeContext(workflow, sourceNode.node_id)
+  if (!loadContext) {
+    return {
+      scopeLabel: 'repo + branch'
+    }
+  }
+
+  return {
+    branch: loadContext.branch ?? 'main',
+    currentCommit: loadContext.currentCommit ?? 'pending_sync',
+    previousCommit: loadContext.previousCommit ?? null,
+    repository: loadContext.repository ?? 'post-no-preference/earnings',
+    scopeLabel: 'repo + branch'
+  }
+}
+
+function resolveMockQualityCheckNodeState(config = {}, context = null) {
+  const repository =
+    typeof context?.repository === 'string' && context.repository.trim()
+      ? context.repository.trim()
+      : 'post-no-preference/earnings'
+  const suitePreset =
+    config?.suite_preset === 'custom_rule_bundle'
+      ? 'custom_rule_bundle'
+      : 'post_merge_ingest_gate'
+  const warningBudget =
+    typeof config?.warning_budget === 'number' && Number.isFinite(config.warning_budget)
+      ? Math.max(0, Math.round(config.warning_budget))
+      : 2
+  const allowWarningOnlyRunsToContinue =
+    config?.allow_warning_only_runs_to_continue !== false
+  const blockCheckpointWriteOnFailure =
+    config?.block_checkpoint_write_on_failure !== false
+
+  if (repository === 'post-no-preference/earnings') {
+    return {
+      allow_warning_only_runs_to_continue: allowWarningOnlyRunsToContinue,
+      block_checkpoint_write_on_failure: blockCheckpointWriteOnFailure,
+      failing_rules: [],
+      gate_status: 'warn',
+      suite_preset: suitePreset,
+      warning_budget: warningBudget,
+      warning_rules: ['freshness lag', 'soft schema drift note']
+    }
+  }
+
+  return {
+    allow_warning_only_runs_to_continue: allowWarningOnlyRunsToContinue,
+    block_checkpoint_write_on_failure: blockCheckpointWriteOnFailure,
+    failing_rules: [],
+    gate_status: 'pass',
+    suite_preset: suitePreset,
+    warning_budget: warningBudget,
+    warning_rules: []
+  }
+}
+
+function describeQualityCheckSuitePreset(suitePreset) {
+  switch (suitePreset) {
+    case 'custom_rule_bundle':
+      return 'custom audit'
+    default:
+      return 'post-merge audit'
+  }
+}
+
+function describeDoltRepoSyncNodeAction(syncAction) {
+  switch (syncAction) {
+    case 'fetch_and_checkout':
+      return 'Fetch And Checkout'
+    case 'refresh_checkout':
+      return 'Refresh Checkout'
+    default:
+      return 'Pull Remote Head'
+  }
+}
+
+function describeDoltDiffExportFilter(changeFilter) {
+  switch (changeFilter) {
+    case 'non_delete_changes':
+      return 'Non-delete changes'
+    case 'added_only':
+      return 'Added only'
+    case 'modified_only':
+      return 'Modified only'
+    case 'removed_only':
+      return 'Removed only'
+    default:
+      return 'All changes'
+  }
+}
+
+function normalizeDoltChangeManifestSelectedTables(value) {
+  if (Array.isArray(value)) {
+    return [...new Set(value.map((entry) => (typeof entry === 'string' ? entry.trim() : '')).filter(Boolean))]
+  }
+
+  if (typeof value === 'string') {
+    return [...new Set(value.split(',').map((entry) => entry.trim()).filter(Boolean))]
+  }
+
+  return []
+}
+
+function normalizeDoltDumpSelectedTables(value) {
+  if (Array.isArray(value)) {
+    return [...new Set(value.map((entry) => (typeof entry === 'string' ? entry.trim() : '')).filter(Boolean))]
+  }
+
+  if (typeof value === 'string') {
+    return [...new Set(value.split(',').map((entry) => entry.trim()).filter(Boolean))]
+  }
+
+  return []
+}
+
+function resolveMockDoltChangeManifestNodeProfile(repository) {
+  switch (repository) {
+    case 'post-no-preference/earnings':
+      return {
+        changed_tables: ['earnings_calendar', 'eps_history', 'income_statement'],
+        schema_changed_tables: ['income_statement']
+      }
+    case 'post-no-preference/options':
+      return {
+        changed_tables: ['option_chain', 'volatility_history'],
+        schema_changed_tables: []
+      }
+    case 'post-no-preference/rates':
+      return {
+        changed_tables: ['us_treasury'],
+        schema_changed_tables: []
+      }
+    default:
+      return null
+  }
+}
+
+function resolveMockDoltDumpManifestTables(repository, manifestConfig = {}) {
+  const manifestProfile = resolveMockDoltChangeManifestNodeProfile(repository)
+  const tableScope = manifestConfig?.table_scope === 'allowlist' ? 'allowlist' : 'all_tables'
+  const selectedTables = normalizeDoltChangeManifestSelectedTables(manifestConfig?.selected_tables)
+
+  return filterDoltChangeManifestTables(
+    manifestProfile?.changed_tables ?? [],
+    tableScope,
+    selectedTables
+  )
+}
+
+function filterDoltChangeManifestTables(changedTables, tableScope, selectedTables) {
+  if (tableScope !== 'allowlist') {
+    return [...changedTables]
+  }
+
+  if (selectedTables.length === 0) {
+    return []
+  }
+
+  const selectedSet = new Set(selectedTables)
+  return changedTables.filter((tableName) => selectedSet.has(tableName))
 }
 
 function NodeExecutionWaitIcon({

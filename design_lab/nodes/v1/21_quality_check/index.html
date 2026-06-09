@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Design Lab · Schedule Trigger</title>
+    <title>Design Lab · Quality Check</title>
     <link rel="stylesheet" href="../shared.css" />
     <style>
       .study-page {
@@ -539,14 +539,14 @@
   </head>
   <body>
     <main class="lab-page study-page">
-      <section class="lab-stage study-stage" aria-label="Schedule trigger node study">
+      <section class="lab-stage study-stage" aria-label="Checkpoint read node study">
         <div class="flow-scene">
           <div class="flow-caption">
-            <span class="flow-caption__eyebrow">Node Study 02</span>
-            <h1>Schedule trigger as the recurring ingest boundary</h1>
+            <span class="flow-caption__eyebrow">Node Study 19</span>
+            <h1>Checkpoint read as the previous-commit boundary</h1>
             <p>
-              This study reframes the trigger as an operator-facing scheduler for recurring ingestion,
-              with cadence, catch-up rules, and run-protection semantics all visible in one place.
+              This study makes checkpoint lookup explicit in the recurring ingest path so users can
+              see exactly where the last successful commit enters the workflow.
             </p>
           </div>
 
@@ -556,51 +556,52 @@
             <circle cx="736" cy="384" r="6"></circle>
           </svg>
 
-          <article class="node-card node-card--compact flow-node flow-node--primary flow-node--selected" aria-label="Schedule trigger node">
+          <article class="node-card node-card--compact flow-node flow-node--primary flow-node--selected" aria-label="Checkpoint read node">
             <header class="node-card__header">
               <div class="node-card__heading">
-                <span class="node-card__icon" aria-hidden="true">S</span>
+                <span class="node-card__icon" aria-hidden="true">Q</span>
                 <div class="node-card__title-copy">
-                  <strong>Schedule Trigger</strong>
-                  <span class="node-card__title-subtitle">schedule_trigger</span>
+                  <strong>Quality Check</strong>
+                  <span class="node-card__title-subtitle">quality_check</span>
                 </div>
               </div>
               <div class="node-card__header-meta">
                 <span class="node-card__header-dot" aria-hidden="true"></span>
-                <span>1 output</span>
+                <span>1 in · 1 out</span>
               </div>
             </header>
             <section class="node-card__body">
               <div class="node-card__row node-card__row--summary">
                 <div class="node-card__summary-head">
-                  <span class="node-card__summary-label">Cadence</span>
-                  <strong class="node-card__summary-target">Every 15 min</strong>
+                  <span class="node-card__summary-label">Suite</span>
+                  <strong class="node-card__summary-target">post-merge audit</strong>
                 </div>
                 <div class="node-card__summary-head">
-                  <span class="node-card__summary-label">Timezone</span>
-                  <strong class="node-card__summary-target">UTC</strong>
+                  <span class="node-card__summary-label">Gate</span>
+                  <strong class="node-card__summary-target">checkpoint + publish</strong>
                 </div>
               </div>
             </section>
             <footer class="node-card__footer">
-              <span class="node-card__footer-meta">Next fire</span>
-              <strong>2026-06-09 14:15</strong>
+              <span class="node-card__footer-meta">Last result</span>
+              <strong>2 warnings</strong>
             </footer>
+            <span class="node-card__handle node-card__handle--left" aria-hidden="true"></span>
             <span class="node-card__handle node-card__handle--right" aria-hidden="true"></span>
           </article>
 
           <div class="flow-node__hint" aria-hidden="true">
             <span>emits</span>
-            <strong>run window + schedule context</strong>
+            <strong>check_report + gate_status</strong>
           </div>
 
-          <article class="node-card node-card--compact flow-node flow-node--secondary" aria-label="Checkpoint read node">
+          <article class="node-card node-card--compact flow-node flow-node--secondary" aria-label="Checkpoint write node">
             <header class="node-card__header">
               <div class="node-card__heading">
-                <span class="node-card__icon" aria-hidden="true">R</span>
+                <span class="node-card__icon" aria-hidden="true">W</span>
                 <div class="node-card__title-copy">
-                  <strong>Checkpoint Read</strong>
-                  <span class="node-card__title-subtitle">checkpoint_read</span>
+                  <strong>Checkpoint Write</strong>
+                  <span class="node-card__title-subtitle">checkpoint_write</span>
                 </div>
               </div>
               <div class="node-card__header-meta">
@@ -611,27 +612,27 @@
             <section class="node-card__body">
               <div class="node-card__row node-card__row--summary">
                 <div class="node-card__summary-head">
-                  <span class="node-card__summary-label">Scope</span>
-                  <strong class="node-card__summary-target">repo checkpoint</strong>
+                  <span class="node-card__summary-label">Write gate</span>
+                  <strong class="node-card__summary-target">pass only</strong>
                 </div>
               </div>
             </section>
             <footer class="node-card__footer">
-              <span class="node-card__footer-meta">Last commit</span>
-              <strong>ac31f0b</strong>
+              <span class="node-card__footer-meta">Commit source</span>
+              <strong>merge metadata</strong>
             </footer>
             <span class="node-card__handle node-card__handle--left" aria-hidden="true"></span>
           </article>
         </div>
 
-        <aside class="node-panel" aria-label="Schedule trigger manager">
+        <aside class="node-panel" aria-label="Quality check manager">
           <header class="node-panel__header">
             <div class="node-panel__title-group">
-              <span class="node-panel__title-icon" aria-hidden="true">S</span>
+              <span class="node-panel__title-icon" aria-hidden="true">Q</span>
               <div>
                 <div class="node-panel__eyebrow">Node config</div>
-                <h2 class="node-panel__title">Schedule Trigger</h2>
-                <p class="node-panel__subtitle">Start recurring ingest runs on a predictable clock, with enough context for downstream checkpoint logic.</p>
+                <h2 class="node-panel__title">Quality Check</h2>
+                <p class="node-panel__subtitle">Run reusable validation rules after merge so the pipeline only advances checkpoint state when the refreshed dataset is trusted.</p>
               </div>
             </div>
             <div class="node-panel__header-meta">
@@ -642,41 +643,45 @@
           <section class="node-panel__summary">
             <div class="node-panel__section-head">
               <div>
-                <div class="node-panel__section-kicker">Trigger summary</div>
-                <h3 class="node-panel__section-title">Recurring run cadence</h3>
+                <div class="node-panel__section-kicker">Quality summary</div>
+                <h3 class="node-panel__section-title">Post-merge gate and trust check</h3>
               </div>
             </div>
             <div class="node-panel__summary-grid">
-              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Cadence</span><strong class="node-panel__summary-value">Every 15 minutes</strong></div>
-              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Timezone</span><strong class="node-panel__summary-value">UTC</strong></div>
-              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Catch-up</span><strong class="node-panel__summary-value">Skip missed windows</strong></div>
-              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Deduping</span><strong class="node-panel__summary-value">One run per slot</strong></div>
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Suite preset</span><strong class="node-panel__summary-value">Row + schema gate</strong></div>
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Fail mode</span><strong class="node-panel__summary-value">Block checkpoint</strong></div>
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Threshold</span><strong class="node-panel__summary-value">0 critical rules</strong></div>
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Emits</span><strong class="node-panel__summary-value">quality report</strong></div>
             </div>
           </section>
 
           <section class="node-panel__section">
             <div class="node-panel__section-head">
               <div>
-                <div class="node-panel__section-kicker">Trigger behavior</div>
-                <h3 class="node-panel__section-title">How recurring execution is shaped</h3>
+                <div class="node-panel__section-kicker">Rule behavior</div>
+                <h3 class="node-panel__section-title">How the dataset is evaluated</h3>
               </div>
             </div>
             <div class="node-panel__fields">
               <div class="node-panel__field">
-                <div class="node-panel__field-head"><span class="node-panel__field-label">Schedule mode</span><span class="node-panel__field-hint">operator facing</span></div>
-                <div class="node-panel__control"><span>Fixed interval</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Input relation set</span><span class="node-panel__field-hint">validated bundle</span></div>
+                <div class="node-panel__control"><span>staging delta bundle</span></div>
               </div>
               <div class="node-panel__field">
-                <div class="node-panel__field-head"><span class="node-panel__field-label">Cron / interval</span><span class="node-panel__field-hint">resolved cadence</span></div>
-                <div class="node-panel__control"><span>*/15 * * * *</span></div>
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Suite preset</span><span class="node-panel__field-hint">rule library</span></div>
+                <div class="node-panel__control"><span>Post-merge ingest gate</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
               </div>
               <div class="node-panel__field">
-                <div class="node-panel__field-head"><span class="node-panel__field-label">Run window stamp</span><span class="node-panel__field-hint">downstream metadata</span></div>
-                <div class="node-panel__pill-row"><span class="node-panel__pill-label">Emitted values</span><strong class="node-panel__pill-value">scheduled_at, window_start, window_end</strong></div>
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Schema drift rule</span><span class="node-panel__field-hint">structural guardrail</span></div>
+                <div class="node-panel__control"><span>Fail on required-column drift</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
               </div>
               <div class="node-panel__field">
-                <div class="node-panel__field-head"><span class="node-panel__field-label">Missed slot behavior</span><span class="node-panel__field-hint">clock skew</span></div>
-                <div class="node-panel__control"><span>Skip stale windows</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Null key policy</span><span class="node-panel__field-hint">integrity rule</span></div>
+                <div class="node-panel__control"><span>Block on primary-key nulls</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
+              </div>
+              <div class="node-panel__field">
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Warning budget</span><span class="node-panel__field-hint">allowed non-critical drift</span></div>
+                <div class="node-panel__pill-row"><span class="node-panel__pill-label">Pass threshold</span><strong class="node-panel__pill-value">warn if <= 2 soft rules fail</strong></div>
               </div>
             </div>
           </section>
@@ -685,28 +690,29 @@
             <div class="node-panel__section-head">
               <div>
                 <div class="node-panel__section-kicker">Output contract</div>
-                <h3 class="node-panel__section-title">What downstream nodes receive</h3>
+                <h3 class="node-panel__section-title">What downstream control nodes receive</h3>
               </div>
             </div>
-            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Trigger payload</span><strong class="node-panel__contract-value">run_context</strong></div>
-            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Scheduled slot</span><strong class="node-panel__contract-value">scheduled_at</strong></div>
-            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Window bounds</span><strong class="node-panel__contract-value">window_start, window_end</strong></div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Gate payload</span><strong class="node-panel__contract-value">quality_gate_result</strong></div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Gate status</span><strong class="node-panel__contract-value">pass | warn | fail</strong></div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Rule report</span><strong class="node-panel__contract-value">failing_rules[], warning_rules[]</strong></div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Validated bundle</span><strong class="node-panel__contract-value">approved_table_set</strong></div>
           </section>
 
           <section class="node-panel__notes">
-            <div><span class="node-panel__note-label">Why this matters</span><p class="node-panel__note-copy">The trigger should not just start a run. It should stamp enough time context that checkpoints, sync windows, and late-run handling stay deterministic.</p></div>
-            <div><span class="node-panel__note-label">Design direction</span><p class="node-panel__note-copy">This node benefits from feeling operational rather than developer-only, because users will reason about reliability and missed windows here.</p></div>
+            <div><span class="node-panel__note-label">Why separate</span><p class="node-panel__note-copy">A merge finishing does not automatically mean the data is fit for downstream use. Keeping quality explicit makes the “written” versus “trusted” boundary visible.</p></div>
+            <div><span class="node-panel__note-label">Design direction</span><p class="node-panel__note-copy">This node should feel operator-facing and reviewable. It is where users decide whether the newly ingested slice is safe enough to advance pipeline state.</p></div>
           </section>
 
-          <section class="node-panel__subsection" aria-label="Run protections">
-            <p class="node-panel__subsection-title">Run protections</p>
-            <div class="node-panel__timing-card"><label class="node-panel__checkbox"><input checked type="checkbox" /><span class="node-panel__checkmark" aria-hidden="true"></span><span>Prevent duplicate slot runs</span></label></div>
-            <div class="node-panel__timing-card"><label class="node-panel__checkbox node-panel__checkbox--off"><input type="checkbox" /><span class="node-panel__checkmark" aria-hidden="true"></span><span>Replay missed windows</span></label></div>
+          <section class="node-panel__subsection" aria-label="Gate behavior">
+            <p class="node-panel__subsection-title">Gate behavior</p>
+            <div class="node-panel__timing-card"><label class="node-panel__checkbox"><input checked type="checkbox" /><span class="node-panel__checkmark" aria-hidden="true"></span><span>Block checkpoint write on failure</span></label></div>
+            <div class="node-panel__timing-card"><label class="node-panel__checkbox"><input checked type="checkbox" /><span class="node-panel__checkmark" aria-hidden="true"></span><span>Allow warning-only runs to continue</span></label></div>
           </section>
 
           <footer class="node-panel__footer">
-            <div class="node-panel__footer-row"><span class="node-panel__footer-label">Best downstream pair</span><span class="node-panel__footer-value">`checkpoint_read` or `dolt_repo_source`</span></div>
-            <button class="node-panel__button" type="button">Save trigger draft</button>
+            <div class="node-panel__footer-row"><span class="node-panel__footer-label">Best downstream pair</span><span class="node-panel__footer-value">`checkpoint_write`</span></div>
+            <button class="node-panel__button" type="button">Save quality draft</button>
           </footer>
         </aside>
       </section>

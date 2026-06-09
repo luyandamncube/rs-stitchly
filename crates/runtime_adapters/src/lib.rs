@@ -1,6 +1,8 @@
-use std::{collections::BTreeMap, time::Duration as StdDuration};
+use std::{collections::BTreeMap, fs, path::PathBuf, time::Duration as StdDuration};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use chrono::Utc;
+use duckdb::Connection as DuckDbConnection;
 use node_registry::NodeDefinition;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -11,6 +13,13 @@ pub type PortValues = BTreeMap<String, TypedValue>;
 
 #[derive(Clone, Debug, Default)]
 pub struct RuntimeAdapters;
+
+#[derive(Clone, Debug, Default)]
+pub struct AdapterExecutionContext {
+    pub workflow_id: Option<String>,
+    pub run_id: Option<String>,
+    pub workflow_duckdb_path: Option<PathBuf>,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct NodeExecutionResult {
@@ -26,6 +35,8 @@ pub enum AdapterError {
     MissingInput { node_id: String, port: String },
     #[error("text value expected on port `{port}` for node `{node_id}`")]
     TextTypeMismatch { node_id: String, port: String },
+    #[error("dataset ref value expected on port `{port}` for node `{node_id}`")]
+    DatasetRefTypeMismatch { node_id: String, port: String },
     #[error("connection failed for node `{node_id}`: {message}")]
     ConnectionFailed { node_id: String, message: String },
     #[error("execution failed for node `{node_id}`: {message}")]
@@ -41,7 +52,32 @@ impl RuntimeAdapters {
         node: &WorkflowNode,
         inputs: &PortValues,
     ) -> Result<NodeExecutionResult, AdapterError> {
+        self.execute_with_context(
+            definition,
+            node,
+            inputs,
+            &AdapterExecutionContext::default(),
+        )
+    }
+
+    pub fn execute_with_context(
+        &self,
+        definition: &NodeDefinition,
+        node: &WorkflowNode,
+        inputs: &PortValues,
+        context: &AdapterExecutionContext,
+    ) -> Result<NodeExecutionResult, AdapterError> {
         match definition.type_id.as_str() {
+            "checkpoint_read" => execute_checkpoint_read(node),
+            "checkpoint_write" => execute_checkpoint_write(node, inputs, context),
+            "dolt_repo_source" => execute_dolt_repo_source(node),
+            "dolt_repo_sync" => execute_dolt_repo_sync(node, inputs),
+            "dolt_change_manifest" => execute_dolt_change_manifest(node, inputs),
+            "dolt_dump" => execute_dolt_dump(node, inputs),
+            "dolt_diff_export" => execute_dolt_diff_export(node, inputs),
+            "load_to_duckdb" => execute_load_to_duckdb(node, inputs, context),
+            "quality_check" => execute_quality_check(node, inputs),
+            "table_merge" => execute_table_merge(node, inputs, context),
             "text_input" => execute_text_input(node),
             "text_transform" => execute_text_transform(node, inputs),
             "table_input" => execute_table_input(node),
@@ -52,6 +88,674 @@ impl RuntimeAdapters {
             _ => Err(AdapterError::UnsupportedNode(definition.type_id.clone())),
         }
     }
+}
+
+#[derive(Deserialize)]
+struct CheckpointReadConfig {
+    checkpoint_table: String,
+    source_repo: String,
+    branch: String,
+    #[serde(default)]
+    emit_bootstrap_marker_if_missing: Option<bool>,
+    #[serde(default)]
+    fail_on_stale_checkpoint: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct CheckpointWriteConfig {
+    checkpoint_table: String,
+    #[serde(default)]
+    commit_source: Option<CheckpointWriteCommitSource>,
+    #[serde(default)]
+    write_timing: Option<CheckpointWriteTiming>,
+    #[serde(default)]
+    only_persist_on_full_success: Option<bool>,
+    #[serde(default)]
+    advance_on_partial_success: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct QualityCheckConfig {
+    #[serde(default)]
+    suite_preset: Option<QualityCheckSuitePreset>,
+    #[serde(default)]
+    schema_drift_rule: Option<QualityCheckSchemaDriftRule>,
+    #[serde(default)]
+    null_key_policy: Option<QualityCheckNullKeyPolicy>,
+    #[serde(default)]
+    warning_budget: Option<u64>,
+    #[serde(default)]
+    block_checkpoint_write_on_failure: Option<bool>,
+    #[serde(default)]
+    allow_warning_only_runs_to_continue: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct DoltRepoSourceConfig {
+    connection_ref: String,
+    repository: String,
+    branch: String,
+    #[serde(default)]
+    checkout_ref: Option<String>,
+    #[serde(default)]
+    clone_mode: Option<DoltCloneMode>,
+    #[serde(default)]
+    sync_strategy: Option<DoltSyncStrategy>,
+}
+
+#[derive(Deserialize)]
+struct DoltRepoSyncConfig {
+    #[serde(default)]
+    sync_action: Option<DoltRepoSyncAction>,
+    #[serde(default)]
+    no_change_behavior: Option<DoltRepoSyncNoChangeBehavior>,
+    #[serde(default)]
+    branch_guard: Option<DoltRepoSyncBranchGuard>,
+    #[serde(default)]
+    dirty_working_copy_policy: Option<DoltRepoSyncDirtyWorkingCopyPolicy>,
+}
+
+#[derive(Deserialize)]
+struct DoltChangeManifestConfig {
+    #[serde(default)]
+    table_scope: Option<DoltChangeManifestTableScope>,
+    #[serde(default)]
+    selected_tables: Option<Vec<String>>,
+    #[serde(default)]
+    schema_change_policy: Option<DoltChangeManifestSchemaChangePolicy>,
+}
+
+#[derive(Deserialize)]
+struct DoltDumpConfig {
+    #[serde(default)]
+    output_format: Option<DoltDumpOutputFormat>,
+    #[serde(default)]
+    table_selection_mode: Option<DoltDumpTableSelectionMode>,
+    #[serde(default)]
+    selected_tables: Option<Vec<String>>,
+    #[serde(default)]
+    artifact_retention: Option<DoltDumpArtifactRetention>,
+    #[serde(default)]
+    output_directory_policy: Option<DoltDumpOutputDirectoryPolicy>,
+}
+
+#[derive(Deserialize)]
+struct DoltDiffExportConfig {
+    #[serde(default)]
+    output_format: Option<DoltDumpOutputFormat>,
+    #[serde(default)]
+    change_filter: Option<DoltDiffExportChangeFilter>,
+    #[serde(default)]
+    deleted_row_handling: Option<DoltDiffExportDeletedRowHandling>,
+}
+
+#[derive(Deserialize)]
+struct LoadToDuckDbConfig {
+    target_schema: String,
+    #[serde(default)]
+    table_mapping: Option<LoadToDuckDbTableMapping>,
+    #[serde(default)]
+    schema_handling: Option<LoadToDuckDbSchemaHandling>,
+    #[serde(default)]
+    delta_context_preservation: Option<LoadToDuckDbDeltaContextPreservation>,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum CheckpointWriteCommitSource {
+    #[serde(rename = "metadata.current_commit")]
+    MetadataCurrentCommit,
+}
+
+impl CheckpointWriteCommitSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::MetadataCurrentCommit => "metadata.current_commit",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum CheckpointWriteTiming {
+    AfterMergeSuccess,
+    AfterQualityGate,
+}
+
+impl CheckpointWriteTiming {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::AfterMergeSuccess => "after_merge_success",
+            Self::AfterQualityGate => "after_quality_gate",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum QualityCheckSuitePreset {
+    PostMergeIngestGate,
+    CustomRuleBundle,
+}
+
+impl QualityCheckSuitePreset {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::PostMergeIngestGate => "post_merge_ingest_gate",
+            Self::CustomRuleBundle => "custom_rule_bundle",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum QualityCheckSchemaDriftRule {
+    FailOnRequiredColumnDrift,
+    AllowAdditiveSchemaNotes,
+}
+
+impl QualityCheckSchemaDriftRule {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::FailOnRequiredColumnDrift => "fail_on_required_column_drift",
+            Self::AllowAdditiveSchemaNotes => "allow_additive_schema_notes",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum QualityCheckNullKeyPolicy {
+    BlockOnPrimaryKeyNulls,
+    AllowNullsWithWarning,
+}
+
+impl QualityCheckNullKeyPolicy {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::BlockOnPrimaryKeyNulls => "block_on_primary_key_nulls",
+            Self::AllowNullsWithWarning => "allow_nulls_with_warning",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DoltCloneMode {
+    ReuseLocalCopy,
+    FreshClone,
+    Depth1,
+}
+
+impl DoltCloneMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ReuseLocalCopy => "reuse_local_copy",
+            Self::FreshClone => "fresh_clone",
+            Self::Depth1 => "depth_1",
+        }
+    }
+
+    fn working_copy_label(self) -> &'static str {
+        match self {
+            Self::ReuseLocalCopy => "reused across runs",
+            Self::FreshClone => "fresh clone per run",
+            Self::Depth1 => "shallow clone reused",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DoltSyncStrategy {
+    PullBeforeExecution,
+    CloneOnly,
+    Manual,
+}
+
+impl DoltSyncStrategy {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::PullBeforeExecution => "pull_before_execution",
+            Self::CloneOnly => "clone_only",
+            Self::Manual => "manual",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DoltRepoSyncAction {
+    PullRemoteHead,
+    FetchAndCheckout,
+    RefreshCheckout,
+}
+
+impl DoltRepoSyncAction {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::PullRemoteHead => "pull_remote_head",
+            Self::FetchAndCheckout => "fetch_and_checkout",
+            Self::RefreshCheckout => "refresh_checkout",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DoltRepoSyncNoChangeBehavior {
+    EmitCurrentRange,
+    EmitNoOpMarker,
+}
+
+impl DoltRepoSyncNoChangeBehavior {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::EmitCurrentRange => "emit_current_range",
+            Self::EmitNoOpMarker => "emit_no_op_marker",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DoltRepoSyncBranchGuard {
+    RequireTrackedBranchMatch,
+    AllowDetachedHead,
+}
+
+impl DoltRepoSyncBranchGuard {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::RequireTrackedBranchMatch => "require_tracked_branch_match",
+            Self::AllowDetachedHead => "allow_detached_head",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DoltRepoSyncDirtyWorkingCopyPolicy {
+    FailIfDirty,
+    StashAndContinue,
+}
+
+impl DoltRepoSyncDirtyWorkingCopyPolicy {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::FailIfDirty => "fail_if_dirty",
+            Self::StashAndContinue => "stash_and_continue",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DoltChangeManifestTableScope {
+    AllTables,
+    Allowlist,
+}
+
+impl DoltChangeManifestTableScope {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::AllTables => "all_tables",
+            Self::Allowlist => "allowlist",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DoltChangeManifestSchemaChangePolicy {
+    FlagAndContinue,
+    FailRun,
+}
+
+impl DoltChangeManifestSchemaChangePolicy {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::FlagAndContinue => "flag_and_continue",
+            Self::FailRun => "fail_run",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DoltDumpOutputFormat {
+    Csv,
+    Parquet,
+}
+
+impl DoltDumpOutputFormat {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Csv => "csv",
+            Self::Parquet => "parquet",
+        }
+    }
+
+    fn file_extension(self) -> &'static str {
+        self.as_str()
+    }
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DoltDumpTableSelectionMode {
+    PreferManifestScope,
+    AllTables,
+    ManualTables,
+}
+
+impl DoltDumpTableSelectionMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::PreferManifestScope => "prefer_manifest_scope",
+            Self::AllTables => "all_tables",
+            Self::ManualTables => "manual_tables",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DoltDumpArtifactRetention {
+    KeepLatestSuccess,
+    EphemeralPerRun,
+    PersistAll,
+}
+
+impl DoltDumpArtifactRetention {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::KeepLatestSuccess => "keep_latest_success",
+            Self::EphemeralPerRun => "ephemeral_per_run",
+            Self::PersistAll => "persist_all",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DoltDumpOutputDirectoryPolicy {
+    EphemeralRunBundle,
+    StableRepoCache,
+}
+
+impl DoltDumpOutputDirectoryPolicy {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::EphemeralRunBundle => "ephemeral_run_bundle",
+            Self::StableRepoCache => "stable_repo_cache",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DoltDiffExportChangeFilter {
+    AllChanges,
+    NonDeleteChanges,
+    AddedOnly,
+    ModifiedOnly,
+    RemovedOnly,
+}
+
+impl DoltDiffExportChangeFilter {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::AllChanges => "all_changes",
+            Self::NonDeleteChanges => "non_delete_changes",
+            Self::AddedOnly => "added_only",
+            Self::ModifiedOnly => "modified_only",
+            Self::RemovedOnly => "removed_only",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DoltDiffExportDeletedRowHandling {
+    EmitDeleteMarkers,
+    OmitDeleteRows,
+}
+
+impl DoltDiffExportDeletedRowHandling {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::EmitDeleteMarkers => "emit_delete_markers",
+            Self::OmitDeleteRows => "omit_delete_rows",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum LoadToDuckDbTableMapping {
+    BundleAwareStagingNames,
+}
+
+impl LoadToDuckDbTableMapping {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::BundleAwareStagingNames => "bundle_aware_staging_names",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum LoadToDuckDbSchemaHandling {
+    InferOnFirstLoadValidateOnRecurring,
+}
+
+impl LoadToDuckDbSchemaHandling {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::InferOnFirstLoadValidateOnRecurring => {
+                "infer_on_first_load_validate_on_recurring"
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum LoadToDuckDbDeltaContextPreservation {
+    PreserveCommitRangeAndDeleteFlags,
+}
+
+impl LoadToDuckDbDeltaContextPreservation {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::PreserveCommitRangeAndDeleteFlags => "preserve_commit_range_and_delete_flags",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct MockDoltRepoProfile {
+    repo_family: &'static str,
+    previous_commit: &'static str,
+    current_commit: &'static str,
+}
+
+#[derive(Clone, Copy)]
+struct MockDoltChangeManifestTableSummary {
+    added_rows: u64,
+    modified_rows: u64,
+    removed_rows: u64,
+    schema_changed: bool,
+    table_name: &'static str,
+}
+
+#[derive(Deserialize)]
+struct DoltRepoDatasetPayload {
+    kind: String,
+    repo_ref: DoltRepoReferencePayload,
+    #[serde(default)]
+    metadata: Option<DoltRepoDatasetMetadataPayload>,
+}
+
+#[derive(Deserialize)]
+struct DoltChangeManifestDatasetPayload {
+    repo_ref: DoltRepoReferencePayload,
+    #[serde(default)]
+    metadata: Option<DoltChangeManifestDatasetMetadataPayload>,
+}
+
+#[derive(Default, Deserialize)]
+struct DoltRepoDatasetMetadataPayload {
+    #[serde(default)]
+    current_commit: Option<String>,
+    #[serde(default)]
+    previous_commit: Option<String>,
+    #[serde(default)]
+    repo_family: Option<String>,
+}
+
+#[derive(Default, Deserialize)]
+struct CheckpointContextPayload {
+    kind: String,
+    #[serde(default)]
+    checkpoint_table: Option<String>,
+    #[serde(default, rename = "source_repo")]
+    _source_repo: Option<String>,
+    #[serde(default, rename = "branch")]
+    _branch: Option<String>,
+    #[serde(default)]
+    last_synced_commit: Option<String>,
+    #[serde(default)]
+    last_success_at: Option<String>,
+    #[serde(default)]
+    last_ingest_mode: Option<String>,
+    #[serde(default)]
+    bootstrap_pending: bool,
+    #[serde(default, rename = "fail_on_stale_checkpoint")]
+    _fail_on_stale_checkpoint: bool,
+    #[serde(default, rename = "stale_checkpoint")]
+    _stale_checkpoint: bool,
+}
+
+#[derive(Default, Deserialize)]
+struct DoltChangeManifestDatasetMetadataPayload {
+    #[serde(default)]
+    changed_tables: Option<Vec<String>>,
+    #[serde(default)]
+    current_commit: Option<String>,
+    #[serde(default)]
+    previous_commit: Option<String>,
+    #[serde(default)]
+    repo_family: Option<String>,
+    #[serde(default)]
+    row_change_summary: Option<BTreeMap<String, DoltChangeRowSummaryPayload>>,
+    #[serde(default)]
+    schema_change_flags: Option<Vec<String>>,
+}
+
+#[derive(Clone, Default, Deserialize)]
+struct DoltChangeRowSummaryPayload {
+    #[serde(default)]
+    added: u64,
+    #[serde(default)]
+    modified: u64,
+    #[serde(default)]
+    removed: u64,
+}
+
+#[derive(Clone)]
+struct ResolvedDoltDiffTableSummary {
+    added_rows: u64,
+    modified_rows: u64,
+    removed_rows: u64,
+    table_name: String,
+}
+
+#[derive(Deserialize)]
+struct DoltRepoReferencePayload {
+    connection_ref: String,
+    repository: String,
+    branch: String,
+    #[serde(default)]
+    checkout_ref: Option<String>,
+    current_commit: String,
+}
+
+#[derive(Deserialize)]
+struct DirectoryReferencePayload {
+    path: String,
+    #[serde(default)]
+    format: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct DoltDumpBundlePayload {
+    kind: String,
+    directory_ref: DirectoryReferencePayload,
+    repo_ref: DoltRepoReferencePayload,
+    #[serde(default)]
+    metadata: Option<DoltDumpBundleMetadataPayload>,
+}
+
+#[derive(Default, Deserialize)]
+struct DoltDumpBundleMetadataPayload {
+    #[serde(default)]
+    exported_tables: Option<Vec<DoltDumpExportedTablePayload>>,
+    #[serde(default)]
+    previous_commit: Option<String>,
+    #[serde(default)]
+    repo_family: Option<String>,
+}
+
+#[derive(Default, Deserialize)]
+struct DoltDumpExportedTablePayload {
+    #[serde(default)]
+    file_path: Option<String>,
+    #[serde(default)]
+    row_count: Option<u64>,
+    source_table: String,
+}
+
+#[derive(Deserialize)]
+struct DoltDiffExportBundlePayload {
+    kind: String,
+    directory_ref: DirectoryReferencePayload,
+    repo_ref: DoltRepoReferencePayload,
+    #[serde(default)]
+    metadata: Option<DoltDiffExportBundleMetadataPayload>,
+}
+
+#[derive(Default, Deserialize)]
+struct DoltDiffExportBundleMetadataPayload {
+    #[serde(default)]
+    current_commit: Option<String>,
+    #[serde(default)]
+    delete_rows_present: Option<bool>,
+    #[serde(default)]
+    delta_manifest: Option<Vec<DoltDiffDeltaManifestPayload>>,
+    #[serde(default)]
+    previous_commit: Option<String>,
+    #[serde(default)]
+    repo_family: Option<String>,
+}
+
+#[derive(Default, Deserialize)]
+struct DoltDiffDeltaManifestPayload {
+    #[serde(default)]
+    added_rows: Option<u64>,
+    #[serde(default)]
+    delete_marker_path: Option<String>,
+    #[serde(default)]
+    delete_markers_emitted: Option<bool>,
+    #[serde(default)]
+    file_path: Option<String>,
+    #[serde(default)]
+    modified_rows: Option<u64>,
+    #[serde(default)]
+    removed_rows: Option<u64>,
+    source_table: String,
 }
 
 #[derive(Deserialize)]
@@ -184,6 +888,41 @@ struct TableOutputConfig {
     open_in_catalog: Option<bool>,
 }
 
+#[derive(Deserialize)]
+struct TableMergeConfig {
+    target_schema: String,
+    #[serde(default)]
+    write_policy: Option<TableMergeWritePolicy>,
+    #[serde(default)]
+    merge_key_columns: Option<Vec<String>>,
+    #[serde(default)]
+    delete_handling: Option<TableMergeDeleteHandling>,
+    #[serde(default)]
+    schema_drift_behavior: Option<TableMergeSchemaDriftBehavior>,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum TableMergeWritePolicy {
+    Upsert,
+    AppendOnly,
+    SnapshotReplace,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum TableMergeDeleteHandling {
+    ApplyDeleteMarkers,
+    IgnoreDeleteMarkers,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum TableMergeSchemaDriftBehavior {
+    FailAndRequireReview,
+    AllowAdditiveChanges,
+}
+
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum TableWriteMode {
@@ -220,6 +959,10 @@ struct TableReferencePayload {
     schema_definition: Option<Value>,
     #[serde(default)]
     schema_definitions: Option<Value>,
+    #[serde(default)]
+    load_manifest_ref: Option<Value>,
+    #[serde(default)]
+    metadata: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -266,6 +1009,2910 @@ struct GmailSendResponse {
     id: Option<String>,
     #[serde(default)]
     thread_id: Option<String>,
+}
+
+fn execute_dolt_repo_source(node: &WorkflowNode) -> Result<NodeExecutionResult, AdapterError> {
+    let config: DoltRepoSourceConfig =
+        serde_json::from_value(node.config.clone()).map_err(|error| {
+            AdapterError::InvalidConfig {
+                node_id: node.node_id.clone(),
+                message: error.to_string(),
+            }
+        })?;
+
+    let clone_mode = config.clone_mode.unwrap_or(DoltCloneMode::ReuseLocalCopy);
+    let sync_strategy = config
+        .sync_strategy
+        .unwrap_or(DoltSyncStrategy::PullBeforeExecution);
+    let repository = config.repository.trim().to_string();
+    let repo_family = derive_dolt_repo_family(&repository);
+    let checkout_ref = normalize_optional_config_string(config.checkout_ref);
+    let profile = mock_dolt_repo_profile(&repository);
+    let current_commit = resolve_dolt_current_commit(profile, checkout_ref.as_deref());
+    let log_commit = current_commit.clone();
+    let mut outputs = PortValues::new();
+    let repo_payload = TypedValue {
+        data_type: DataType::DatasetRef,
+        value: json!({
+            "kind": "dolt_repo_dataset",
+            "repo_ref": {
+                "connection_ref": config.connection_ref.trim(),
+                "repository": repository,
+                "branch": config.branch.trim(),
+                "checkout_ref": checkout_ref,
+                "current_commit": current_commit,
+            },
+            "metadata": {
+                "repo_family": repo_family,
+                "clone_mode": clone_mode.as_str(),
+                "sync_strategy": sync_strategy.as_str(),
+                "working_copy": clone_mode.working_copy_label(),
+            }
+        }),
+    };
+    outputs.insert("repo_out".to_string(), repo_payload.clone());
+    outputs.insert("repo".to_string(), repo_payload);
+
+    Ok(NodeExecutionResult {
+        outputs,
+        logs: vec![format!(
+            "Prepared Dolt repo `{}` at commit `{}` with `{}` sync strategy.",
+            config.repository.trim(),
+            log_commit,
+            sync_strategy.as_str()
+        )],
+    })
+}
+
+fn execute_checkpoint_read(node: &WorkflowNode) -> Result<NodeExecutionResult, AdapterError> {
+    let config: CheckpointReadConfig =
+        serde_json::from_value(node.config.clone()).map_err(|error| {
+            AdapterError::InvalidConfig {
+                node_id: node.node_id.clone(),
+                message: error.to_string(),
+            }
+        })?;
+
+    let checkpoint_table = config.checkpoint_table.trim().to_string();
+    let source_repo = config.source_repo.trim().to_string();
+    let branch = config.branch.trim().to_string();
+
+    if checkpoint_table.is_empty() || source_repo.is_empty() || branch.is_empty() {
+        return Err(AdapterError::InvalidConfig {
+            node_id: node.node_id.clone(),
+            message: "`checkpoint_table`, `source_repo`, and `branch` must all be non-empty."
+                .to_string(),
+        });
+    }
+
+    let emit_bootstrap_marker_if_missing = config.emit_bootstrap_marker_if_missing.unwrap_or(true);
+    let fail_on_stale_checkpoint = config.fail_on_stale_checkpoint.unwrap_or(false);
+    let profile = mock_dolt_repo_profile(&source_repo);
+
+    let (last_synced_commit, last_success_at, last_ingest_mode, bootstrap_pending) =
+        if let Some(profile) = profile {
+            (
+                Some(profile.previous_commit.to_string()),
+                Some(mock_checkpoint_success_at(&source_repo).to_string()),
+                Some(mock_checkpoint_ingest_mode(&source_repo).to_string()),
+                false,
+            )
+        } else if emit_bootstrap_marker_if_missing {
+            (None, None, Some("bootstrap_pending".to_string()), true)
+        } else {
+            return Err(AdapterError::ExecutionFailed {
+                node_id: node.node_id.clone(),
+                message: format!(
+                    "no checkpoint was found for `{}` on branch `{}`.",
+                    source_repo, branch
+                ),
+            });
+        };
+
+    let mut outputs = PortValues::new();
+    outputs.insert(
+        "checkpoint".to_string(),
+        TypedValue {
+            data_type: DataType::Json,
+            value: json!({
+                "kind": "checkpoint_context",
+                "checkpoint_table": checkpoint_table,
+                "source_repo": source_repo,
+                "branch": branch,
+                "last_synced_commit": last_synced_commit,
+                "last_success_at": last_success_at,
+                "last_ingest_mode": last_ingest_mode,
+                "bootstrap_pending": bootstrap_pending,
+                "fail_on_stale_checkpoint": fail_on_stale_checkpoint,
+                "stale_checkpoint": false,
+            }),
+        },
+    );
+
+    Ok(NodeExecutionResult {
+        outputs,
+        logs: vec![format!(
+            "Resolved checkpoint context for `{}` on `{}` from `{}` (bootstrap pending: {}).",
+            config.source_repo.trim(),
+            config.branch.trim(),
+            config.checkpoint_table.trim(),
+            bootstrap_pending
+        )],
+    })
+}
+
+fn execute_dolt_repo_sync(
+    node: &WorkflowNode,
+    inputs: &PortValues,
+) -> Result<NodeExecutionResult, AdapterError> {
+    let config: DoltRepoSyncConfig =
+        serde_json::from_value(node.config.clone()).map_err(|error| {
+            AdapterError::InvalidConfig {
+                node_id: node.node_id.clone(),
+                message: error.to_string(),
+            }
+        })?;
+
+    let repo_input = inputs
+        .get("repo")
+        .ok_or_else(|| AdapterError::MissingInput {
+            node_id: node.node_id.clone(),
+            port: "repo".to_string(),
+        })?;
+
+    if repo_input.data_type != DataType::DatasetRef {
+        return Err(AdapterError::DatasetRefTypeMismatch {
+            node_id: node.node_id.clone(),
+            port: "repo".to_string(),
+        });
+    }
+
+    let repo_payload: DoltRepoDatasetPayload = serde_json::from_value(repo_input.value.clone())
+        .map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: format!("invalid repo dataset payload: {error}"),
+        })?;
+
+    if repo_payload.kind != "dolt_repo_dataset" {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: format!("unsupported repo dataset kind `{}`", repo_payload.kind),
+        });
+    }
+
+    let checkpoint_payload = if let Some(checkpoint_input) = inputs.get("checkpoint") {
+        if checkpoint_input.data_type != DataType::Json {
+            return Err(AdapterError::ExecutionFailed {
+                node_id: node.node_id.clone(),
+                message: "dolt_repo_sync expects an optional `json` checkpoint input.".to_string(),
+            });
+        }
+
+        let payload: CheckpointContextPayload =
+            serde_json::from_value(checkpoint_input.value.clone()).map_err(|error| {
+                AdapterError::ExecutionFailed {
+                    node_id: node.node_id.clone(),
+                    message: format!("invalid checkpoint payload: {error}"),
+                }
+            })?;
+
+        if payload.kind != "checkpoint_context" {
+            return Err(AdapterError::ExecutionFailed {
+                node_id: node.node_id.clone(),
+                message: format!("unsupported checkpoint kind `{}`", payload.kind),
+            });
+        }
+
+        Some(payload)
+    } else {
+        None
+    };
+
+    let sync_action = config
+        .sync_action
+        .unwrap_or(DoltRepoSyncAction::PullRemoteHead);
+    let no_change_behavior = config
+        .no_change_behavior
+        .unwrap_or(DoltRepoSyncNoChangeBehavior::EmitCurrentRange);
+    let branch_guard = config
+        .branch_guard
+        .unwrap_or(DoltRepoSyncBranchGuard::RequireTrackedBranchMatch);
+    let dirty_working_copy_policy = config
+        .dirty_working_copy_policy
+        .unwrap_or(DoltRepoSyncDirtyWorkingCopyPolicy::FailIfDirty);
+    let repository = repo_payload.repo_ref.repository.trim().to_string();
+    let repo_family = derive_dolt_repo_family(&repository);
+    let profile = mock_dolt_repo_profile(&repository);
+    let previous_commit = if let Some(payload) = checkpoint_payload.as_ref() {
+        normalize_non_empty_string(payload.last_synced_commit.clone())
+            .unwrap_or_else(|| "pending_checkpoint".to_string())
+    } else {
+        resolve_dolt_previous_commit(profile)
+    };
+    let current_commit =
+        normalize_non_empty_string(Some(repo_payload.repo_ref.current_commit.clone()))
+            .unwrap_or_else(|| resolve_dolt_current_commit(profile, None));
+    let connection_ref = repo_payload.repo_ref.connection_ref.trim().to_string();
+    let branch = repo_payload.repo_ref.branch.trim().to_string();
+    let checkout_ref = normalize_optional_config_string(repo_payload.repo_ref.checkout_ref);
+    let mut outputs = PortValues::new();
+    outputs.insert(
+        "repo_out".to_string(),
+        TypedValue {
+            data_type: DataType::DatasetRef,
+            value: json!({
+                "kind": "dolt_repo_dataset",
+                "repo_ref": {
+                    "connection_ref": connection_ref,
+                    "repository": repository,
+                    "branch": branch,
+                    "checkout_ref": checkout_ref,
+                    "current_commit": current_commit.clone(),
+                },
+                "metadata": {
+                    "repo_family": repo_family,
+                    "previous_commit": previous_commit.clone(),
+                    "current_commit": current_commit.clone(),
+                    "checkpoint_table": checkpoint_payload
+                        .as_ref()
+                        .and_then(|payload| payload.checkpoint_table.clone()),
+                    "checkpoint_last_success_at": checkpoint_payload
+                        .as_ref()
+                        .and_then(|payload| payload.last_success_at.clone()),
+                    "checkpoint_last_ingest_mode": checkpoint_payload
+                        .as_ref()
+                        .and_then(|payload| payload.last_ingest_mode.clone()),
+                    "checkpoint_bootstrap_pending": checkpoint_payload
+                        .as_ref()
+                        .map(|payload| payload.bootstrap_pending)
+                        .unwrap_or(false),
+                    "sync_action": sync_action.as_str(),
+                    "no_change_behavior": no_change_behavior.as_str(),
+                    "branch_guard": branch_guard.as_str(),
+                    "dirty_working_copy_policy": dirty_working_copy_policy.as_str(),
+                }
+            }),
+        },
+    );
+
+    Ok(NodeExecutionResult {
+        outputs,
+        logs: vec![format!(
+            "Synced Dolt repo `{}` from `{}` to `{}` using `{}`.",
+            repo_payload.repo_ref.repository.trim(),
+            previous_commit,
+            current_commit,
+            sync_action.as_str()
+        )],
+    })
+}
+
+fn execute_dolt_change_manifest(
+    node: &WorkflowNode,
+    inputs: &PortValues,
+) -> Result<NodeExecutionResult, AdapterError> {
+    let config: DoltChangeManifestConfig =
+        serde_json::from_value(node.config.clone()).map_err(|error| {
+            AdapterError::InvalidConfig {
+                node_id: node.node_id.clone(),
+                message: error.to_string(),
+            }
+        })?;
+
+    let repo_input = inputs
+        .get("repo")
+        .ok_or_else(|| AdapterError::MissingInput {
+            node_id: node.node_id.clone(),
+            port: "repo".to_string(),
+        })?;
+
+    if repo_input.data_type != DataType::DatasetRef {
+        return Err(AdapterError::DatasetRefTypeMismatch {
+            node_id: node.node_id.clone(),
+            port: "repo".to_string(),
+        });
+    }
+
+    let repo_payload: DoltRepoDatasetPayload = serde_json::from_value(repo_input.value.clone())
+        .map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: format!("invalid repo dataset payload: {error}"),
+        })?;
+
+    if repo_payload.kind != "dolt_repo_dataset" {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: format!("unsupported repo dataset kind `{}`", repo_payload.kind),
+        });
+    }
+
+    let table_scope = config
+        .table_scope
+        .unwrap_or(DoltChangeManifestTableScope::AllTables);
+    let schema_change_policy = config
+        .schema_change_policy
+        .unwrap_or(DoltChangeManifestSchemaChangePolicy::FlagAndContinue);
+    let selected_tables = normalize_selected_table_names(config.selected_tables);
+    let repository = repo_payload.repo_ref.repository.trim().to_string();
+    let profile = mock_dolt_repo_profile(&repository);
+    let repo_family = repo_payload
+        .metadata
+        .as_ref()
+        .and_then(|metadata| normalize_non_empty_string(metadata.repo_family.clone()))
+        .unwrap_or_else(|| derive_dolt_repo_family(&repository));
+    let previous_commit = repo_payload
+        .metadata
+        .as_ref()
+        .and_then(|metadata| normalize_non_empty_string(metadata.previous_commit.clone()))
+        .unwrap_or_else(|| resolve_dolt_previous_commit(profile));
+    let current_commit = repo_payload
+        .metadata
+        .as_ref()
+        .and_then(|metadata| normalize_non_empty_string(metadata.current_commit.clone()))
+        .or_else(|| normalize_non_empty_string(Some(repo_payload.repo_ref.current_commit.clone())))
+        .unwrap_or_else(|| resolve_dolt_current_commit(profile, None));
+    let changed_tables = filter_manifest_table_summaries_for_scope(
+        mock_dolt_change_manifest_summaries(&repository),
+        table_scope,
+        &selected_tables,
+    );
+    let changed_table_names: Vec<String> = changed_tables
+        .iter()
+        .map(|summary| summary.table_name.to_string())
+        .collect();
+    let schema_change_flags: Vec<String> = changed_tables
+        .iter()
+        .filter(|summary| summary.schema_changed)
+        .map(|summary| summary.table_name.to_string())
+        .collect();
+    let row_change_summary = changed_tables
+        .iter()
+        .map(|summary| {
+            (
+                summary.table_name.to_string(),
+                json!({
+                    "added": summary.added_rows,
+                    "modified": summary.modified_rows,
+                    "removed": summary.removed_rows
+                }),
+            )
+        })
+        .collect::<serde_json::Map<String, Value>>();
+
+    let mut outputs = PortValues::new();
+    outputs.insert(
+        "manifest".to_string(),
+        TypedValue {
+            data_type: DataType::DatasetRef,
+            value: json!({
+                "kind": "dolt_change_manifest_dataset",
+                "repo_ref": {
+                    "connection_ref": repo_payload.repo_ref.connection_ref.trim(),
+                    "repository": repository,
+                    "branch": repo_payload.repo_ref.branch.trim(),
+                    "checkout_ref": normalize_optional_config_string(repo_payload.repo_ref.checkout_ref),
+                    "current_commit": current_commit.clone(),
+                },
+                "manifest_ref": {
+                    "previous_commit": previous_commit.clone(),
+                    "current_commit": current_commit.clone(),
+                    "table_scope": table_scope.as_str(),
+                },
+                "metadata": {
+                    "repo_family": repo_family,
+                    "previous_commit": previous_commit.clone(),
+                    "current_commit": current_commit.clone(),
+                    "table_scope": table_scope.as_str(),
+                    "selected_tables": selected_tables,
+                    "schema_change_policy": schema_change_policy.as_str(),
+                    "changed_tables": changed_table_names,
+                    "schema_change_flags": schema_change_flags,
+                    "row_change_summary": row_change_summary,
+                }
+            }),
+        },
+    );
+
+    Ok(NodeExecutionResult {
+        outputs,
+        logs: vec![format!(
+            "Computed Dolt change manifest for `{}` across `{}` -> `{}` with `{}` changed table(s).",
+            repo_payload.repo_ref.repository.trim(),
+            previous_commit,
+            current_commit,
+            changed_tables.len()
+        )],
+    })
+}
+
+fn execute_dolt_dump(
+    node: &WorkflowNode,
+    inputs: &PortValues,
+) -> Result<NodeExecutionResult, AdapterError> {
+    let config: DoltDumpConfig = serde_json::from_value(node.config.clone()).map_err(|error| {
+        AdapterError::InvalidConfig {
+            node_id: node.node_id.clone(),
+            message: error.to_string(),
+        }
+    })?;
+
+    let repo_input = inputs
+        .get("repo")
+        .ok_or_else(|| AdapterError::MissingInput {
+            node_id: node.node_id.clone(),
+            port: "repo".to_string(),
+        })?;
+
+    if repo_input.data_type != DataType::DatasetRef {
+        return Err(AdapterError::DatasetRefTypeMismatch {
+            node_id: node.node_id.clone(),
+            port: "repo".to_string(),
+        });
+    }
+
+    let input_kind = repo_input
+        .value
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
+    let output_format = config
+        .output_format
+        .unwrap_or(DoltDumpOutputFormat::Parquet);
+    let table_selection_mode = config
+        .table_selection_mode
+        .unwrap_or(DoltDumpTableSelectionMode::PreferManifestScope);
+    let selected_tables = normalize_selected_table_names(config.selected_tables);
+    let artifact_retention = config
+        .artifact_retention
+        .unwrap_or(DoltDumpArtifactRetention::KeepLatestSuccess);
+    let output_directory_policy = config
+        .output_directory_policy
+        .unwrap_or(DoltDumpOutputDirectoryPolicy::EphemeralRunBundle);
+
+    let (
+        connection_ref,
+        repository,
+        branch,
+        checkout_ref,
+        current_commit,
+        previous_commit,
+        repo_family,
+        manifest_changed_tables,
+        source_kind_label,
+    ) = match input_kind {
+        "dolt_repo_dataset" => {
+            let repo_payload: DoltRepoDatasetPayload =
+                serde_json::from_value(repo_input.value.clone()).map_err(|error| {
+                    AdapterError::ExecutionFailed {
+                        node_id: node.node_id.clone(),
+                        message: format!("invalid repo dataset payload: {error}"),
+                    }
+                })?;
+            let repository = repo_payload.repo_ref.repository.trim().to_string();
+            let profile = mock_dolt_repo_profile(&repository);
+            let current_commit =
+                normalize_non_empty_string(Some(repo_payload.repo_ref.current_commit.clone()))
+                    .unwrap_or_else(|| resolve_dolt_current_commit(profile, None));
+            let previous_commit = repo_payload
+                .metadata
+                .as_ref()
+                .and_then(|metadata| normalize_non_empty_string(metadata.previous_commit.clone()))
+                .unwrap_or_else(|| resolve_dolt_previous_commit(profile));
+            let repo_family = repo_payload
+                .metadata
+                .as_ref()
+                .and_then(|metadata| normalize_non_empty_string(metadata.repo_family.clone()))
+                .unwrap_or_else(|| derive_dolt_repo_family(&repository));
+
+            (
+                repo_payload.repo_ref.connection_ref.trim().to_string(),
+                repository,
+                repo_payload.repo_ref.branch.trim().to_string(),
+                normalize_optional_config_string(repo_payload.repo_ref.checkout_ref),
+                current_commit,
+                previous_commit,
+                repo_family,
+                Vec::new(),
+                "repo_handle",
+            )
+        }
+        "dolt_change_manifest_dataset" => {
+            let manifest_payload: DoltChangeManifestDatasetPayload =
+                serde_json::from_value(repo_input.value.clone()).map_err(|error| {
+                    AdapterError::ExecutionFailed {
+                        node_id: node.node_id.clone(),
+                        message: format!("invalid change manifest dataset payload: {error}"),
+                    }
+                })?;
+            let repository = manifest_payload.repo_ref.repository.trim().to_string();
+            let profile = mock_dolt_repo_profile(&repository);
+            let current_commit = manifest_payload
+                .metadata
+                .as_ref()
+                .and_then(|metadata| normalize_non_empty_string(metadata.current_commit.clone()))
+                .or_else(|| {
+                    normalize_non_empty_string(Some(
+                        manifest_payload.repo_ref.current_commit.clone(),
+                    ))
+                })
+                .unwrap_or_else(|| resolve_dolt_current_commit(profile, None));
+            let previous_commit = manifest_payload
+                .metadata
+                .as_ref()
+                .and_then(|metadata| normalize_non_empty_string(metadata.previous_commit.clone()))
+                .unwrap_or_else(|| resolve_dolt_previous_commit(profile));
+            let repo_family = manifest_payload
+                .metadata
+                .as_ref()
+                .and_then(|metadata| normalize_non_empty_string(metadata.repo_family.clone()))
+                .unwrap_or_else(|| derive_dolt_repo_family(&repository));
+            let manifest_changed_tables = manifest_payload
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata.changed_tables.clone())
+                .unwrap_or_default();
+
+            (
+                manifest_payload.repo_ref.connection_ref.trim().to_string(),
+                repository,
+                manifest_payload.repo_ref.branch.trim().to_string(),
+                normalize_optional_config_string(manifest_payload.repo_ref.checkout_ref),
+                current_commit,
+                previous_commit,
+                repo_family,
+                manifest_changed_tables,
+                "change_manifest",
+            )
+        }
+        other => {
+            return Err(AdapterError::ExecutionFailed {
+                node_id: node.node_id.clone(),
+                message: format!("unsupported dolt dump input kind `{other}`"),
+            })
+        }
+    };
+
+    let export_table_names = resolve_dolt_dump_table_selection(
+        &repository,
+        table_selection_mode,
+        &selected_tables,
+        &manifest_changed_tables,
+    );
+    let known_tables = mock_dolt_dump_table_catalog(&repository);
+    let exported_tables: Vec<Value> = export_table_names
+        .iter()
+        .map(|table_name| {
+            let row_count = known_tables
+                .iter()
+                .find(|(known_table_name, _)| *known_table_name == table_name)
+                .map(|(_, row_count)| *row_count);
+            json!({
+                "source_table": table_name,
+                "file_path": format!(
+                    "{}/{}.{}",
+                    build_dolt_dump_bundle_path(&repo_family, &current_commit, output_format),
+                    table_name,
+                    output_format.file_extension()
+                ),
+                "row_count": row_count,
+            })
+        })
+        .collect();
+    let bundle_path = build_dolt_dump_bundle_path(&repo_family, &current_commit, output_format);
+
+    let mut outputs = PortValues::new();
+    outputs.insert(
+        "bundle".to_string(),
+        TypedValue {
+            data_type: DataType::DirectoryRef,
+            value: json!({
+                "kind": "dolt_dump_bundle",
+                "directory_ref": {
+                    "path": bundle_path,
+                    "format": output_format.as_str(),
+                },
+                "repo_ref": {
+                    "connection_ref": connection_ref,
+                    "repository": repository,
+                    "branch": branch,
+                    "checkout_ref": checkout_ref,
+                    "current_commit": current_commit,
+                },
+                "metadata": {
+                    "repo_family": repo_family,
+                    "previous_commit": previous_commit,
+                    "table_selection_mode": table_selection_mode.as_str(),
+                    "selected_tables": selected_tables,
+                    "manifest_changed_tables": manifest_changed_tables,
+                    "artifact_retention": artifact_retention.as_str(),
+                    "output_directory_policy": output_directory_policy.as_str(),
+                    "exported_tables": exported_tables,
+                }
+            }),
+        },
+    );
+
+    Ok(NodeExecutionResult {
+        outputs,
+        logs: vec![format!(
+            "Exported {} Dolt table(s) from `{}` as `{}` using `{}` input.",
+            export_table_names.len(),
+            repository,
+            output_format.as_str(),
+            source_kind_label
+        )],
+    })
+}
+
+fn execute_dolt_diff_export(
+    node: &WorkflowNode,
+    inputs: &PortValues,
+) -> Result<NodeExecutionResult, AdapterError> {
+    let config: DoltDiffExportConfig =
+        serde_json::from_value(node.config.clone()).map_err(|error| {
+            AdapterError::InvalidConfig {
+                node_id: node.node_id.clone(),
+                message: error.to_string(),
+            }
+        })?;
+
+    let manifest_input = inputs
+        .get("manifest")
+        .ok_or_else(|| AdapterError::MissingInput {
+            node_id: node.node_id.clone(),
+            port: "manifest".to_string(),
+        })?;
+
+    if manifest_input.data_type != DataType::DatasetRef {
+        return Err(AdapterError::DatasetRefTypeMismatch {
+            node_id: node.node_id.clone(),
+            port: "manifest".to_string(),
+        });
+    }
+
+    let input_kind = manifest_input
+        .value
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
+    if input_kind != "dolt_change_manifest_dataset" {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: format!("unsupported dolt diff export input kind `{input_kind}`"),
+        });
+    }
+
+    let manifest_payload: DoltChangeManifestDatasetPayload =
+        serde_json::from_value(manifest_input.value.clone()).map_err(|error| {
+            AdapterError::ExecutionFailed {
+                node_id: node.node_id.clone(),
+                message: format!("invalid change manifest dataset payload: {error}"),
+            }
+        })?;
+
+    let output_format = config
+        .output_format
+        .unwrap_or(DoltDumpOutputFormat::Parquet);
+    let change_filter = config
+        .change_filter
+        .unwrap_or(DoltDiffExportChangeFilter::AllChanges);
+    let deleted_row_handling = config
+        .deleted_row_handling
+        .unwrap_or(DoltDiffExportDeletedRowHandling::EmitDeleteMarkers);
+    let repository = manifest_payload.repo_ref.repository.trim().to_string();
+    let profile = mock_dolt_repo_profile(&repository);
+    let current_commit = manifest_payload
+        .metadata
+        .as_ref()
+        .and_then(|metadata| normalize_non_empty_string(metadata.current_commit.clone()))
+        .or_else(|| {
+            normalize_non_empty_string(Some(manifest_payload.repo_ref.current_commit.clone()))
+        })
+        .unwrap_or_else(|| resolve_dolt_current_commit(profile, None));
+    let previous_commit = manifest_payload
+        .metadata
+        .as_ref()
+        .and_then(|metadata| normalize_non_empty_string(metadata.previous_commit.clone()))
+        .unwrap_or_else(|| resolve_dolt_previous_commit(profile));
+    let repo_family = manifest_payload
+        .metadata
+        .as_ref()
+        .and_then(|metadata| normalize_non_empty_string(metadata.repo_family.clone()))
+        .unwrap_or_else(|| derive_dolt_repo_family(&repository));
+    let manifest_changed_tables = manifest_payload
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.changed_tables.clone())
+        .unwrap_or_default();
+    let schema_change_flags = manifest_payload
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.schema_change_flags.clone())
+        .unwrap_or_default();
+    let row_change_summary = manifest_payload
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.row_change_summary.as_ref());
+
+    let resolved_summaries = resolve_dolt_diff_export_table_summaries(
+        &repository,
+        &manifest_changed_tables,
+        row_change_summary,
+    );
+    let bundle_path = build_dolt_diff_export_bundle_path(
+        &repo_family,
+        &previous_commit,
+        &current_commit,
+        output_format,
+    );
+    let delta_manifest: Vec<Value> = resolved_summaries
+        .iter()
+        .filter_map(|summary| {
+            let filtered = filter_dolt_diff_export_summary(summary, change_filter)?;
+            let operation_types = build_dolt_diff_operation_types(&filtered);
+            let delete_markers_emitted = filtered.removed_rows > 0
+                && matches!(
+                    deleted_row_handling,
+                    DoltDiffExportDeletedRowHandling::EmitDeleteMarkers
+                );
+
+            Some(json!({
+                "source_table": filtered.table_name,
+                "file_path": format!(
+                    "{}/{}.{}",
+                    bundle_path,
+                    filtered.table_name,
+                    output_format.file_extension()
+                ),
+                "added_rows": filtered.added_rows,
+                "modified_rows": filtered.modified_rows,
+                "removed_rows": filtered.removed_rows,
+                "operation_types": operation_types,
+                "delete_markers_emitted": delete_markers_emitted,
+                "delete_marker_path": if delete_markers_emitted {
+                    Some(format!(
+                        "{}/delete_markers/{}.jsonl",
+                        bundle_path, filtered.table_name
+                    ))
+                } else {
+                    None
+                }
+            }))
+        })
+        .collect();
+    let delete_rows_present = delta_manifest.iter().any(|entry| {
+        entry
+            .get("removed_rows")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            > 0
+    });
+    let filtered_tables: Vec<String> = delta_manifest
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .get("source_table")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .collect();
+    let filtered_table_count = filtered_tables.len();
+
+    let mut outputs = PortValues::new();
+    outputs.insert(
+        "bundle".to_string(),
+        TypedValue {
+            data_type: DataType::DirectoryRef,
+            value: json!({
+                "kind": "dolt_diff_export_bundle",
+                "directory_ref": {
+                    "path": bundle_path,
+                    "format": output_format.as_str(),
+                },
+                "repo_ref": {
+                    "connection_ref": manifest_payload.repo_ref.connection_ref.trim(),
+                    "repository": repository,
+                    "branch": manifest_payload.repo_ref.branch.trim(),
+                    "checkout_ref": normalize_optional_config_string(manifest_payload.repo_ref.checkout_ref),
+                    "current_commit": current_commit.clone(),
+                },
+                "metadata": {
+                    "repo_family": repo_family,
+                    "previous_commit": previous_commit.clone(),
+                    "current_commit": current_commit.clone(),
+                    "change_filter": change_filter.as_str(),
+                    "deleted_row_handling": deleted_row_handling.as_str(),
+                    "manifest_changed_tables": manifest_changed_tables,
+                    "filtered_tables": filtered_tables,
+                    "schema_change_flags": schema_change_flags,
+                    "delete_rows_present": delete_rows_present,
+                    "delta_manifest": delta_manifest,
+                }
+            }),
+        },
+    );
+
+    Ok(NodeExecutionResult {
+        outputs,
+        logs: vec![format!(
+            "Exported Dolt row deltas for `{}` across `{}` -> `{}` with `{}` table(s) using `{}`.",
+            manifest_payload.repo_ref.repository.trim(),
+            previous_commit,
+            current_commit,
+            filtered_table_count,
+            change_filter.as_str()
+        )],
+    })
+}
+
+fn open_runtime_workflow_duckdb(
+    context: &AdapterExecutionContext,
+    node_id: &str,
+) -> Result<Option<DuckDbConnection>, AdapterError> {
+    let Some(database_path) = context.workflow_duckdb_path.as_deref() else {
+        return Ok(None);
+    };
+
+    if let Some(parent) = database_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!(
+                "failed to create workflow DuckDB parent directory `{}`: {error}",
+                parent.display()
+            ),
+        })?;
+    }
+
+    DuckDbConnection::open(database_path)
+        .map(Some)
+        .map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!(
+                "failed to open workflow DuckDB at `{}`: {error}",
+                database_path.display()
+            ),
+        })
+}
+
+fn quote_duckdb_identifier(identifier: &str) -> String {
+    format!("\"{}\"", identifier.replace('"', "\"\""))
+}
+
+fn quote_duckdb_string_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+fn build_duckdb_column_definition_sql(
+    columns: &[Value],
+    node_id: &str,
+) -> Result<String, AdapterError> {
+    if columns.is_empty() {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: "cannot materialize a DuckDB table without any declared columns.".to_string(),
+        });
+    }
+
+    let mut definitions = Vec::with_capacity(columns.len());
+    for column in columns {
+        let Some(object) = column.as_object() else {
+            return Err(AdapterError::ExecutionFailed {
+                node_id: node_id.to_string(),
+                message: "declared table columns must be JSON objects.".to_string(),
+            });
+        };
+        let column_name = object
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| AdapterError::ExecutionFailed {
+                node_id: node_id.to_string(),
+                message: "declared table columns must include a non-empty `name`.".to_string(),
+            })?;
+        let column_type = object
+            .get("type")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| AdapterError::ExecutionFailed {
+                node_id: node_id.to_string(),
+                message: format!(
+                    "declared table column `{column_name}` must include a non-empty `type`."
+                ),
+            })?;
+
+        let mut definition = format!("{} {}", quote_duckdb_identifier(column_name), column_type);
+        let nullable = object
+            .get("nullable")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        if !nullable {
+            definition.push_str(" not null");
+        }
+        if let Some(default_expression) = object
+            .get("default")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            definition.push_str(" default ");
+            definition.push_str(default_expression);
+        }
+
+        definitions.push(definition);
+    }
+
+    Ok(definitions.join(", "))
+}
+
+fn persist_load_to_duckdb_tables(
+    connection: &DuckDbConnection,
+    target_schema: &str,
+    resolved_bundle: &ResolvedLoadToDuckDbBundle,
+    node_id: &str,
+) -> Result<(), AdapterError> {
+    let schema_identifier = quote_duckdb_identifier(target_schema);
+    connection
+        .execute_batch(&format!("create schema if not exists {schema_identifier};"))
+        .map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!(
+                "failed to ensure staging schema `{target_schema}` exists in workflow DuckDB: {error}"
+            ),
+        })?;
+
+    for table in &resolved_bundle.loaded_tables {
+        let table_identifier = quote_duckdb_identifier(&table.staging_table_name);
+        let column_sql = build_duckdb_column_definition_sql(&table.columns, node_id)?;
+        connection
+            .execute_batch(&format!(
+                "drop table if exists {schema_identifier}.{table_identifier};
+                 create table {schema_identifier}.{table_identifier} ({column_sql});"
+            ))
+            .map_err(|error| AdapterError::ExecutionFailed {
+                node_id: node_id.to_string(),
+                message: format!(
+                    "failed to create staging table `{target_schema}.{}`
+                     in workflow DuckDB: {error}",
+                    table.staging_table_name
+                ),
+            })?;
+    }
+
+    Ok(())
+}
+
+fn duckdb_table_exists(
+    connection: &DuckDbConnection,
+    schema_name: &str,
+    table_name: &str,
+    node_id: &str,
+) -> Result<bool, AdapterError> {
+    connection
+        .query_row(
+            "select count(*)
+             from information_schema.tables
+             where table_schema = ?1
+               and table_name = ?2
+               and table_type = 'BASE TABLE'",
+            [schema_name, table_name],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|count| count > 0)
+        .map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!(
+                "failed to inspect workflow DuckDB table `{schema_name}.{table_name}`: {error}"
+            ),
+        })
+}
+
+fn load_duckdb_table_column_names(
+    connection: &DuckDbConnection,
+    schema_name: &str,
+    table_name: &str,
+    node_id: &str,
+) -> Result<Vec<String>, AdapterError> {
+    let mut stmt = connection
+        .prepare(
+            "select column_name
+             from information_schema.columns
+             where table_schema = ?1
+               and table_name = ?2
+             order by ordinal_position asc",
+        )
+        .map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!(
+                "failed to inspect columns for workflow DuckDB table `{schema_name}.{table_name}`: {error}"
+            ),
+        })?;
+
+    stmt.query_map([schema_name, table_name], |row| row.get::<_, String>(0))
+        .map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!(
+                "failed to query columns for workflow DuckDB table `{schema_name}.{table_name}`: {error}"
+            ),
+        })?
+        .collect::<duckdb::Result<Vec<_>>>()
+        .map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!(
+                "failed to collect columns for workflow DuckDB table `{schema_name}.{table_name}`: {error}"
+            ),
+        })
+}
+
+fn source_tables_from_table_reference(
+    table_payload: &TableReferencePayload,
+    node_id: &str,
+) -> Result<Vec<(String, String)>, AdapterError> {
+    if let Some(definitions) = table_payload
+        .schema_definitions
+        .as_ref()
+        .and_then(Value::as_array)
+        .filter(|definitions| !definitions.is_empty())
+    {
+        return definitions
+            .iter()
+            .map(|definition| {
+                let Some(object) = definition.as_object() else {
+                    return Err(AdapterError::ExecutionFailed {
+                        node_id: node_id.to_string(),
+                        message: "table reference schema definitions must be JSON objects."
+                            .to_string(),
+                    });
+                };
+                let schema_name = object
+                    .get("schema_name")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or(table_payload.schema_name.as_str())
+                    .to_string();
+                let table_name = object
+                    .get("table_name")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| AdapterError::ExecutionFailed {
+                        node_id: node_id.to_string(),
+                        message: "table reference schema definitions must include `table_name`."
+                            .to_string(),
+                    })?
+                    .to_string();
+                Ok((schema_name, table_name))
+            })
+            .collect();
+    }
+
+    Ok(vec![(
+        table_payload.schema_name.clone(),
+        table_payload.table_name.clone(),
+    )])
+}
+
+fn merge_live_source_sql(qualified_source: &str, source_columns: &[String]) -> String {
+    if source_columns
+        .iter()
+        .any(|column| column.eq_ignore_ascii_case("change_op"))
+    {
+        format!(
+            "(select * from {qualified_source} where coalesce({}, '') <> 'removed')",
+            quote_duckdb_identifier("change_op")
+        )
+    } else {
+        qualified_source.to_string()
+    }
+}
+
+fn persist_table_merge_tables(
+    connection: &DuckDbConnection,
+    table_payload: &TableReferencePayload,
+    target_schema: &str,
+    write_policy: TableMergeWritePolicy,
+    merge_key_columns: &[String],
+    delete_handling: TableMergeDeleteHandling,
+    node_id: &str,
+) -> Result<(), AdapterError> {
+    let target_schema_identifier = quote_duckdb_identifier(target_schema);
+    connection
+        .execute_batch(&format!(
+            "create schema if not exists {target_schema_identifier};"
+        ))
+        .map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!(
+                "failed to ensure durable schema `{target_schema}` exists in workflow DuckDB: {error}"
+            ),
+        })?;
+
+    for (source_schema_name, source_table_name) in
+        source_tables_from_table_reference(table_payload, node_id)?
+    {
+        let source_columns = load_duckdb_table_column_names(
+            connection,
+            &source_schema_name,
+            &source_table_name,
+            node_id,
+        )?;
+        if source_columns.is_empty() {
+            return Err(AdapterError::ExecutionFailed {
+                node_id: node_id.to_string(),
+                message: format!(
+                    "source staging table `{source_schema_name}.{source_table_name}` has no columns to merge."
+                ),
+            });
+        }
+
+        let qualified_source = format!(
+            "{}.{}",
+            quote_duckdb_identifier(&source_schema_name),
+            quote_duckdb_identifier(&source_table_name)
+        );
+        let qualified_target = format!(
+            "{}.{}",
+            target_schema_identifier,
+            quote_duckdb_identifier(&source_table_name)
+        );
+        let target_exists =
+            duckdb_table_exists(connection, target_schema, &source_table_name, node_id)?;
+
+        match write_policy {
+            TableMergeWritePolicy::SnapshotReplace => {
+                connection
+                    .execute_batch(&format!(
+                        "create or replace table {qualified_target} as select * from {qualified_source};"
+                    ))
+                    .map_err(|error| AdapterError::ExecutionFailed {
+                        node_id: node_id.to_string(),
+                        message: format!(
+                            "failed to snapshot-replace `{target_schema}.{source_table_name}` from `{source_schema_name}.{source_table_name}`: {error}"
+                        ),
+                    })?;
+            }
+            TableMergeWritePolicy::AppendOnly => {
+                if !target_exists {
+                    connection
+                        .execute_batch(&format!(
+                            "create table {qualified_target} as select * from {qualified_source};"
+                        ))
+                        .map_err(|error| AdapterError::ExecutionFailed {
+                            node_id: node_id.to_string(),
+                            message: format!(
+                                "failed to create append target `{target_schema}.{source_table_name}` from `{source_schema_name}.{source_table_name}`: {error}"
+                            ),
+                        })?;
+                } else {
+                    connection
+                        .execute_batch(&format!(
+                            "insert into {qualified_target} select * from {qualified_source};"
+                        ))
+                        .map_err(|error| AdapterError::ExecutionFailed {
+                            node_id: node_id.to_string(),
+                            message: format!(
+                                "failed to append staged rows into `{target_schema}.{source_table_name}`: {error}"
+                            ),
+                        })?;
+                }
+            }
+            TableMergeWritePolicy::Upsert => {
+                if !target_exists {
+                    connection
+                        .execute_batch(&format!(
+                            "create table {qualified_target} as select * from {qualified_source};"
+                        ))
+                        .map_err(|error| AdapterError::ExecutionFailed {
+                            node_id: node_id.to_string(),
+                            message: format!(
+                                "failed to create bootstrap merge target `{target_schema}.{source_table_name}` from `{source_schema_name}.{source_table_name}`: {error}"
+                            ),
+                        })?;
+                    continue;
+                }
+
+                let available_columns = source_columns
+                    .iter()
+                    .map(|column| column.to_ascii_lowercase())
+                    .collect::<Vec<_>>();
+                let missing_merge_keys = merge_key_columns
+                    .iter()
+                    .filter_map(|key| {
+                        let trimmed = key.trim();
+                        if trimmed.is_empty()
+                            || available_columns.contains(&trimmed.to_ascii_lowercase())
+                        {
+                            None
+                        } else {
+                            Some(trimmed.to_string())
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                if !missing_merge_keys.is_empty() {
+                    return Err(AdapterError::ExecutionFailed {
+                        node_id: node_id.to_string(),
+                        message: format!(
+                            "merge key(s) `{}` do not exist on staging table `{source_schema_name}.{source_table_name}`.",
+                            missing_merge_keys.join(", ")
+                        ),
+                    });
+                }
+                let normalized_merge_keys = merge_key_columns
+                    .iter()
+                    .map(|value| value.trim())
+                    .filter(|value| !value.is_empty())
+                    .collect::<Vec<_>>();
+                if normalized_merge_keys.is_empty() {
+                    return Err(AdapterError::ExecutionFailed {
+                        node_id: node_id.to_string(),
+                        message: format!(
+                            "upsert merge into `{target_schema}.{source_table_name}` requires at least one merge key column."
+                        ),
+                    });
+                }
+                let on_clause = normalized_merge_keys
+                    .iter()
+                    .map(|column| {
+                        let identifier = quote_duckdb_identifier(column);
+                        format!("target.{identifier} = source.{identifier}")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" and ");
+
+                if matches!(
+                    delete_handling,
+                    TableMergeDeleteHandling::ApplyDeleteMarkers
+                ) && source_columns
+                    .iter()
+                    .any(|column| column.eq_ignore_ascii_case("change_op"))
+                {
+                    connection
+                        .execute_batch(&format!(
+                            "delete from {qualified_target} as target
+                             using {qualified_source} as source
+                             where {on_clause}
+                               and source.{} = 'removed';",
+                            quote_duckdb_identifier("change_op")
+                        ))
+                        .map_err(|error| AdapterError::ExecutionFailed {
+                            node_id: node_id.to_string(),
+                            message: format!(
+                                "failed to apply delete markers into `{target_schema}.{source_table_name}`: {error}"
+                            ),
+                        })?;
+                }
+
+                let update_columns = source_columns
+                    .iter()
+                    .map(|column| {
+                        let identifier = quote_duckdb_identifier(column);
+                        format!("{identifier} = source.{identifier}")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let insert_columns = source_columns
+                    .iter()
+                    .map(|column| quote_duckdb_identifier(column))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let insert_values = source_columns
+                    .iter()
+                    .map(|column| {
+                        let identifier = quote_duckdb_identifier(column);
+                        format!("source.{identifier}")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let live_source_sql = merge_live_source_sql(&qualified_source, &source_columns);
+
+                connection
+                    .execute_batch(&format!(
+                        "merge into {qualified_target} as target
+                         using {live_source_sql} as source
+                         on {on_clause}
+                         when matched then
+                           update set {update_columns}
+                         when not matched then
+                           insert ({insert_columns}) values ({insert_values});"
+                    ))
+                    .map_err(|error| AdapterError::ExecutionFailed {
+                        node_id: node_id.to_string(),
+                        message: format!(
+                            "failed to upsert `{target_schema}.{source_table_name}` from `{source_schema_name}.{source_table_name}`: {error}"
+                        ),
+                    })?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_qualified_duckdb_table_name(
+    value: &str,
+    default_schema: &str,
+    node_id: &str,
+) -> Result<(String, String), AdapterError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: "qualified DuckDB table name must not be empty.".to_string(),
+        });
+    }
+
+    if let Some((schema_name, table_name)) = trimmed.rsplit_once('.') {
+        let schema_name = schema_name.trim();
+        let table_name = table_name.trim();
+        if schema_name.is_empty() || table_name.is_empty() {
+            return Err(AdapterError::ExecutionFailed {
+                node_id: node_id.to_string(),
+                message: format!("invalid qualified DuckDB table name `{trimmed}`."),
+            });
+        }
+        Ok((schema_name.to_string(), table_name.to_string()))
+    } else {
+        Ok((default_schema.to_string(), trimmed.to_string()))
+    }
+}
+
+fn persist_checkpoint_write_row(
+    connection: &DuckDbConnection,
+    checkpoint_table: &str,
+    repository: &str,
+    branch: &str,
+    current_commit: &str,
+    last_ingest_mode: &str,
+    persisted_at: &str,
+    commit_source: &str,
+    write_timing: &str,
+    table_payload: &TableReferencePayload,
+    context: &AdapterExecutionContext,
+    node_id: &str,
+) -> Result<(), AdapterError> {
+    let (schema_name, table_name) =
+        parse_qualified_duckdb_table_name(checkpoint_table, "tables", node_id)?;
+    let schema_identifier = quote_duckdb_identifier(&schema_name);
+    let table_identifier = quote_duckdb_identifier(&table_name);
+    let qualified_table = format!("{schema_identifier}.{table_identifier}");
+
+    connection
+        .execute_batch(&format!(
+            "create schema if not exists {schema_identifier};
+             create table if not exists {qualified_table} (
+                 source_repo varchar not null,
+                 branch varchar not null,
+                 last_synced_commit varchar not null,
+                 last_success_at varchar not null,
+                 last_ingest_mode varchar not null,
+                 persisted_at varchar not null,
+                 commit_source varchar not null,
+                 write_timing varchar not null,
+                 target_schema varchar null,
+                 target_table varchar null,
+                 workflow_id varchar null,
+                 run_id varchar null,
+                 primary key (source_repo, branch)
+             );"
+        ))
+        .map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!(
+                "failed to ensure checkpoint table `{schema_name}.{table_name}` exists in workflow DuckDB: {error}"
+            ),
+        })?;
+
+    connection
+        .execute_batch(&format!(
+            "insert or replace into {qualified_table} (
+                 source_repo,
+                 branch,
+                 last_synced_commit,
+                 last_success_at,
+                 last_ingest_mode,
+                 persisted_at,
+                 commit_source,
+                 write_timing,
+                 target_schema,
+                 target_table,
+                 workflow_id,
+                 run_id
+             ) values (
+                 {},
+                 {},
+                 {},
+                 {},
+                 {},
+                 {},
+                 {},
+                 {},
+                 {},
+                 {},
+                 {},
+                 {}
+             );",
+            quote_duckdb_string_literal(repository),
+            quote_duckdb_string_literal(branch),
+            quote_duckdb_string_literal(current_commit),
+            quote_duckdb_string_literal(persisted_at),
+            quote_duckdb_string_literal(last_ingest_mode),
+            quote_duckdb_string_literal(persisted_at),
+            quote_duckdb_string_literal(commit_source),
+            quote_duckdb_string_literal(write_timing),
+            quote_duckdb_string_literal(table_payload.schema_name.trim()),
+            quote_duckdb_string_literal(table_payload.table_name.trim()),
+            quote_duckdb_string_literal(context.workflow_id.as_deref().unwrap_or_default()),
+            quote_duckdb_string_literal(context.run_id.as_deref().unwrap_or_default()),
+        ))
+        .map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!(
+                "failed to persist checkpoint row into `{schema_name}.{table_name}`: {error}"
+            ),
+        })?;
+
+    Ok(())
+}
+
+fn execute_load_to_duckdb(
+    node: &WorkflowNode,
+    inputs: &PortValues,
+    context: &AdapterExecutionContext,
+) -> Result<NodeExecutionResult, AdapterError> {
+    let config: LoadToDuckDbConfig =
+        serde_json::from_value(node.config.clone()).map_err(|error| {
+            AdapterError::InvalidConfig {
+                node_id: node.node_id.clone(),
+                message: error.to_string(),
+            }
+        })?;
+
+    let bundle_input = inputs
+        .get("bundle")
+        .ok_or_else(|| AdapterError::MissingInput {
+            node_id: node.node_id.clone(),
+            port: "bundle".to_string(),
+        })?;
+
+    if bundle_input.data_type != DataType::DirectoryRef {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: "load_to_duckdb expects a `directory_ref` bundle input.".to_string(),
+        });
+    }
+
+    let target_schema = config.target_schema.trim();
+    if target_schema.is_empty() {
+        return Err(AdapterError::InvalidConfig {
+            node_id: node.node_id.clone(),
+            message: "`target_schema` must not be empty.".to_string(),
+        });
+    }
+
+    let table_mapping = config
+        .table_mapping
+        .unwrap_or(LoadToDuckDbTableMapping::BundleAwareStagingNames);
+    let schema_handling = config
+        .schema_handling
+        .unwrap_or(LoadToDuckDbSchemaHandling::InferOnFirstLoadValidateOnRecurring);
+    let delta_context_preservation = config
+        .delta_context_preservation
+        .unwrap_or(LoadToDuckDbDeltaContextPreservation::PreserveCommitRangeAndDeleteFlags);
+    let input_kind = bundle_input
+        .value
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
+    let resolved_bundle = match input_kind {
+        "dolt_dump_bundle" => {
+            let payload: DoltDumpBundlePayload = serde_json::from_value(bundle_input.value.clone())
+                .map_err(|error| AdapterError::ExecutionFailed {
+                    node_id: node.node_id.clone(),
+                    message: format!("invalid dolt dump bundle payload: {error}"),
+                })?;
+            resolve_load_to_duckdb_dump_bundle(payload)
+        }
+        "dolt_diff_export_bundle" => {
+            let payload: DoltDiffExportBundlePayload =
+                serde_json::from_value(bundle_input.value.clone()).map_err(|error| {
+                    AdapterError::ExecutionFailed {
+                        node_id: node.node_id.clone(),
+                        message: format!("invalid dolt diff export bundle payload: {error}"),
+                    }
+                })?;
+            resolve_load_to_duckdb_diff_bundle(payload)
+        }
+        other => {
+            return Err(AdapterError::ExecutionFailed {
+                node_id: node.node_id.clone(),
+                message: format!(
+                    "unsupported load_to_duckdb input kind `{other}`; expected `dolt_dump_bundle` or `dolt_diff_export_bundle`"
+                ),
+            })
+        }
+    }?;
+
+    let primary_table =
+        resolved_bundle
+            .loaded_tables
+            .first()
+            .ok_or_else(|| AdapterError::ExecutionFailed {
+                node_id: node.node_id.clone(),
+                message: "bundle did not resolve any loadable tables.".to_string(),
+            })?;
+    let schema_definitions = resolved_bundle
+        .loaded_tables
+        .iter()
+        .map(|table| {
+            json!({
+                "schema_name": target_schema,
+                "table_name": table.staging_table_name,
+                "output_alias": table.staging_table_name,
+                "columns": table.columns,
+                "primary_key": [],
+                "checks": [],
+                "source_table": table.source_table,
+                "load_mode": table.load_mode,
+            })
+        })
+        .collect::<Vec<_>>();
+    let load_manifest_path = build_load_to_duckdb_manifest_path(
+        &resolved_bundle.repo_family,
+        &resolved_bundle.bundle_kind,
+        resolved_bundle.previous_commit.as_deref(),
+        &resolved_bundle.current_commit,
+    );
+    let loaded_tables_metadata = resolved_bundle
+        .loaded_tables
+        .iter()
+        .map(|table| {
+            let mut value = json!({
+                "source_table": table.source_table,
+                "target_table": format!("{target_schema}.{}", table.staging_table_name),
+                "load_mode": table.load_mode,
+                "file_path": table.file_path,
+            });
+            if let Some(row_count) = table.row_count {
+                value["row_count"] = json!(row_count);
+            }
+            if let Some(added_rows) = table.added_rows {
+                value["added_rows"] = json!(added_rows);
+            }
+            if let Some(modified_rows) = table.modified_rows {
+                value["modified_rows"] = json!(modified_rows);
+            }
+            if let Some(removed_rows) = table.removed_rows {
+                value["removed_rows"] = json!(removed_rows);
+            }
+            if let Some(delete_markers_emitted) = table.delete_markers_emitted {
+                value["delete_markers_emitted"] = json!(delete_markers_emitted);
+            }
+            if let Some(delete_marker_path) = &table.delete_marker_path {
+                value["delete_marker_path"] = json!(delete_marker_path);
+            }
+            value
+        })
+        .collect::<Vec<_>>();
+
+    if let Some(connection) = open_runtime_workflow_duckdb(context, &node.node_id)? {
+        persist_load_to_duckdb_tables(&connection, target_schema, &resolved_bundle, &node.node_id)?;
+    }
+
+    let mut outputs = PortValues::new();
+    outputs.insert(
+        "table".to_string(),
+        TypedValue {
+            data_type: DataType::TableRef,
+            value: json!({
+                "kind": "table_reference",
+                "catalog": "workflow.duckdb",
+                "schema_name": target_schema,
+                "table_name": primary_table.staging_table_name,
+                "output_alias": primary_table.staging_table_name,
+                "selected_columns": [],
+                "row_filter": Value::Null,
+                "row_limit": Value::Null,
+                "refresh_schema": true,
+                "open_in_catalog": false,
+                "schema_definition": {
+                    "columns": primary_table.columns,
+                    "primary_key": [],
+                    "checks": [],
+                    "load_mode": primary_table.load_mode,
+                },
+                "schema_definitions": if schema_definitions.len() > 1 {
+                    Some(Value::Array(schema_definitions))
+                } else {
+                    None
+                },
+                "load_manifest_ref": {
+                    "kind": "load_manifest_ref",
+                    "path": load_manifest_path,
+                    "target_schema": target_schema,
+                },
+                "metadata": {
+                    "bundle_kind": resolved_bundle.bundle_kind,
+                    "branch": resolved_bundle.branch,
+                    "directory_format": resolved_bundle.directory_format,
+                    "directory_path": resolved_bundle.directory_path,
+                    "repo_family": resolved_bundle.repo_family,
+                    "repository": resolved_bundle.repository,
+                    "table_mapping": table_mapping.as_str(),
+                    "schema_handling": schema_handling.as_str(),
+                    "delta_context_preservation": delta_context_preservation.as_str(),
+                    "previous_commit": resolved_bundle.previous_commit,
+                    "current_commit": resolved_bundle.current_commit,
+                    "delete_rows_present": resolved_bundle.delete_rows_present,
+                    "loaded_tables": loaded_tables_metadata,
+                }
+            }),
+        },
+    );
+
+    let table_count = resolved_bundle.loaded_tables.len();
+    let bundle_label = if input_kind == "dolt_diff_export_bundle" {
+        "delta bundle"
+    } else {
+        "snapshot bundle"
+    };
+    let merge_context_summary = if resolved_bundle.delete_rows_present {
+        format!(
+            "commit range {} -> {} with delete markers",
+            resolved_bundle
+                .previous_commit
+                .as_deref()
+                .unwrap_or("pending_checkpoint"),
+            resolved_bundle.current_commit
+        )
+    } else if let Some(previous_commit) = resolved_bundle.previous_commit.as_deref() {
+        format!(
+            "commit range {previous_commit} -> {}",
+            resolved_bundle.current_commit
+        )
+    } else {
+        format!("current commit {}", resolved_bundle.current_commit)
+    };
+
+    Ok(NodeExecutionResult {
+        outputs,
+        logs: vec![format!(
+            "Prepared {table_count} staging table(s) in `{target_schema}` from {bundle_label} for `{repository}` using `{table_mapping}` and `{schema_handling}` ({merge_context_summary}).",
+            repository = resolved_bundle.repository,
+            table_mapping = table_mapping.as_str(),
+            schema_handling = schema_handling.as_str()
+        )],
+    })
+}
+
+fn execute_table_merge(
+    node: &WorkflowNode,
+    inputs: &PortValues,
+    context: &AdapterExecutionContext,
+) -> Result<NodeExecutionResult, AdapterError> {
+    let config: TableMergeConfig =
+        serde_json::from_value(node.config.clone()).map_err(|error| {
+            AdapterError::InvalidConfig {
+                node_id: node.node_id.clone(),
+                message: error.to_string(),
+            }
+        })?;
+
+    let table_input = inputs
+        .get("table")
+        .ok_or_else(|| AdapterError::MissingInput {
+            node_id: node.node_id.clone(),
+            port: "table".to_string(),
+        })?;
+
+    if table_input.data_type != DataType::TableRef {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: "table_merge expects a `table_ref` input.".to_string(),
+        });
+    }
+
+    let table_payload: TableReferencePayload = serde_json::from_value(table_input.value.clone())
+        .map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: format!("invalid table reference payload: {error}"),
+        })?;
+
+    if table_payload.kind != "table_reference" {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: format!("unsupported table reference kind `{}`", table_payload.kind),
+        });
+    }
+
+    let target_schema = config.target_schema.trim();
+    if target_schema.is_empty() {
+        return Err(AdapterError::InvalidConfig {
+            node_id: node.node_id.clone(),
+            message: "`target_schema` must not be empty.".to_string(),
+        });
+    }
+
+    let write_policy = config.write_policy.unwrap_or(TableMergeWritePolicy::Upsert);
+    let delete_handling = config
+        .delete_handling
+        .unwrap_or(TableMergeDeleteHandling::ApplyDeleteMarkers);
+    let schema_drift_behavior = config
+        .schema_drift_behavior
+        .unwrap_or(TableMergeSchemaDriftBehavior::FailAndRequireReview);
+    let merge_key_columns = config
+        .merge_key_columns
+        .unwrap_or_default()
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    let merged_table_count = table_payload
+        .schema_definitions
+        .as_ref()
+        .and_then(Value::as_array)
+        .map(|entries| entries.len())
+        .unwrap_or(1);
+
+    let write_policy_label = match write_policy {
+        TableMergeWritePolicy::AppendOnly => "append_only",
+        TableMergeWritePolicy::SnapshotReplace => "snapshot_replace",
+        TableMergeWritePolicy::Upsert => "upsert",
+    };
+    let delete_handling_label = match delete_handling {
+        TableMergeDeleteHandling::IgnoreDeleteMarkers => "ignore_delete_markers",
+        TableMergeDeleteHandling::ApplyDeleteMarkers => "apply_delete_markers",
+    };
+    let schema_drift_label = match schema_drift_behavior {
+        TableMergeSchemaDriftBehavior::AllowAdditiveChanges => "allow_additive_changes",
+        TableMergeSchemaDriftBehavior::FailAndRequireReview => "fail_and_require_review",
+    };
+    let mut metadata = match table_payload.metadata.clone() {
+        Some(Value::Object(object)) => Value::Object(object),
+        Some(_) | None => json!({}),
+    };
+    if let Some(metadata_object) = metadata.as_object_mut() {
+        metadata_object.insert(
+            "source_schema".to_string(),
+            json!(table_payload.schema_name.clone()),
+        );
+        metadata_object.insert("write_policy".to_string(), json!(write_policy_label));
+        metadata_object.insert(
+            "merge_key_columns".to_string(),
+            json!(merge_key_columns.clone()),
+        );
+        metadata_object.insert("delete_handling".to_string(), json!(delete_handling_label));
+        metadata_object.insert(
+            "schema_drift_behavior".to_string(),
+            json!(schema_drift_label),
+        );
+        metadata_object.insert("merged_table_count".to_string(), json!(merged_table_count));
+        metadata_object.insert(
+            "merge_summary".to_string(),
+            json!({
+                "write_policy": write_policy_label,
+                "merge_key_columns": merge_key_columns,
+                "delete_handling": delete_handling_label,
+                "schema_drift_behavior": schema_drift_label,
+                "merged_table_count": merged_table_count,
+            }),
+        );
+    }
+
+    if let Some(connection) = open_runtime_workflow_duckdb(context, &node.node_id)? {
+        persist_table_merge_tables(
+            &connection,
+            &table_payload,
+            target_schema,
+            write_policy,
+            &merge_key_columns,
+            delete_handling,
+            &node.node_id,
+        )?;
+    }
+
+    let mut outputs = PortValues::new();
+    outputs.insert(
+        "table".to_string(),
+        TypedValue {
+            data_type: DataType::TableRef,
+            value: json!({
+                "kind": "table_reference",
+                "catalog": table_payload.catalog,
+                "schema_name": target_schema,
+                "table_name": table_payload.table_name,
+                "output_alias": table_payload.output_alias,
+                "selected_columns": table_payload.selected_columns,
+                "row_filter": table_payload.row_filter,
+                "row_limit": table_payload.row_limit,
+                "refresh_schema": true,
+                "open_in_catalog": table_payload.open_in_catalog,
+                "schema_definition": table_payload.schema_definition,
+                "schema_definitions": table_payload.schema_definitions,
+                "load_manifest_ref": table_payload.load_manifest_ref,
+                "metadata": metadata,
+            }),
+        },
+    );
+
+    Ok(NodeExecutionResult {
+        outputs,
+        logs: vec![format!(
+            "Prepared {write_policy_label} merge into `{target_schema}` from `{}.{}` across {merged_table_count} table definition(s){}.",
+            table_payload.schema_name,
+            table_payload.table_name,
+            if merge_key_columns.is_empty() {
+                String::new()
+            } else {
+                format!(" using merge key `{}`", merge_key_columns.join(", "))
+            }
+        )],
+    })
+}
+
+fn execute_quality_check(
+    node: &WorkflowNode,
+    inputs: &PortValues,
+) -> Result<NodeExecutionResult, AdapterError> {
+    let config: QualityCheckConfig =
+        serde_json::from_value(node.config.clone()).map_err(|error| {
+            AdapterError::InvalidConfig {
+                node_id: node.node_id.clone(),
+                message: error.to_string(),
+            }
+        })?;
+
+    let table_input = inputs
+        .get("table")
+        .ok_or_else(|| AdapterError::MissingInput {
+            node_id: node.node_id.clone(),
+            port: "table".to_string(),
+        })?;
+
+    if table_input.data_type != DataType::TableRef {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: "quality_check expects a `table_ref` input.".to_string(),
+        });
+    }
+
+    let table_payload: TableReferencePayload = serde_json::from_value(table_input.value.clone())
+        .map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: format!("invalid table reference payload: {error}"),
+        })?;
+
+    if table_payload.kind != "table_reference" {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: format!("unsupported table reference kind `{}`", table_payload.kind),
+        });
+    }
+
+    let suite_preset = config
+        .suite_preset
+        .unwrap_or(QualityCheckSuitePreset::PostMergeIngestGate);
+    let schema_drift_rule = config
+        .schema_drift_rule
+        .unwrap_or(QualityCheckSchemaDriftRule::FailOnRequiredColumnDrift);
+    let null_key_policy = config
+        .null_key_policy
+        .unwrap_or(QualityCheckNullKeyPolicy::BlockOnPrimaryKeyNulls);
+    let warning_budget = config.warning_budget.unwrap_or(2);
+    let block_checkpoint_write_on_failure =
+        config.block_checkpoint_write_on_failure.unwrap_or(true);
+    let allow_warning_only_runs_to_continue =
+        config.allow_warning_only_runs_to_continue.unwrap_or(true);
+    let metadata = match table_payload.metadata.clone() {
+        Some(Value::Object(object)) => Value::Object(object),
+        Some(_) | None => json!({}),
+    };
+    let repository = metadata
+        .get("repository")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unknown_repo")
+        .to_string();
+
+    let warning_rules = if repository == "post-no-preference/earnings" {
+        vec![
+            "freshness lag".to_string(),
+            "soft schema drift note".to_string(),
+        ]
+    } else {
+        Vec::new()
+    };
+    let mut failing_rules = Vec::new();
+    let gate_status = if warning_rules.len() as u64 > warning_budget {
+        failing_rules.push("warning_budget_exceeded".to_string());
+        "fail"
+    } else if !warning_rules.is_empty() {
+        "warn"
+    } else {
+        "pass"
+    };
+
+    if gate_status == "fail" && block_checkpoint_write_on_failure {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: format!(
+                "quality gate failed for `{}` and checkpoint advancement is blocked.",
+                repository
+            ),
+        });
+    }
+
+    if gate_status == "warn" && !allow_warning_only_runs_to_continue {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: format!(
+                "quality gate returned warnings for `{}` and warning-only continuation is disabled.",
+                repository
+            ),
+        });
+    }
+
+    let approved_table_set = extract_table_reference_table_names(&table_payload)
+        .into_iter()
+        .map(|table_name| format!("{}.{}", table_payload.schema_name, table_name))
+        .collect::<Vec<_>>();
+
+    let quality_gate_result = json!({
+        "kind": "quality_gate_result",
+        "suite_preset": suite_preset.as_str(),
+        "schema_drift_rule": schema_drift_rule.as_str(),
+        "null_key_policy": null_key_policy.as_str(),
+        "warning_budget": warning_budget,
+        "gate_status": gate_status,
+        "failing_rules": failing_rules,
+        "warning_rules": warning_rules,
+        "approved_table_set": approved_table_set,
+        "block_checkpoint_write_on_failure": block_checkpoint_write_on_failure,
+        "allow_warning_only_runs_to_continue": allow_warning_only_runs_to_continue,
+    });
+    let mut next_metadata = metadata;
+    if let Some(metadata_object) = next_metadata.as_object_mut() {
+        metadata_object.insert("quality_check".to_string(), quality_gate_result);
+    }
+
+    let mut outputs = PortValues::new();
+    outputs.insert(
+        "table".to_string(),
+        TypedValue {
+            data_type: DataType::TableRef,
+            value: json!({
+                "kind": "table_reference",
+                "catalog": table_payload.catalog,
+                "schema_name": table_payload.schema_name,
+                "table_name": table_payload.table_name,
+                "output_alias": table_payload.output_alias,
+                "selected_columns": table_payload.selected_columns,
+                "row_filter": table_payload.row_filter,
+                "row_limit": table_payload.row_limit,
+                "refresh_schema": true,
+                "open_in_catalog": table_payload.open_in_catalog,
+                "schema_definition": table_payload.schema_definition,
+                "schema_definitions": table_payload.schema_definitions,
+                "load_manifest_ref": table_payload.load_manifest_ref,
+                "metadata": next_metadata,
+            }),
+        },
+    );
+
+    Ok(NodeExecutionResult {
+        outputs,
+        logs: vec![format!(
+            "Applied quality gate `{}` to `{}` with status `{}` and warning budget {}.",
+            suite_preset.as_str(),
+            repository,
+            gate_status,
+            warning_budget
+        )],
+    })
+}
+
+fn execute_checkpoint_write(
+    node: &WorkflowNode,
+    inputs: &PortValues,
+    context: &AdapterExecutionContext,
+) -> Result<NodeExecutionResult, AdapterError> {
+    let config: CheckpointWriteConfig =
+        serde_json::from_value(node.config.clone()).map_err(|error| {
+            AdapterError::InvalidConfig {
+                node_id: node.node_id.clone(),
+                message: error.to_string(),
+            }
+        })?;
+
+    let table_input = inputs
+        .get("table")
+        .ok_or_else(|| AdapterError::MissingInput {
+            node_id: node.node_id.clone(),
+            port: "table".to_string(),
+        })?;
+
+    if table_input.data_type != DataType::TableRef {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: "checkpoint_write expects a `table_ref` input.".to_string(),
+        });
+    }
+
+    let table_payload: TableReferencePayload = serde_json::from_value(table_input.value.clone())
+        .map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: format!("invalid table reference payload: {error}"),
+        })?;
+
+    if table_payload.kind != "table_reference" {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: format!("unsupported table reference kind `{}`", table_payload.kind),
+        });
+    }
+
+    let checkpoint_table = config.checkpoint_table.trim();
+    if checkpoint_table.is_empty() {
+        return Err(AdapterError::InvalidConfig {
+            node_id: node.node_id.clone(),
+            message: "`checkpoint_table` must not be empty.".to_string(),
+        });
+    }
+
+    let commit_source = config
+        .commit_source
+        .unwrap_or(CheckpointWriteCommitSource::MetadataCurrentCommit);
+    let write_timing = config
+        .write_timing
+        .unwrap_or(CheckpointWriteTiming::AfterMergeSuccess);
+    let only_persist_on_full_success = config.only_persist_on_full_success.unwrap_or(true);
+    let advance_on_partial_success = config.advance_on_partial_success.unwrap_or(false);
+    let metadata = match table_payload.metadata.clone() {
+        Some(Value::Object(object)) => Value::Object(object),
+        Some(_) | None => json!({}),
+    };
+    let repository = metadata
+        .get("repository")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: "checkpoint_write requires upstream table metadata to include `repository`."
+                .to_string(),
+        })?
+        .to_string();
+    let branch = metadata
+        .get("branch")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: "checkpoint_write requires upstream table metadata to include `branch`."
+                .to_string(),
+        })?
+        .to_string();
+    let current_commit = metadata
+        .get("current_commit")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message:
+                "checkpoint_write requires upstream table metadata to include `current_commit`."
+                    .to_string(),
+        })?
+        .to_string();
+    let previous_commit = metadata
+        .get("previous_commit")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let last_ingest_mode = if previous_commit.is_some() {
+        "recurring_delta"
+    } else {
+        "bootstrap_refresh"
+    };
+    let persisted_at = if context.workflow_duckdb_path.is_some() {
+        Utc::now().to_rfc3339()
+    } else {
+        mock_checkpoint_success_at(&repository).to_string()
+    };
+    let checkpoint_write_result = json!({
+        "kind": "checkpoint_write_result",
+        "checkpoint_table": checkpoint_table,
+        "source_repo": repository.clone(),
+        "branch": branch.clone(),
+        "last_synced_commit": current_commit.clone(),
+        "last_success_at": persisted_at.clone(),
+        "last_ingest_mode": last_ingest_mode,
+        "persisted_at": persisted_at.clone(),
+        "commit_source": commit_source.as_str(),
+        "write_timing": write_timing.as_str(),
+        "only_persist_on_full_success": only_persist_on_full_success,
+        "advance_on_partial_success": advance_on_partial_success,
+    });
+
+    if let Some(connection) = open_runtime_workflow_duckdb(context, &node.node_id)? {
+        persist_checkpoint_write_row(
+            &connection,
+            checkpoint_table,
+            &repository,
+            &branch,
+            &current_commit,
+            last_ingest_mode,
+            &persisted_at,
+            commit_source.as_str(),
+            write_timing.as_str(),
+            &table_payload,
+            context,
+            &node.node_id,
+        )?;
+    }
+
+    let mut next_metadata = metadata;
+    if let Some(metadata_object) = next_metadata.as_object_mut() {
+        metadata_object.insert("checkpoint_write".to_string(), checkpoint_write_result);
+    }
+
+    let mut outputs = PortValues::new();
+    outputs.insert(
+        "table".to_string(),
+        TypedValue {
+            data_type: DataType::TableRef,
+            value: json!({
+                "kind": "table_reference",
+                "catalog": table_payload.catalog,
+                "schema_name": table_payload.schema_name,
+                "table_name": table_payload.table_name,
+                "output_alias": table_payload.output_alias,
+                "selected_columns": table_payload.selected_columns,
+                "row_filter": table_payload.row_filter,
+                "row_limit": table_payload.row_limit,
+                "refresh_schema": true,
+                "open_in_catalog": table_payload.open_in_catalog,
+                "schema_definition": table_payload.schema_definition,
+                "schema_definitions": table_payload.schema_definitions,
+                "load_manifest_ref": table_payload.load_manifest_ref,
+                "metadata": next_metadata,
+            }),
+        },
+    );
+
+    Ok(NodeExecutionResult {
+        outputs,
+        logs: vec![format!(
+            "Prepared checkpoint write to `{checkpoint_table}` for `{repository}` on `{branch}` at commit `{current_commit}` using `{}`.",
+            write_timing.as_str()
+        )],
+    })
+}
+
+struct ResolvedLoadToDuckDbBundle {
+    branch: String,
+    bundle_kind: &'static str,
+    current_commit: String,
+    delete_rows_present: bool,
+    directory_format: String,
+    directory_path: String,
+    loaded_tables: Vec<ResolvedLoadToDuckDbTable>,
+    previous_commit: Option<String>,
+    repo_family: String,
+    repository: String,
+}
+
+struct ResolvedLoadToDuckDbTable {
+    added_rows: Option<u64>,
+    columns: Vec<Value>,
+    delete_marker_path: Option<String>,
+    delete_markers_emitted: Option<bool>,
+    file_path: String,
+    load_mode: &'static str,
+    modified_rows: Option<u64>,
+    removed_rows: Option<u64>,
+    row_count: Option<u64>,
+    source_table: String,
+    staging_table_name: String,
+}
+
+fn resolve_load_to_duckdb_dump_bundle(
+    payload: DoltDumpBundlePayload,
+) -> Result<ResolvedLoadToDuckDbBundle, AdapterError> {
+    if payload.kind != "dolt_dump_bundle" {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: "load_to_duckdb".to_string(),
+            message: "load_to_duckdb received a non-dump payload for dump bundle handling."
+                .to_string(),
+        });
+    }
+
+    let metadata = payload.metadata.unwrap_or_default();
+    let branch = payload.repo_ref.branch.trim().to_string();
+    let repository = payload.repo_ref.repository.trim().to_string();
+    let repo_family = metadata
+        .repo_family
+        .clone()
+        .and_then(|value| normalize_non_empty_string(Some(value)))
+        .unwrap_or_else(|| derive_dolt_repo_family(&repository));
+    let current_commit = normalize_non_empty_string(Some(payload.repo_ref.current_commit.clone()))
+        .unwrap_or_else(|| "pending_sync".to_string());
+    let previous_commit = metadata
+        .previous_commit
+        .clone()
+        .and_then(|value| normalize_non_empty_string(Some(value)));
+    let directory_format = normalize_non_empty_string(payload.directory_ref.format.clone())
+        .unwrap_or_else(|| "parquet".to_string());
+    let directory_path = payload.directory_ref.path.trim().to_string();
+    let loaded_tables = metadata
+        .exported_tables
+        .unwrap_or_default()
+        .into_iter()
+        .map(|table| {
+            let source_table = table.source_table.trim().to_string();
+            let file_path = table
+                .file_path
+                .clone()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| {
+                    format!("{}/{}.{}", directory_path, source_table, directory_format)
+                });
+            let staging_table_name =
+                build_load_to_duckdb_staging_table_name(&repo_family, &source_table, "snapshot");
+
+            ResolvedLoadToDuckDbTable {
+                added_rows: None,
+                columns: build_load_to_duckdb_staging_columns(
+                    &repository,
+                    &source_table,
+                    "dolt_dump_bundle",
+                    previous_commit.as_deref(),
+                ),
+                delete_marker_path: None,
+                delete_markers_emitted: None,
+                file_path,
+                load_mode: "snapshot",
+                modified_rows: None,
+                removed_rows: None,
+                row_count: table.row_count,
+                source_table,
+                staging_table_name,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    Ok(ResolvedLoadToDuckDbBundle {
+        branch,
+        bundle_kind: "dolt_dump_bundle",
+        current_commit,
+        delete_rows_present: false,
+        directory_format,
+        directory_path,
+        loaded_tables,
+        previous_commit,
+        repo_family,
+        repository,
+    })
+}
+
+fn resolve_load_to_duckdb_diff_bundle(
+    payload: DoltDiffExportBundlePayload,
+) -> Result<ResolvedLoadToDuckDbBundle, AdapterError> {
+    if payload.kind != "dolt_diff_export_bundle" {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: "load_to_duckdb".to_string(),
+            message: "load_to_duckdb received a non-diff payload for diff bundle handling."
+                .to_string(),
+        });
+    }
+
+    let metadata = payload.metadata.unwrap_or_default();
+    let branch = payload.repo_ref.branch.trim().to_string();
+    let repository = payload.repo_ref.repository.trim().to_string();
+    let repo_family = metadata
+        .repo_family
+        .clone()
+        .and_then(|value| normalize_non_empty_string(Some(value)))
+        .unwrap_or_else(|| derive_dolt_repo_family(&repository));
+    let current_commit = metadata
+        .current_commit
+        .clone()
+        .and_then(|value| normalize_non_empty_string(Some(value)))
+        .or_else(|| normalize_non_empty_string(Some(payload.repo_ref.current_commit.clone())))
+        .unwrap_or_else(|| "pending_sync".to_string());
+    let previous_commit = metadata
+        .previous_commit
+        .clone()
+        .and_then(|value| normalize_non_empty_string(Some(value)));
+    let directory_format = normalize_non_empty_string(payload.directory_ref.format.clone())
+        .unwrap_or_else(|| "parquet".to_string());
+    let directory_path = payload.directory_ref.path.trim().to_string();
+    let loaded_tables = metadata
+        .delta_manifest
+        .unwrap_or_default()
+        .into_iter()
+        .map(|table| {
+            let source_table = table.source_table.trim().to_string();
+            let file_path = table
+                .file_path
+                .clone()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| {
+                    format!("{}/{}.{}", directory_path, source_table, directory_format)
+                });
+            let staging_table_name =
+                build_load_to_duckdb_staging_table_name(&repo_family, &source_table, "delta");
+
+            ResolvedLoadToDuckDbTable {
+                added_rows: table.added_rows,
+                columns: build_load_to_duckdb_staging_columns(
+                    &repository,
+                    &source_table,
+                    "dolt_diff_export_bundle",
+                    previous_commit.as_deref(),
+                ),
+                delete_marker_path: table.delete_marker_path,
+                delete_markers_emitted: table.delete_markers_emitted,
+                file_path,
+                load_mode: "delta",
+                modified_rows: table.modified_rows,
+                removed_rows: table.removed_rows,
+                row_count: None,
+                source_table,
+                staging_table_name,
+            }
+        })
+        .collect::<Vec<_>>();
+    let delete_rows_present = metadata.delete_rows_present.unwrap_or_else(|| {
+        loaded_tables
+            .iter()
+            .any(|table| table.removed_rows.unwrap_or_default() > 0)
+    });
+
+    Ok(ResolvedLoadToDuckDbBundle {
+        branch,
+        bundle_kind: "dolt_diff_export_bundle",
+        current_commit,
+        delete_rows_present,
+        directory_format,
+        directory_path,
+        loaded_tables,
+        previous_commit,
+        repo_family,
+        repository,
+    })
+}
+
+fn build_load_to_duckdb_manifest_path(
+    repo_family: &str,
+    bundle_kind: &str,
+    previous_commit: Option<&str>,
+    current_commit: &str,
+) -> String {
+    if bundle_kind == "dolt_diff_export_bundle" {
+        format!(
+            "artifacts/load_to_duckdb/{repo_family}/{}_to_{current_commit}/load_manifest.json",
+            previous_commit.unwrap_or("pending_checkpoint")
+        )
+    } else {
+        format!("artifacts/load_to_duckdb/{repo_family}/{current_commit}/load_manifest.json")
+    }
+}
+
+fn build_load_to_duckdb_staging_table_name(
+    repo_family: &str,
+    source_table: &str,
+    suffix: &str,
+) -> String {
+    format!("{repo_family}__{source_table}__{suffix}")
+}
+
+fn build_load_to_duckdb_staging_columns(
+    repository: &str,
+    source_table: &str,
+    bundle_kind: &str,
+    previous_commit: Option<&str>,
+) -> Vec<Value> {
+    let mut columns = mock_dolt_table_columns(repository, source_table);
+    if bundle_kind == "dolt_diff_export_bundle" {
+        columns.push(json!({
+            "name": "change_op",
+            "type": "varchar",
+            "nullable": false,
+            "primary_key": false
+        }));
+    }
+    columns.push(json!({
+        "name": "source_repo",
+        "type": "varchar",
+        "nullable": false,
+        "primary_key": false
+    }));
+    columns.push(json!({
+        "name": "source_table",
+        "type": "varchar",
+        "nullable": false,
+        "primary_key": false
+    }));
+    columns.push(json!({
+        "name": "batch_id",
+        "type": "varchar",
+        "nullable": false,
+        "primary_key": false
+    }));
+    columns.push(json!({
+        "name": "ingested_at",
+        "type": "timestamp",
+        "nullable": false,
+        "primary_key": false
+    }));
+    columns.push(json!({
+        "name": "bundle_kind",
+        "type": "varchar",
+        "nullable": false,
+        "primary_key": false
+    }));
+    if previous_commit.is_some() {
+        columns.push(json!({
+            "name": "previous_commit",
+            "type": "varchar",
+            "nullable": true,
+            "primary_key": false
+        }));
+    }
+    columns.push(json!({
+        "name": "current_commit",
+        "type": "varchar",
+        "nullable": false,
+        "primary_key": false
+    }));
+    columns.push(json!({
+        "name": "delete_rows_present",
+        "type": "boolean",
+        "nullable": false,
+        "primary_key": false
+    }));
+    columns
+}
+
+fn extract_table_reference_table_names(table_payload: &TableReferencePayload) -> Vec<String> {
+    let mut table_names = table_payload
+        .schema_definitions
+        .as_ref()
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| {
+                    entry
+                        .get("table_name")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string)
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    if table_names.is_empty() {
+        let table_name = table_payload.table_name.trim();
+        if !table_name.is_empty() {
+            table_names.push(table_name.to_string());
+        }
+    }
+
+    table_names
+}
+
+fn mock_dolt_table_columns(repository: &str, table_name: &str) -> Vec<Value> {
+    let columns = match (repository, table_name) {
+        ("post-no-preference/earnings", "earnings_calendar") => vec![
+            ("symbol", "varchar", false),
+            ("report_date", "date", false),
+            ("eps_estimate", "decimal(18,4)", true),
+        ],
+        ("post-no-preference/earnings", "eps_history") => vec![
+            ("symbol", "varchar", false),
+            ("report_date", "date", false),
+            ("eps_actual", "decimal(18,4)", true),
+        ],
+        ("post-no-preference/earnings", "income_statement") => vec![
+            ("symbol", "varchar", false),
+            ("fiscal_period", "varchar", false),
+            ("revenue", "decimal(18,2)", true),
+        ],
+        ("post-no-preference/earnings", "balance_sheet_assets")
+        | ("post-no-preference/earnings", "balance_sheet_equity")
+        | ("post-no-preference/earnings", "balance_sheet_liabilities")
+        | ("post-no-preference/earnings", "cash_flow_statement")
+        | ("post-no-preference/earnings", "eps_estimate")
+        | ("post-no-preference/earnings", "rank_score")
+        | ("post-no-preference/earnings", "sales_estimate") => vec![
+            ("symbol", "varchar", false),
+            ("fiscal_period", "varchar", false),
+            ("value", "decimal(18,2)", true),
+        ],
+        ("post-no-preference/options", "option_chain") => vec![
+            ("underlying_symbol", "varchar", false),
+            ("quote_date", "date", false),
+            ("expiry_date", "date", false),
+            ("strike", "decimal(18,4)", false),
+            ("option_type", "varchar", false),
+        ],
+        ("post-no-preference/options", "volatility_history") => vec![
+            ("symbol", "varchar", false),
+            ("quote_date", "date", false),
+            ("realized_volatility", "decimal(18,6)", true),
+        ],
+        ("post-no-preference/rates", "us_treasury") => vec![
+            ("curve_date", "date", false),
+            ("tenor", "varchar", false),
+            ("yield_pct", "decimal(10,6)", true),
+        ],
+        _ => vec![
+            ("entity_id", "varchar", false),
+            ("as_of_date", "date", true),
+            ("value", "double", true),
+        ],
+    };
+
+    columns
+        .into_iter()
+        .map(|(name, data_type, nullable)| {
+            json!({
+                "name": name,
+                "type": data_type,
+                "nullable": nullable,
+                "primary_key": false
+            })
+        })
+        .collect()
+}
+
+fn mock_dolt_repo_profile(repository: &str) -> Option<MockDoltRepoProfile> {
+    match repository {
+        "post-no-preference/earnings" => Some(MockDoltRepoProfile {
+            repo_family: "earnings",
+            previous_commit: "92fd7ac",
+            current_commit: "a34ef9c",
+        }),
+        "post-no-preference/options" => Some(MockDoltRepoProfile {
+            repo_family: "options",
+            previous_commit: "ac31f0b",
+            current_commit: "b91c2aa",
+        }),
+        "post-no-preference/rates" => Some(MockDoltRepoProfile {
+            repo_family: "rates",
+            previous_commit: "c83f10d",
+            current_commit: "d0f61b4",
+        }),
+        _ => None,
+    }
+}
+
+fn mock_checkpoint_success_at(repository: &str) -> &'static str {
+    match repository {
+        "post-no-preference/options" => "2026-06-08T14:22:11Z",
+        "post-no-preference/rates" => "2026-06-08T09:15:42Z",
+        _ => "2026-06-07T18:04:09Z",
+    }
+}
+
+fn mock_checkpoint_ingest_mode(repository: &str) -> &'static str {
+    match repository {
+        "post-no-preference/earnings" => "bootstrap_refresh",
+        _ => "recurring_delta",
+    }
+}
+
+fn mock_dolt_change_manifest_summaries(
+    repository: &str,
+) -> &'static [MockDoltChangeManifestTableSummary] {
+    match repository {
+        "post-no-preference/earnings" => &[
+            MockDoltChangeManifestTableSummary {
+                table_name: "earnings_calendar",
+                added_rows: 24,
+                modified_rows: 3,
+                removed_rows: 0,
+                schema_changed: false,
+            },
+            MockDoltChangeManifestTableSummary {
+                table_name: "eps_history",
+                added_rows: 18,
+                modified_rows: 5,
+                removed_rows: 0,
+                schema_changed: false,
+            },
+            MockDoltChangeManifestTableSummary {
+                table_name: "income_statement",
+                added_rows: 4,
+                modified_rows: 2,
+                removed_rows: 0,
+                schema_changed: true,
+            },
+        ],
+        "post-no-preference/options" => &[
+            MockDoltChangeManifestTableSummary {
+                table_name: "option_chain",
+                added_rows: 440,
+                modified_rows: 182,
+                removed_rows: 17,
+                schema_changed: false,
+            },
+            MockDoltChangeManifestTableSummary {
+                table_name: "volatility_history",
+                added_rows: 32,
+                modified_rows: 4,
+                removed_rows: 0,
+                schema_changed: false,
+            },
+        ],
+        "post-no-preference/rates" => &[MockDoltChangeManifestTableSummary {
+            table_name: "us_treasury",
+            added_rows: 6,
+            modified_rows: 1,
+            removed_rows: 0,
+            schema_changed: false,
+        }],
+        _ => &[],
+    }
+}
+
+fn normalize_selected_table_names(selected_tables: Option<Vec<String>>) -> Vec<String> {
+    let mut names = Vec::new();
+
+    for table_name in selected_tables.unwrap_or_default() {
+        let normalized = table_name.trim();
+        if normalized.is_empty() {
+            continue;
+        }
+
+        if !names.iter().any(|existing| existing == normalized) {
+            names.push(normalized.to_string());
+        }
+    }
+
+    names
+}
+
+fn filter_manifest_table_summaries_for_scope(
+    summaries: &'static [MockDoltChangeManifestTableSummary],
+    table_scope: DoltChangeManifestTableScope,
+    selected_tables: &[String],
+) -> Vec<MockDoltChangeManifestTableSummary> {
+    if matches!(table_scope, DoltChangeManifestTableScope::AllTables) {
+        return summaries.to_vec();
+    }
+
+    if selected_tables.is_empty() {
+        return Vec::new();
+    }
+
+    summaries
+        .iter()
+        .copied()
+        .filter(|summary| {
+            selected_tables
+                .iter()
+                .any(|table_name| table_name == summary.table_name)
+        })
+        .collect()
+}
+
+fn mock_dolt_dump_table_catalog(repository: &str) -> &'static [(&'static str, u64)] {
+    match repository {
+        "post-no-preference/earnings" => &[
+            ("balance_sheet_assets", 1800),
+            ("balance_sheet_equity", 1800),
+            ("balance_sheet_liabilities", 1800),
+            ("cash_flow_statement", 1800),
+            ("earnings_calendar", 920),
+            ("eps_estimate", 860),
+            ("eps_history", 1100),
+            ("income_statement", 1800),
+            ("rank_score", 760),
+            ("sales_estimate", 880),
+        ],
+        "post-no-preference/options" => &[("option_chain", 126_000), ("volatility_history", 4_200)],
+        "post-no-preference/rates" => &[("us_treasury", 520)],
+        _ => &[],
+    }
+}
+
+fn resolve_dolt_dump_table_selection(
+    repository: &str,
+    table_selection_mode: DoltDumpTableSelectionMode,
+    selected_tables: &[String],
+    manifest_changed_tables: &[String],
+) -> Vec<String> {
+    match table_selection_mode {
+        DoltDumpTableSelectionMode::ManualTables => selected_tables.to_vec(),
+        DoltDumpTableSelectionMode::PreferManifestScope if !manifest_changed_tables.is_empty() => {
+            manifest_changed_tables.to_vec()
+        }
+        DoltDumpTableSelectionMode::PreferManifestScope | DoltDumpTableSelectionMode::AllTables => {
+            mock_dolt_dump_table_catalog(repository)
+                .iter()
+                .map(|(table_name, _)| table_name.to_string())
+                .collect()
+        }
+    }
+}
+
+fn resolve_dolt_diff_export_table_summaries(
+    repository: &str,
+    manifest_changed_tables: &[String],
+    row_change_summary: Option<&BTreeMap<String, DoltChangeRowSummaryPayload>>,
+) -> Vec<ResolvedDoltDiffTableSummary> {
+    if let Some(row_change_summary) = row_change_summary {
+        let ordered_table_names = if manifest_changed_tables.is_empty() {
+            row_change_summary.keys().cloned().collect::<Vec<_>>()
+        } else {
+            manifest_changed_tables.to_vec()
+        };
+
+        return ordered_table_names
+            .into_iter()
+            .filter_map(|table_name| {
+                let summary = row_change_summary.get(&table_name)?;
+                Some(ResolvedDoltDiffTableSummary {
+                    table_name,
+                    added_rows: summary.added,
+                    modified_rows: summary.modified,
+                    removed_rows: summary.removed,
+                })
+            })
+            .collect();
+    }
+
+    let allowed_tables = if manifest_changed_tables.is_empty() {
+        None
+    } else {
+        Some(
+            manifest_changed_tables
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+        )
+    };
+
+    mock_dolt_change_manifest_summaries(repository)
+        .iter()
+        .filter(|summary| {
+            allowed_tables
+                .as_ref()
+                .map(|tables| {
+                    tables
+                        .iter()
+                        .any(|table_name| *table_name == summary.table_name)
+                })
+                .unwrap_or(true)
+        })
+        .map(|summary| ResolvedDoltDiffTableSummary {
+            table_name: summary.table_name.to_string(),
+            added_rows: summary.added_rows,
+            modified_rows: summary.modified_rows,
+            removed_rows: summary.removed_rows,
+        })
+        .collect()
+}
+
+fn filter_dolt_diff_export_summary(
+    summary: &ResolvedDoltDiffTableSummary,
+    change_filter: DoltDiffExportChangeFilter,
+) -> Option<ResolvedDoltDiffTableSummary> {
+    let (added_rows, modified_rows, removed_rows) = match change_filter {
+        DoltDiffExportChangeFilter::AllChanges => (
+            summary.added_rows,
+            summary.modified_rows,
+            summary.removed_rows,
+        ),
+        DoltDiffExportChangeFilter::NonDeleteChanges => {
+            (summary.added_rows, summary.modified_rows, 0)
+        }
+        DoltDiffExportChangeFilter::AddedOnly => (summary.added_rows, 0, 0),
+        DoltDiffExportChangeFilter::ModifiedOnly => (0, summary.modified_rows, 0),
+        DoltDiffExportChangeFilter::RemovedOnly => (0, 0, summary.removed_rows),
+    };
+
+    if added_rows == 0 && modified_rows == 0 && removed_rows == 0 {
+        return None;
+    }
+
+    Some(ResolvedDoltDiffTableSummary {
+        table_name: summary.table_name.clone(),
+        added_rows,
+        modified_rows,
+        removed_rows,
+    })
+}
+
+fn build_dolt_diff_operation_types(summary: &ResolvedDoltDiffTableSummary) -> Vec<&'static str> {
+    let mut operation_types = Vec::new();
+
+    if summary.added_rows > 0 {
+        operation_types.push("added");
+    }
+    if summary.modified_rows > 0 {
+        operation_types.push("modified");
+    }
+    if summary.removed_rows > 0 {
+        operation_types.push("removed");
+    }
+
+    operation_types
+}
+
+fn build_dolt_dump_bundle_path(
+    repo_family: &str,
+    current_commit: &str,
+    output_format: DoltDumpOutputFormat,
+) -> String {
+    format!(
+        "artifacts/dolt_dump/{repo_family}/{current_commit}/{}",
+        output_format.as_str()
+    )
+}
+
+fn build_dolt_diff_export_bundle_path(
+    repo_family: &str,
+    previous_commit: &str,
+    current_commit: &str,
+    output_format: DoltDumpOutputFormat,
+) -> String {
+    format!(
+        "artifacts/dolt_diff_export/{repo_family}/{}_to_{}/{}",
+        previous_commit,
+        current_commit,
+        output_format.as_str()
+    )
+}
+
+fn derive_dolt_repo_family(repository: &str) -> String {
+    mock_dolt_repo_profile(repository)
+        .map(|profile| profile.repo_family.to_string())
+        .or_else(|| repository.rsplit('/').next().map(str::to_string))
+        .unwrap_or_else(|| "repo".to_string())
+}
+
+fn normalize_optional_config_string(value: Option<String>) -> Option<String> {
+    value
+        .map(|entry| entry.trim().to_string())
+        .filter(|entry| !entry.is_empty())
+}
+
+fn normalize_non_empty_string(value: Option<String>) -> Option<String> {
+    value
+        .map(|entry| entry.trim().to_string())
+        .filter(|entry| !entry.is_empty())
+}
+
+fn resolve_dolt_previous_commit(profile: Option<MockDoltRepoProfile>) -> String {
+    profile
+        .map(|entry| entry.previous_commit.to_string())
+        .unwrap_or_else(|| "pending_checkpoint".to_string())
+}
+
+fn resolve_dolt_current_commit(
+    profile: Option<MockDoltRepoProfile>,
+    checkout_ref: Option<&str>,
+) -> String {
+    if let Some(checkout_ref) = checkout_ref {
+        return checkout_ref.chars().take(12).collect();
+    }
+
+    profile
+        .map(|entry| entry.current_commit.to_string())
+        .unwrap_or_else(|| "pending_sync".to_string())
 }
 
 fn execute_text_input(node: &WorkflowNode) -> Result<NodeExecutionResult, AdapterError> {
@@ -1372,6 +5019,1582 @@ mod tests {
     use super::{build_gmail_mime_message, RuntimeAdapters};
     use crate::PortValues;
     use node_registry::builtin_node_definitions;
+
+    #[test]
+    fn dolt_repo_source_emits_dataset_reference_metadata() {
+        let registry = builtin_node_definitions();
+        let definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_repo_source")
+            .expect("dolt_repo_source definition");
+        let node = WorkflowNode {
+            node_id: "dolt_repo_source".to_string(),
+            type_id: "dolt_repo_source".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Repo Source".to_string()),
+            config: json!({
+                "connection_ref": "dolthub_public",
+                "repository": "post-no-preference/earnings",
+                "branch": "main",
+                "clone_mode": "reuse_local_copy",
+                "sync_strategy": "pull_before_execution"
+            }),
+            position: NodePosition::default(),
+        };
+
+        let result = RuntimeAdapters::default()
+            .execute(definition, &node, &PortValues::new())
+            .expect("dolt repo source should succeed");
+
+        let payload = result
+            .outputs
+            .get("repo")
+            .expect("dataset ref output should be present");
+
+        assert_eq!(payload.data_type, DataType::DatasetRef);
+        assert_eq!(payload.value["kind"], json!("dolt_repo_dataset"));
+        assert_eq!(
+            payload.value["repo_ref"]["current_commit"],
+            json!("a34ef9c")
+        );
+        assert_eq!(payload.value["metadata"]["repo_family"], json!("earnings"));
+        assert_eq!(
+            payload.value["metadata"]["sync_strategy"],
+            json!("pull_before_execution")
+        );
+    }
+
+    #[test]
+    fn dolt_repo_source_prefers_checkout_override_for_commit() {
+        let registry = builtin_node_definitions();
+        let definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_repo_source")
+            .expect("dolt_repo_source definition");
+        let node = WorkflowNode {
+            node_id: "dolt_repo_source".to_string(),
+            type_id: "dolt_repo_source".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Repo Source".to_string()),
+            config: json!({
+                "connection_ref": "dolthub_public",
+                "repository": "post-no-preference/options",
+                "branch": "main",
+                "checkout_ref": "4c9f2ab1d703ef91"
+            }),
+            position: NodePosition::default(),
+        };
+
+        let result = RuntimeAdapters::default()
+            .execute(definition, &node, &PortValues::new())
+            .expect("dolt repo source should succeed");
+
+        let payload = result
+            .outputs
+            .get("repo")
+            .expect("dataset ref output should be present");
+
+        assert_eq!(
+            payload.value["repo_ref"]["current_commit"],
+            json!("4c9f2ab1d703")
+        );
+        assert_eq!(payload.value["metadata"]["repo_family"], json!("options"));
+    }
+
+    #[test]
+    fn dolt_repo_sync_emits_commit_range_metadata() {
+        let registry = builtin_node_definitions();
+        let source_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_repo_source")
+            .expect("dolt_repo_source definition");
+        let sync_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_repo_sync")
+            .expect("dolt_repo_sync definition");
+        let source_node = WorkflowNode {
+            node_id: "dolt_repo_source".to_string(),
+            type_id: "dolt_repo_source".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Repo Source".to_string()),
+            config: json!({
+                "connection_ref": "dolthub_public",
+                "repository": "post-no-preference/earnings",
+                "branch": "main"
+            }),
+            position: NodePosition::default(),
+        };
+        let source_result = RuntimeAdapters::default()
+            .execute(source_definition, &source_node, &PortValues::new())
+            .expect("dolt repo source should succeed");
+        let sync_node = WorkflowNode {
+            node_id: "dolt_repo_sync".to_string(),
+            type_id: "dolt_repo_sync".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Repo Sync".to_string()),
+            config: json!({}),
+            position: NodePosition::default(),
+        };
+        let sync_result = RuntimeAdapters::default()
+            .execute(sync_definition, &sync_node, &source_result.outputs)
+            .expect("dolt repo sync should succeed");
+
+        let payload = sync_result
+            .outputs
+            .get("repo_out")
+            .expect("dataset ref output should be present");
+
+        assert_eq!(payload.data_type, DataType::DatasetRef);
+        assert_eq!(
+            payload.value["repo_ref"]["current_commit"],
+            json!("a34ef9c")
+        );
+        assert_eq!(
+            payload.value["metadata"]["previous_commit"],
+            json!("92fd7ac")
+        );
+        assert_eq!(
+            payload.value["metadata"]["current_commit"],
+            json!("a34ef9c")
+        );
+        assert_eq!(
+            payload.value["metadata"]["sync_action"],
+            json!("pull_remote_head")
+        );
+    }
+
+    #[test]
+    fn checkpoint_read_emits_context_and_dolt_repo_sync_uses_it() {
+        let registry = builtin_node_definitions();
+        let checkpoint_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "checkpoint_read")
+            .expect("checkpoint_read definition");
+        let source_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_repo_source")
+            .expect("dolt_repo_source definition");
+        let sync_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_repo_sync")
+            .expect("dolt_repo_sync definition");
+
+        let checkpoint_node = WorkflowNode {
+            node_id: "checkpoint_read".to_string(),
+            type_id: "checkpoint_read".to_string(),
+            definition_version: 1,
+            label: Some("Checkpoint Read".to_string()),
+            config: json!({
+                "checkpoint_table": "tables.ingest_checkpoints",
+                "source_repo": "post-no-preference/options",
+                "branch": "main",
+                "emit_bootstrap_marker_if_missing": true
+            }),
+            position: NodePosition::default(),
+        };
+        let checkpoint_result = RuntimeAdapters::default()
+            .execute(checkpoint_definition, &checkpoint_node, &PortValues::new())
+            .expect("checkpoint read should succeed");
+        let checkpoint_payload = checkpoint_result
+            .outputs
+            .get("checkpoint")
+            .expect("checkpoint output should be present");
+        assert_eq!(checkpoint_payload.data_type, DataType::Json);
+        assert_eq!(
+            checkpoint_payload.value["last_synced_commit"],
+            json!("ac31f0b")
+        );
+
+        let source_node = WorkflowNode {
+            node_id: "dolt_repo_source".to_string(),
+            type_id: "dolt_repo_source".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Repo Source".to_string()),
+            config: json!({
+                "connection_ref": "dolthub_public",
+                "repository": "post-no-preference/options",
+                "branch": "main"
+            }),
+            position: NodePosition::default(),
+        };
+        let source_result = RuntimeAdapters::default()
+            .execute(source_definition, &source_node, &PortValues::new())
+            .expect("dolt repo source should succeed");
+
+        let sync_node = WorkflowNode {
+            node_id: "dolt_repo_sync".to_string(),
+            type_id: "dolt_repo_sync".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Repo Sync".to_string()),
+            config: json!({}),
+            position: NodePosition::default(),
+        };
+
+        let mut sync_inputs = source_result.outputs.clone();
+        sync_inputs.extend(checkpoint_result.outputs.clone());
+
+        let sync_result = RuntimeAdapters::default()
+            .execute(sync_definition, &sync_node, &sync_inputs)
+            .expect("dolt repo sync should succeed with checkpoint input");
+
+        let payload = sync_result
+            .outputs
+            .get("repo_out")
+            .expect("dataset ref output should be present");
+        assert_eq!(payload.data_type, DataType::DatasetRef);
+        assert_eq!(
+            payload.value["metadata"]["previous_commit"],
+            json!("ac31f0b")
+        );
+        assert_eq!(
+            payload.value["metadata"]["checkpoint_last_ingest_mode"],
+            json!("recurring_delta")
+        );
+    }
+
+    #[test]
+    fn dolt_repo_sync_preserves_upstream_repo_handle_and_overrides_behavior() {
+        let registry = builtin_node_definitions();
+        let source_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_repo_source")
+            .expect("dolt_repo_source definition");
+        let sync_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_repo_sync")
+            .expect("dolt_repo_sync definition");
+        let source_node = WorkflowNode {
+            node_id: "dolt_repo_source".to_string(),
+            type_id: "dolt_repo_source".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Repo Source".to_string()),
+            config: json!({
+                "connection_ref": "dolthub_public",
+                "repository": "post-no-preference/options",
+                "branch": "main",
+                "checkout_ref": "4c9f2ab1d703ef91"
+            }),
+            position: NodePosition::default(),
+        };
+        let source_result = RuntimeAdapters::default()
+            .execute(source_definition, &source_node, &PortValues::new())
+            .expect("dolt repo source should succeed");
+        let sync_node = WorkflowNode {
+            node_id: "dolt_repo_sync".to_string(),
+            type_id: "dolt_repo_sync".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Repo Sync".to_string()),
+            config: json!({
+                "sync_action": "fetch_and_checkout",
+                "no_change_behavior": "emit_no_op_marker",
+                "branch_guard": "allow_detached_head",
+                "dirty_working_copy_policy": "stash_and_continue"
+            }),
+            position: NodePosition::default(),
+        };
+        let sync_result = RuntimeAdapters::default()
+            .execute(sync_definition, &sync_node, &source_result.outputs)
+            .expect("dolt repo sync should succeed");
+
+        let payload = sync_result
+            .outputs
+            .get("repo_out")
+            .expect("dataset ref output should be present");
+
+        assert_eq!(
+            payload.value["repo_ref"]["repository"],
+            json!("post-no-preference/options")
+        );
+        assert_eq!(
+            payload.value["repo_ref"]["current_commit"],
+            json!("4c9f2ab1d703")
+        );
+        assert_eq!(
+            payload.value["metadata"]["previous_commit"],
+            json!("ac31f0b")
+        );
+        assert_eq!(
+            payload.value["metadata"]["sync_action"],
+            json!("fetch_and_checkout")
+        );
+        assert_eq!(
+            payload.value["metadata"]["no_change_behavior"],
+            json!("emit_no_op_marker")
+        );
+        assert_eq!(
+            payload.value["metadata"]["branch_guard"],
+            json!("allow_detached_head")
+        );
+        assert_eq!(
+            payload.value["metadata"]["dirty_working_copy_policy"],
+            json!("stash_and_continue")
+        );
+    }
+
+    #[test]
+    fn dolt_change_manifest_emits_changed_table_metadata() {
+        let registry = builtin_node_definitions();
+        let source_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_repo_source")
+            .expect("dolt_repo_source definition");
+        let sync_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_repo_sync")
+            .expect("dolt_repo_sync definition");
+        let manifest_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_change_manifest")
+            .expect("dolt_change_manifest definition");
+        let source_node = WorkflowNode {
+            node_id: "dolt_repo_source".to_string(),
+            type_id: "dolt_repo_source".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Repo Source".to_string()),
+            config: json!({
+                "connection_ref": "dolthub_public",
+                "repository": "post-no-preference/earnings",
+                "branch": "main"
+            }),
+            position: NodePosition::default(),
+        };
+        let source_result = RuntimeAdapters::default()
+            .execute(source_definition, &source_node, &PortValues::new())
+            .expect("dolt repo source should succeed");
+        let sync_node = WorkflowNode {
+            node_id: "dolt_repo_sync".to_string(),
+            type_id: "dolt_repo_sync".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Repo Sync".to_string()),
+            config: json!({}),
+            position: NodePosition::default(),
+        };
+        let sync_result = RuntimeAdapters::default()
+            .execute(sync_definition, &sync_node, &source_result.outputs)
+            .expect("dolt repo sync should succeed");
+        let mut manifest_inputs = PortValues::new();
+        manifest_inputs.insert(
+            "repo".to_string(),
+            sync_result
+                .outputs
+                .get("repo_out")
+                .expect("synced repo output should be present")
+                .clone(),
+        );
+        let manifest_node = WorkflowNode {
+            node_id: "dolt_change_manifest".to_string(),
+            type_id: "dolt_change_manifest".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Change Manifest".to_string()),
+            config: json!({}),
+            position: NodePosition::default(),
+        };
+        let manifest_result = RuntimeAdapters::default()
+            .execute(manifest_definition, &manifest_node, &manifest_inputs)
+            .expect("dolt change manifest should succeed");
+
+        let payload = manifest_result
+            .outputs
+            .get("manifest")
+            .expect("manifest output should be present");
+
+        assert_eq!(payload.data_type, DataType::DatasetRef);
+        assert_eq!(
+            payload.value["metadata"]["previous_commit"],
+            json!("92fd7ac")
+        );
+        assert_eq!(
+            payload.value["metadata"]["current_commit"],
+            json!("a34ef9c")
+        );
+        assert_eq!(
+            payload.value["metadata"]["changed_tables"],
+            json!(["earnings_calendar", "eps_history", "income_statement"])
+        );
+        assert_eq!(
+            payload.value["metadata"]["schema_change_flags"],
+            json!(["income_statement"])
+        );
+    }
+
+    #[test]
+    fn dolt_change_manifest_respects_allowlist_scope() {
+        let registry = builtin_node_definitions();
+        let source_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_repo_source")
+            .expect("dolt_repo_source definition");
+        let sync_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_repo_sync")
+            .expect("dolt_repo_sync definition");
+        let manifest_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_change_manifest")
+            .expect("dolt_change_manifest definition");
+        let source_node = WorkflowNode {
+            node_id: "dolt_repo_source".to_string(),
+            type_id: "dolt_repo_source".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Repo Source".to_string()),
+            config: json!({
+                "connection_ref": "dolthub_public",
+                "repository": "post-no-preference/options",
+                "branch": "main"
+            }),
+            position: NodePosition::default(),
+        };
+        let source_result = RuntimeAdapters::default()
+            .execute(source_definition, &source_node, &PortValues::new())
+            .expect("dolt repo source should succeed");
+        let sync_node = WorkflowNode {
+            node_id: "dolt_repo_sync".to_string(),
+            type_id: "dolt_repo_sync".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Repo Sync".to_string()),
+            config: json!({}),
+            position: NodePosition::default(),
+        };
+        let sync_result = RuntimeAdapters::default()
+            .execute(sync_definition, &sync_node, &source_result.outputs)
+            .expect("dolt repo sync should succeed");
+        let mut manifest_inputs = PortValues::new();
+        manifest_inputs.insert(
+            "repo".to_string(),
+            sync_result
+                .outputs
+                .get("repo_out")
+                .expect("synced repo output should be present")
+                .clone(),
+        );
+        let manifest_node = WorkflowNode {
+            node_id: "dolt_change_manifest".to_string(),
+            type_id: "dolt_change_manifest".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Change Manifest".to_string()),
+            config: json!({
+                "table_scope": "allowlist",
+                "selected_tables": ["option_chain"],
+                "schema_change_policy": "fail_run"
+            }),
+            position: NodePosition::default(),
+        };
+        let manifest_result = RuntimeAdapters::default()
+            .execute(manifest_definition, &manifest_node, &manifest_inputs)
+            .expect("dolt change manifest should succeed");
+
+        let payload = manifest_result
+            .outputs
+            .get("manifest")
+            .expect("manifest output should be present");
+
+        assert_eq!(payload.value["metadata"]["table_scope"], json!("allowlist"));
+        assert_eq!(
+            payload.value["metadata"]["schema_change_policy"],
+            json!("fail_run")
+        );
+        assert_eq!(
+            payload.value["metadata"]["changed_tables"],
+            json!(["option_chain"])
+        );
+    }
+
+    #[test]
+    fn dolt_dump_prefers_manifest_scope_for_exported_tables() {
+        let registry = builtin_node_definitions();
+        let source_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_repo_source")
+            .expect("dolt_repo_source definition");
+        let sync_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_repo_sync")
+            .expect("dolt_repo_sync definition");
+        let manifest_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_change_manifest")
+            .expect("dolt_change_manifest definition");
+        let dump_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_dump")
+            .expect("dolt_dump definition");
+
+        let source_node = WorkflowNode {
+            node_id: "dolt_repo_source".to_string(),
+            type_id: "dolt_repo_source".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Repo Source".to_string()),
+            config: json!({
+                "connection_ref": "dolthub_public",
+                "repository": "post-no-preference/earnings",
+                "branch": "main"
+            }),
+            position: NodePosition::default(),
+        };
+        let source_result = RuntimeAdapters::default()
+            .execute(source_definition, &source_node, &PortValues::new())
+            .expect("dolt repo source should succeed");
+
+        let sync_node = WorkflowNode {
+            node_id: "dolt_repo_sync".to_string(),
+            type_id: "dolt_repo_sync".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Repo Sync".to_string()),
+            config: json!({}),
+            position: NodePosition::default(),
+        };
+        let sync_result = RuntimeAdapters::default()
+            .execute(sync_definition, &sync_node, &source_result.outputs)
+            .expect("dolt repo sync should succeed");
+
+        let mut manifest_inputs = PortValues::new();
+        manifest_inputs.insert(
+            "repo".to_string(),
+            sync_result
+                .outputs
+                .get("repo_out")
+                .expect("synced repo output should be present")
+                .clone(),
+        );
+        let manifest_node = WorkflowNode {
+            node_id: "dolt_change_manifest".to_string(),
+            type_id: "dolt_change_manifest".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Change Manifest".to_string()),
+            config: json!({}),
+            position: NodePosition::default(),
+        };
+        let manifest_result = RuntimeAdapters::default()
+            .execute(manifest_definition, &manifest_node, &manifest_inputs)
+            .expect("dolt change manifest should succeed");
+
+        let mut dump_inputs = PortValues::new();
+        dump_inputs.insert(
+            "repo".to_string(),
+            manifest_result
+                .outputs
+                .get("manifest")
+                .expect("manifest output should be present")
+                .clone(),
+        );
+        let dump_node = WorkflowNode {
+            node_id: "dolt_dump".to_string(),
+            type_id: "dolt_dump".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Dump".to_string()),
+            config: json!({
+                "output_format": "parquet",
+                "table_selection_mode": "prefer_manifest_scope"
+            }),
+            position: NodePosition::default(),
+        };
+        let dump_result = RuntimeAdapters::default()
+            .execute(dump_definition, &dump_node, &dump_inputs)
+            .expect("dolt dump should succeed");
+
+        let payload = dump_result
+            .outputs
+            .get("bundle")
+            .expect("bundle output should be present");
+
+        assert_eq!(payload.data_type, DataType::DirectoryRef);
+        assert_eq!(payload.value["kind"], json!("dolt_dump_bundle"));
+        assert_eq!(payload.value["directory_ref"]["format"], json!("parquet"));
+        assert_eq!(
+            payload.value["metadata"]["table_selection_mode"],
+            json!("prefer_manifest_scope")
+        );
+        assert_eq!(
+            payload.value["metadata"]["manifest_changed_tables"],
+            json!(["earnings_calendar", "eps_history", "income_statement"])
+        );
+        assert_eq!(
+            payload.value["metadata"]["exported_tables"]
+                .as_array()
+                .expect("exported tables array")
+                .len(),
+            3
+        );
+    }
+
+    #[test]
+    fn dolt_dump_respects_manual_selected_tables_from_repo_input() {
+        let registry = builtin_node_definitions();
+        let source_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_repo_source")
+            .expect("dolt_repo_source definition");
+        let dump_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_dump")
+            .expect("dolt_dump definition");
+
+        let source_node = WorkflowNode {
+            node_id: "dolt_repo_source".to_string(),
+            type_id: "dolt_repo_source".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Repo Source".to_string()),
+            config: json!({
+                "connection_ref": "dolthub_public",
+                "repository": "post-no-preference/options",
+                "branch": "main"
+            }),
+            position: NodePosition::default(),
+        };
+        let source_result = RuntimeAdapters::default()
+            .execute(source_definition, &source_node, &PortValues::new())
+            .expect("dolt repo source should succeed");
+
+        let mut dump_inputs = PortValues::new();
+        dump_inputs.insert(
+            "repo".to_string(),
+            source_result
+                .outputs
+                .get("repo")
+                .expect("repo output should be present")
+                .clone(),
+        );
+        let dump_node = WorkflowNode {
+            node_id: "dolt_dump".to_string(),
+            type_id: "dolt_dump".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Dump".to_string()),
+            config: json!({
+                "output_format": "csv",
+                "table_selection_mode": "manual_tables",
+                "selected_tables": ["option_chain"]
+            }),
+            position: NodePosition::default(),
+        };
+        let dump_result = RuntimeAdapters::default()
+            .execute(dump_definition, &dump_node, &dump_inputs)
+            .expect("dolt dump should succeed");
+
+        let payload = dump_result
+            .outputs
+            .get("bundle")
+            .expect("bundle output should be present");
+
+        assert_eq!(payload.data_type, DataType::DirectoryRef);
+        assert_eq!(payload.value["directory_ref"]["format"], json!("csv"));
+        assert_eq!(
+            payload.value["metadata"]["selected_tables"],
+            json!(["option_chain"])
+        );
+        assert_eq!(
+            payload.value["metadata"]["exported_tables"],
+            json!([
+                {
+                    "source_table": "option_chain",
+                    "file_path": "artifacts/dolt_dump/options/b91c2aa/csv/option_chain.csv",
+                    "row_count": 126000
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn dolt_diff_export_emits_delta_bundle_from_manifest_input() {
+        let registry = builtin_node_definitions();
+        let source_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_repo_source")
+            .expect("dolt_repo_source definition");
+        let sync_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_repo_sync")
+            .expect("dolt_repo_sync definition");
+        let manifest_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_change_manifest")
+            .expect("dolt_change_manifest definition");
+        let diff_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_diff_export")
+            .expect("dolt_diff_export definition");
+
+        let source_node = WorkflowNode {
+            node_id: "dolt_repo_source".to_string(),
+            type_id: "dolt_repo_source".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Repo Source".to_string()),
+            config: json!({
+                "connection_ref": "dolthub_public",
+                "repository": "post-no-preference/earnings",
+                "branch": "main"
+            }),
+            position: NodePosition::default(),
+        };
+        let source_result = RuntimeAdapters::default()
+            .execute(source_definition, &source_node, &PortValues::new())
+            .expect("dolt repo source should succeed");
+
+        let sync_node = WorkflowNode {
+            node_id: "dolt_repo_sync".to_string(),
+            type_id: "dolt_repo_sync".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Repo Sync".to_string()),
+            config: json!({}),
+            position: NodePosition::default(),
+        };
+        let sync_result = RuntimeAdapters::default()
+            .execute(sync_definition, &sync_node, &source_result.outputs)
+            .expect("dolt repo sync should succeed");
+
+        let mut manifest_inputs = PortValues::new();
+        manifest_inputs.insert(
+            "repo".to_string(),
+            sync_result
+                .outputs
+                .get("repo_out")
+                .expect("synced repo output should be present")
+                .clone(),
+        );
+        let manifest_node = WorkflowNode {
+            node_id: "dolt_change_manifest".to_string(),
+            type_id: "dolt_change_manifest".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Change Manifest".to_string()),
+            config: json!({}),
+            position: NodePosition::default(),
+        };
+        let manifest_result = RuntimeAdapters::default()
+            .execute(manifest_definition, &manifest_node, &manifest_inputs)
+            .expect("dolt change manifest should succeed");
+
+        let mut diff_inputs = PortValues::new();
+        diff_inputs.insert(
+            "manifest".to_string(),
+            manifest_result
+                .outputs
+                .get("manifest")
+                .expect("manifest output should be present")
+                .clone(),
+        );
+        let diff_node = WorkflowNode {
+            node_id: "dolt_diff_export".to_string(),
+            type_id: "dolt_diff_export".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Diff Export".to_string()),
+            config: json!({
+                "output_format": "parquet",
+                "change_filter": "all_changes",
+                "deleted_row_handling": "emit_delete_markers"
+            }),
+            position: NodePosition::default(),
+        };
+        let diff_result = RuntimeAdapters::default()
+            .execute(diff_definition, &diff_node, &diff_inputs)
+            .expect("dolt diff export should succeed");
+
+        let payload = diff_result
+            .outputs
+            .get("bundle")
+            .expect("bundle output should be present");
+
+        assert_eq!(payload.data_type, DataType::DirectoryRef);
+        assert_eq!(payload.value["kind"], json!("dolt_diff_export_bundle"));
+        assert_eq!(payload.value["directory_ref"]["format"], json!("parquet"));
+        assert_eq!(
+            payload.value["metadata"]["change_filter"],
+            json!("all_changes")
+        );
+        assert_eq!(
+            payload.value["metadata"]["manifest_changed_tables"],
+            json!(["earnings_calendar", "eps_history", "income_statement"])
+        );
+        assert_eq!(
+            payload.value["metadata"]["delta_manifest"]
+                .as_array()
+                .expect("delta manifest array")
+                .len(),
+            3
+        );
+    }
+
+    #[test]
+    fn dolt_diff_export_tracks_removed_rows_when_manifest_contains_deletes() {
+        let registry = builtin_node_definitions();
+        let source_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_repo_source")
+            .expect("dolt_repo_source definition");
+        let sync_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_repo_sync")
+            .expect("dolt_repo_sync definition");
+        let manifest_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_change_manifest")
+            .expect("dolt_change_manifest definition");
+        let diff_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_diff_export")
+            .expect("dolt_diff_export definition");
+
+        let source_node = WorkflowNode {
+            node_id: "dolt_repo_source".to_string(),
+            type_id: "dolt_repo_source".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Repo Source".to_string()),
+            config: json!({
+                "connection_ref": "dolthub_public",
+                "repository": "post-no-preference/options",
+                "branch": "main"
+            }),
+            position: NodePosition::default(),
+        };
+        let source_result = RuntimeAdapters::default()
+            .execute(source_definition, &source_node, &PortValues::new())
+            .expect("dolt repo source should succeed");
+
+        let sync_node = WorkflowNode {
+            node_id: "dolt_repo_sync".to_string(),
+            type_id: "dolt_repo_sync".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Repo Sync".to_string()),
+            config: json!({}),
+            position: NodePosition::default(),
+        };
+        let sync_result = RuntimeAdapters::default()
+            .execute(sync_definition, &sync_node, &source_result.outputs)
+            .expect("dolt repo sync should succeed");
+
+        let mut manifest_inputs = PortValues::new();
+        manifest_inputs.insert(
+            "repo".to_string(),
+            sync_result
+                .outputs
+                .get("repo_out")
+                .expect("synced repo output should be present")
+                .clone(),
+        );
+        let manifest_node = WorkflowNode {
+            node_id: "dolt_change_manifest".to_string(),
+            type_id: "dolt_change_manifest".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Change Manifest".to_string()),
+            config: json!({}),
+            position: NodePosition::default(),
+        };
+        let manifest_result = RuntimeAdapters::default()
+            .execute(manifest_definition, &manifest_node, &manifest_inputs)
+            .expect("dolt change manifest should succeed");
+
+        let mut diff_inputs = PortValues::new();
+        diff_inputs.insert(
+            "manifest".to_string(),
+            manifest_result
+                .outputs
+                .get("manifest")
+                .expect("manifest output should be present")
+                .clone(),
+        );
+        let diff_node = WorkflowNode {
+            node_id: "dolt_diff_export".to_string(),
+            type_id: "dolt_diff_export".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Diff Export".to_string()),
+            config: json!({
+                "output_format": "csv",
+                "change_filter": "removed_only",
+                "deleted_row_handling": "emit_delete_markers"
+            }),
+            position: NodePosition::default(),
+        };
+        let diff_result = RuntimeAdapters::default()
+            .execute(diff_definition, &diff_node, &diff_inputs)
+            .expect("dolt diff export should succeed");
+
+        let payload = diff_result
+            .outputs
+            .get("bundle")
+            .expect("bundle output should be present");
+
+        assert_eq!(payload.data_type, DataType::DirectoryRef);
+        assert_eq!(payload.value["directory_ref"]["format"], json!("csv"));
+        assert_eq!(
+            payload.value["metadata"]["filtered_tables"],
+            json!(["option_chain"])
+        );
+        assert_eq!(
+            payload.value["metadata"]["delete_rows_present"],
+            json!(true)
+        );
+        assert_eq!(
+            payload.value["metadata"]["delta_manifest"],
+            json!([
+                {
+                    "source_table": "option_chain",
+                    "file_path": "artifacts/dolt_diff_export/options/ac31f0b_to_b91c2aa/csv/option_chain.csv",
+                    "added_rows": 0,
+                    "modified_rows": 0,
+                    "removed_rows": 17,
+                    "operation_types": ["removed"],
+                    "delete_markers_emitted": true,
+                    "delete_marker_path": "artifacts/dolt_diff_export/options/ac31f0b_to_b91c2aa/csv/delete_markers/option_chain.jsonl"
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn load_to_duckdb_emits_staging_table_reference_from_dump_bundle() {
+        let registry = builtin_node_definitions();
+        let source_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_repo_source")
+            .expect("dolt_repo_source definition");
+        let sync_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_repo_sync")
+            .expect("dolt_repo_sync definition");
+        let manifest_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_change_manifest")
+            .expect("dolt_change_manifest definition");
+        let dump_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_dump")
+            .expect("dolt_dump definition");
+        let load_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "load_to_duckdb")
+            .expect("load_to_duckdb definition");
+
+        let source_node = WorkflowNode {
+            node_id: "dolt_repo_source".to_string(),
+            type_id: "dolt_repo_source".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Repo Source".to_string()),
+            config: json!({
+                "connection_ref": "dolthub_public",
+                "repository": "post-no-preference/earnings",
+                "branch": "main"
+            }),
+            position: NodePosition::default(),
+        };
+        let source_result = RuntimeAdapters::default()
+            .execute(source_definition, &source_node, &PortValues::new())
+            .expect("dolt repo source should succeed");
+
+        let sync_node = WorkflowNode {
+            node_id: "dolt_repo_sync".to_string(),
+            type_id: "dolt_repo_sync".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Repo Sync".to_string()),
+            config: json!({}),
+            position: NodePosition::default(),
+        };
+        let sync_result = RuntimeAdapters::default()
+            .execute(sync_definition, &sync_node, &source_result.outputs)
+            .expect("dolt repo sync should succeed");
+
+        let mut manifest_inputs = PortValues::new();
+        manifest_inputs.insert(
+            "repo".to_string(),
+            sync_result
+                .outputs
+                .get("repo_out")
+                .expect("synced repo output should be present")
+                .clone(),
+        );
+        let manifest_node = WorkflowNode {
+            node_id: "dolt_change_manifest".to_string(),
+            type_id: "dolt_change_manifest".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Change Manifest".to_string()),
+            config: json!({}),
+            position: NodePosition::default(),
+        };
+        let manifest_result = RuntimeAdapters::default()
+            .execute(manifest_definition, &manifest_node, &manifest_inputs)
+            .expect("dolt change manifest should succeed");
+
+        let mut dump_inputs = PortValues::new();
+        dump_inputs.insert(
+            "repo".to_string(),
+            manifest_result
+                .outputs
+                .get("manifest")
+                .expect("manifest output should be present")
+                .clone(),
+        );
+        let dump_node = WorkflowNode {
+            node_id: "dolt_dump".to_string(),
+            type_id: "dolt_dump".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Dump".to_string()),
+            config: json!({
+                "output_format": "parquet",
+                "table_selection_mode": "prefer_manifest_scope"
+            }),
+            position: NodePosition::default(),
+        };
+        let dump_result = RuntimeAdapters::default()
+            .execute(dump_definition, &dump_node, &dump_inputs)
+            .expect("dolt dump should succeed");
+
+        let mut load_inputs = PortValues::new();
+        load_inputs.insert(
+            "bundle".to_string(),
+            dump_result
+                .outputs
+                .get("bundle")
+                .expect("bundle output should be present")
+                .clone(),
+        );
+        let load_node = WorkflowNode {
+            node_id: "load_to_duckdb".to_string(),
+            type_id: "load_to_duckdb".to_string(),
+            definition_version: 1,
+            label: Some("Load to DuckDB".to_string()),
+            config: json!({
+                "target_schema": "staging",
+                "table_mapping": "bundle_aware_staging_names",
+                "schema_handling": "infer_on_first_load_validate_on_recurring",
+                "delta_context_preservation": "preserve_commit_range_and_delete_flags"
+            }),
+            position: NodePosition::default(),
+        };
+        let load_result = RuntimeAdapters::default()
+            .execute(load_definition, &load_node, &load_inputs)
+            .expect("load_to_duckdb should succeed");
+
+        let payload = load_result
+            .outputs
+            .get("table")
+            .expect("table output should be present");
+
+        assert_eq!(payload.data_type, DataType::TableRef);
+        assert_eq!(payload.value["kind"], json!("table_reference"));
+        assert_eq!(payload.value["schema_name"], json!("staging"));
+        assert_eq!(
+            payload.value["table_name"],
+            json!("earnings__earnings_calendar__snapshot")
+        );
+        assert_eq!(
+            payload.value["metadata"]["bundle_kind"],
+            json!("dolt_dump_bundle")
+        );
+        assert_eq!(
+            payload.value["metadata"]["loaded_tables"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+        assert_eq!(
+            payload.value["load_manifest_ref"]["path"],
+            json!("artifacts/load_to_duckdb/earnings/a34ef9c/load_manifest.json")
+        );
+    }
+
+    #[test]
+    fn load_to_duckdb_preserves_merge_metadata_from_diff_bundle() {
+        let registry = builtin_node_definitions();
+        let source_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_repo_source")
+            .expect("dolt_repo_source definition");
+        let sync_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_repo_sync")
+            .expect("dolt_repo_sync definition");
+        let manifest_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_change_manifest")
+            .expect("dolt_change_manifest definition");
+        let diff_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_diff_export")
+            .expect("dolt_diff_export definition");
+        let load_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "load_to_duckdb")
+            .expect("load_to_duckdb definition");
+
+        let source_node = WorkflowNode {
+            node_id: "dolt_repo_source".to_string(),
+            type_id: "dolt_repo_source".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Repo Source".to_string()),
+            config: json!({
+                "connection_ref": "dolthub_public",
+                "repository": "post-no-preference/options",
+                "branch": "main"
+            }),
+            position: NodePosition::default(),
+        };
+        let source_result = RuntimeAdapters::default()
+            .execute(source_definition, &source_node, &PortValues::new())
+            .expect("dolt repo source should succeed");
+
+        let sync_node = WorkflowNode {
+            node_id: "dolt_repo_sync".to_string(),
+            type_id: "dolt_repo_sync".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Repo Sync".to_string()),
+            config: json!({}),
+            position: NodePosition::default(),
+        };
+        let sync_result = RuntimeAdapters::default()
+            .execute(sync_definition, &sync_node, &source_result.outputs)
+            .expect("dolt repo sync should succeed");
+
+        let mut manifest_inputs = PortValues::new();
+        manifest_inputs.insert(
+            "repo".to_string(),
+            sync_result
+                .outputs
+                .get("repo_out")
+                .expect("synced repo output should be present")
+                .clone(),
+        );
+        let manifest_node = WorkflowNode {
+            node_id: "dolt_change_manifest".to_string(),
+            type_id: "dolt_change_manifest".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Change Manifest".to_string()),
+            config: json!({}),
+            position: NodePosition::default(),
+        };
+        let manifest_result = RuntimeAdapters::default()
+            .execute(manifest_definition, &manifest_node, &manifest_inputs)
+            .expect("dolt change manifest should succeed");
+
+        let mut diff_inputs = PortValues::new();
+        diff_inputs.insert(
+            "manifest".to_string(),
+            manifest_result
+                .outputs
+                .get("manifest")
+                .expect("manifest output should be present")
+                .clone(),
+        );
+        let diff_node = WorkflowNode {
+            node_id: "dolt_diff_export".to_string(),
+            type_id: "dolt_diff_export".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Diff Export".to_string()),
+            config: json!({
+                "output_format": "csv",
+                "change_filter": "removed_only",
+                "deleted_row_handling": "emit_delete_markers"
+            }),
+            position: NodePosition::default(),
+        };
+        let diff_result = RuntimeAdapters::default()
+            .execute(diff_definition, &diff_node, &diff_inputs)
+            .expect("dolt diff export should succeed");
+
+        let mut load_inputs = PortValues::new();
+        load_inputs.insert(
+            "bundle".to_string(),
+            diff_result
+                .outputs
+                .get("bundle")
+                .expect("bundle output should be present")
+                .clone(),
+        );
+        let load_node = WorkflowNode {
+            node_id: "load_to_duckdb".to_string(),
+            type_id: "load_to_duckdb".to_string(),
+            definition_version: 1,
+            label: Some("Load to DuckDB".to_string()),
+            config: json!({
+                "target_schema": "staging"
+            }),
+            position: NodePosition::default(),
+        };
+        let load_result = RuntimeAdapters::default()
+            .execute(load_definition, &load_node, &load_inputs)
+            .expect("load_to_duckdb should succeed");
+
+        let payload = load_result
+            .outputs
+            .get("table")
+            .expect("table output should be present");
+
+        assert_eq!(payload.data_type, DataType::TableRef);
+        assert_eq!(
+            payload.value["table_name"],
+            json!("options__option_chain__delta")
+        );
+        assert_eq!(
+            payload.value["metadata"]["bundle_kind"],
+            json!("dolt_diff_export_bundle")
+        );
+        assert_eq!(
+            payload.value["metadata"]["previous_commit"],
+            json!("ac31f0b")
+        );
+        assert_eq!(
+            payload.value["metadata"]["current_commit"],
+            json!("b91c2aa")
+        );
+        assert_eq!(
+            payload.value["metadata"]["delete_rows_present"],
+            json!(true)
+        );
+        assert_eq!(
+            payload.value["metadata"]["loaded_tables"][0]["delete_markers_emitted"],
+            json!(true)
+        );
+        assert_eq!(
+            payload.value["load_manifest_ref"]["path"],
+            json!("artifacts/load_to_duckdb/options/ac31f0b_to_b91c2aa/load_manifest.json")
+        );
+    }
+
+    #[test]
+    fn table_merge_emits_durable_table_reference_output() {
+        let registry = builtin_node_definitions();
+        let definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "table_merge")
+            .expect("table_merge definition");
+        let node = WorkflowNode {
+            node_id: "table_merge".to_string(),
+            type_id: "table_merge".to_string(),
+            definition_version: 1,
+            label: None,
+            config: json!({
+                "target_schema": "tables",
+                "write_policy": "upsert",
+                "merge_key_columns": ["symbol", "report_date"],
+                "delete_handling": "apply_delete_markers",
+                "schema_drift_behavior": "fail_and_require_review"
+            }),
+            position: NodePosition::default(),
+        };
+        let mut inputs = PortValues::new();
+        inputs.insert(
+            "table".to_string(),
+            TypedValue {
+                data_type: DataType::TableRef,
+                value: json!({
+                    "kind": "table_reference",
+                    "catalog": "workflow.duckdb",
+                    "schema_name": "staging",
+                    "table_name": "earnings_calendar",
+                    "output_alias": "earnings_calendar",
+                    "selected_columns": [],
+                    "row_filter": Value::Null,
+                    "row_limit": Value::Null,
+                    "refresh_schema": true,
+                    "open_in_catalog": false,
+                    "schema_definition": {
+                        "columns": [],
+                        "primary_key": [],
+                        "checks": []
+                    }
+                }),
+            },
+        );
+
+        let result = RuntimeAdapters::default()
+            .execute(definition, &node, &inputs)
+            .expect("table merge should succeed");
+
+        let payload = result
+            .outputs
+            .get("table")
+            .expect("table merge table output should be present");
+        assert_eq!(payload.data_type, DataType::TableRef);
+        assert_eq!(payload.value["schema_name"], json!("tables"));
+        assert_eq!(payload.value["table_name"], json!("earnings_calendar"));
+        assert_eq!(payload.value["metadata"]["write_policy"], json!("upsert"));
+        assert_eq!(
+            payload.value["metadata"]["merge_key_columns"],
+            json!(["symbol", "report_date"])
+        );
+        assert_eq!(
+            result.logs,
+            vec![
+                "Prepared upsert merge into `tables` from `staging.earnings_calendar` across 1 table definition(s) using merge key `symbol, report_date`."
+            ]
+        );
+    }
+
+    #[test]
+    fn checkpoint_write_enriches_table_output_with_persisted_checkpoint_metadata() {
+        let registry = builtin_node_definitions();
+        let table_merge_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "table_merge")
+            .expect("table_merge definition");
+        let checkpoint_write_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "checkpoint_write")
+            .expect("checkpoint_write definition");
+
+        let table_merge_node = WorkflowNode {
+            node_id: "table_merge".to_string(),
+            type_id: "table_merge".to_string(),
+            definition_version: 1,
+            label: None,
+            config: json!({
+                "target_schema": "tables",
+                "write_policy": "upsert",
+                "merge_key_columns": ["symbol", "report_date"],
+                "delete_handling": "apply_delete_markers",
+                "schema_drift_behavior": "fail_and_require_review"
+            }),
+            position: NodePosition::default(),
+        };
+        let mut merge_inputs = PortValues::new();
+        merge_inputs.insert(
+            "table".to_string(),
+            TypedValue {
+                data_type: DataType::TableRef,
+                value: json!({
+                    "kind": "table_reference",
+                    "catalog": "workflow.duckdb",
+                    "schema_name": "staging",
+                    "table_name": "earnings_calendar",
+                    "output_alias": "earnings_calendar",
+                    "selected_columns": [],
+                    "row_filter": Value::Null,
+                    "row_limit": Value::Null,
+                    "refresh_schema": true,
+                    "open_in_catalog": false,
+                    "schema_definition": {
+                        "columns": [],
+                        "primary_key": [],
+                        "checks": []
+                    },
+                    "load_manifest_ref": {
+                        "kind": "load_manifest_ref",
+                        "path": "artifacts/load_to_duckdb/earnings/a34ef9c/load_manifest.json",
+                        "target_schema": "staging"
+                    },
+                    "metadata": {
+                        "bundle_kind": "dolt_dump_bundle",
+                        "branch": "main",
+                        "current_commit": "a34ef9c",
+                        "previous_commit": Value::Null,
+                        "repo_family": "earnings",
+                        "repository": "post-no-preference/earnings"
+                    }
+                }),
+            },
+        );
+        let merge_result = RuntimeAdapters::default()
+            .execute(table_merge_definition, &table_merge_node, &merge_inputs)
+            .expect("table merge should succeed");
+
+        let checkpoint_write_node = WorkflowNode {
+            node_id: "checkpoint_write".to_string(),
+            type_id: "checkpoint_write".to_string(),
+            definition_version: 1,
+            label: None,
+            config: json!({
+                "checkpoint_table": "tables.ingest_checkpoints",
+                "commit_source": "metadata.current_commit",
+                "write_timing": "after_merge_success",
+                "only_persist_on_full_success": true,
+                "advance_on_partial_success": false
+            }),
+            position: NodePosition::default(),
+        };
+        let mut checkpoint_inputs = PortValues::new();
+        checkpoint_inputs.insert(
+            "table".to_string(),
+            merge_result
+                .outputs
+                .get("table")
+                .expect("merged table output should be present")
+                .clone(),
+        );
+        let checkpoint_result = RuntimeAdapters::default()
+            .execute(
+                checkpoint_write_definition,
+                &checkpoint_write_node,
+                &checkpoint_inputs,
+            )
+            .expect("checkpoint write should succeed");
+
+        let payload = checkpoint_result
+            .outputs
+            .get("table")
+            .expect("checkpoint write table output should be present");
+        assert_eq!(payload.data_type, DataType::TableRef);
+        assert_eq!(
+            payload.value["metadata"]["checkpoint_write"]["checkpoint_table"],
+            json!("tables.ingest_checkpoints")
+        );
+        assert_eq!(
+            payload.value["metadata"]["checkpoint_write"]["last_synced_commit"],
+            json!("a34ef9c")
+        );
+        assert_eq!(
+            payload.value["metadata"]["checkpoint_write"]["last_ingest_mode"],
+            json!("bootstrap_refresh")
+        );
+        assert_eq!(
+            checkpoint_result.logs,
+            vec![
+                "Prepared checkpoint write to `tables.ingest_checkpoints` for `post-no-preference/earnings` on `main` at commit `a34ef9c` using `after_merge_success`."
+            ]
+        );
+    }
+
+    #[test]
+    fn quality_check_passes_through_table_reference_and_checkpoint_write_accepts_it() {
+        let registry = builtin_node_definitions();
+        let table_merge_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "table_merge")
+            .expect("table_merge definition");
+        let quality_check_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "quality_check")
+            .expect("quality_check definition");
+        let checkpoint_write_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "checkpoint_write")
+            .expect("checkpoint_write definition");
+
+        let table_merge_node = WorkflowNode {
+            node_id: "table_merge".to_string(),
+            type_id: "table_merge".to_string(),
+            definition_version: 1,
+            label: None,
+            config: json!({
+                "target_schema": "tables",
+                "write_policy": "upsert",
+                "merge_key_columns": ["symbol", "report_date"],
+                "delete_handling": "apply_delete_markers",
+                "schema_drift_behavior": "fail_and_require_review"
+            }),
+            position: NodePosition::default(),
+        };
+        let mut merge_inputs = PortValues::new();
+        merge_inputs.insert(
+            "table".to_string(),
+            TypedValue {
+                data_type: DataType::TableRef,
+                value: json!({
+                    "kind": "table_reference",
+                    "catalog": "workflow.duckdb",
+                    "schema_name": "staging",
+                    "table_name": "earnings_calendar",
+                    "output_alias": "earnings_calendar",
+                    "selected_columns": [],
+                    "row_filter": Value::Null,
+                    "row_limit": Value::Null,
+                    "refresh_schema": true,
+                    "open_in_catalog": false,
+                    "schema_definition": {
+                        "columns": [],
+                        "primary_key": [],
+                        "checks": []
+                    },
+                    "load_manifest_ref": {
+                        "kind": "load_manifest_ref",
+                        "path": "artifacts/load_to_duckdb/earnings/a34ef9c/load_manifest.json",
+                        "target_schema": "staging"
+                    },
+                    "metadata": {
+                        "bundle_kind": "dolt_dump_bundle",
+                        "branch": "main",
+                        "current_commit": "a34ef9c",
+                        "previous_commit": Value::Null,
+                        "repo_family": "earnings",
+                        "repository": "post-no-preference/earnings"
+                    }
+                }),
+            },
+        );
+        let merge_result = RuntimeAdapters::default()
+            .execute(table_merge_definition, &table_merge_node, &merge_inputs)
+            .expect("table merge should succeed");
+
+        let quality_check_node = WorkflowNode {
+            node_id: "quality_check".to_string(),
+            type_id: "quality_check".to_string(),
+            definition_version: 1,
+            label: None,
+            config: json!({
+                "suite_preset": "post_merge_ingest_gate",
+                "schema_drift_rule": "fail_on_required_column_drift",
+                "null_key_policy": "block_on_primary_key_nulls",
+                "warning_budget": 2,
+                "block_checkpoint_write_on_failure": true,
+                "allow_warning_only_runs_to_continue": true
+            }),
+            position: NodePosition::default(),
+        };
+        let mut quality_inputs = PortValues::new();
+        quality_inputs.insert(
+            "table".to_string(),
+            merge_result
+                .outputs
+                .get("table")
+                .expect("merged table output should be present")
+                .clone(),
+        );
+        let quality_result = RuntimeAdapters::default()
+            .execute(
+                quality_check_definition,
+                &quality_check_node,
+                &quality_inputs,
+            )
+            .expect("quality check should succeed");
+
+        let quality_payload = quality_result
+            .outputs
+            .get("table")
+            .expect("quality check output should be present");
+        assert_eq!(
+            quality_payload.value["metadata"]["quality_check"]["gate_status"],
+            json!("warn")
+        );
+        assert_eq!(
+            quality_payload.value["metadata"]["quality_check"]["warning_rules"],
+            json!(["freshness lag", "soft schema drift note"])
+        );
+
+        let checkpoint_write_node = WorkflowNode {
+            node_id: "checkpoint_write".to_string(),
+            type_id: "checkpoint_write".to_string(),
+            definition_version: 1,
+            label: None,
+            config: json!({
+                "checkpoint_table": "tables.ingest_checkpoints",
+                "commit_source": "metadata.current_commit",
+                "write_timing": "after_quality_gate",
+                "only_persist_on_full_success": true,
+                "advance_on_partial_success": false
+            }),
+            position: NodePosition::default(),
+        };
+        let mut checkpoint_inputs = PortValues::new();
+        checkpoint_inputs.insert("table".to_string(), quality_payload.clone());
+        let checkpoint_result = RuntimeAdapters::default()
+            .execute(
+                checkpoint_write_definition,
+                &checkpoint_write_node,
+                &checkpoint_inputs,
+            )
+            .expect("checkpoint write should succeed after quality check");
+
+        let checkpoint_payload = checkpoint_result
+            .outputs
+            .get("table")
+            .expect("checkpoint write table output should be present");
+        assert_eq!(
+            checkpoint_payload.value["metadata"]["checkpoint_write"]["write_timing"],
+            json!("after_quality_gate")
+        );
+        assert_eq!(
+            checkpoint_result.logs,
+            vec![
+                "Prepared checkpoint write to `tables.ingest_checkpoints` for `post-no-preference/earnings` on `main` at commit `a34ef9c` using `after_quality_gate`."
+            ]
+        );
+    }
 
     #[test]
     fn text_transform_uppercases() {

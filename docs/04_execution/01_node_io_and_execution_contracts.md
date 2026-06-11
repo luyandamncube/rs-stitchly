@@ -141,6 +141,34 @@ The runtime, not the node, owns:
 - fan-out routing
 - run and node state transitions
 
+### API Debug Parity Contract
+
+For implemented nodes, Stitchly should aim for one backend execution path.
+
+That means:
+
+- the UI workflow path and the API testing path should both execute the same runtime adapter logic
+- API testing routes may scaffold convenience defaults and short workflows
+- API testing routes should not reimplement node behavior outside the runtime adapter layer
+
+Practical rule:
+
+- if a node bug exists in runtime execution, it should be reproducible either from a real workflow run or from the equivalent API testing route
+
+Acceptable drift:
+
+- request naming differences between UI and API
+- scaffolded defaults such as connection refs, branches, timeout values, or output formats
+- short ad hoc workflow assembly inside testing endpoints
+
+Unacceptable drift:
+
+- separate execution logic for the same node in the API layer
+- endpoint-only behavior that bypasses the node adapter contract
+- hidden endpoint defaults that compensate for missing runtime behavior
+
+For node-oriented development, the API testing surface should be treated as a debug entrypoint into the same backend logic, not as a second implementation.
+
 ## Recommended Execution Shape
 
 At runtime, each node should conceptually execute against:
@@ -198,6 +226,22 @@ This means `send_email` already shows the pattern we should follow:
 - some values come from graph input
 - some values come from node config
 - the node contract must state both clearly
+
+## Node Implementation Definition Of Done
+
+When a node becomes real, implementation work should usually include:
+
+- node definition updates for ports and config schema
+- runtime adapter behavior for the node
+- execution-contract notes in this doc
+- an API testing route or route family when practical for debugging the node behavior directly
+- tests that confirm the API testing path still exercises the same runtime logic
+
+For API testing routes:
+
+- keep convenience scaffolding in the route layer
+- keep node behavior in the runtime adapter layer
+- prefer reusing canonical workflow shapes rather than inventing endpoint-only semantics
 
 ## What This Means For The Next Runtime Step
 

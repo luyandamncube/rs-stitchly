@@ -30,13 +30,11 @@ import {
   getWorkspaceRunLogs,
   getWorkflows,
   getWorkspaceRuns,
-  canUseDevAuthFallback,
   login,
   loginWithGoogleCode,
   logout,
   previewWorkspaceCatalogTableDelete,
   runWorkspaceCatalogQuery,
-  shouldUseDevGoogleAuthFallback,
   updateWorkflow,
   updateWorkflowState
 } from './lib/api';
@@ -89,6 +87,9 @@ const APP_SCREENS = [
 ];
 
 const SIDEBAR_SCREEN_IDS = new Set(['workflows', 'canvas', 'runs']);
+const WORKSPACE_SCREEN_ROUTE_IDS = APP_SCREENS
+  .filter((screen) => screen.id !== 'canvas')
+  .map((screen) => screen.id);
 const GOOGLE_CLIENT_ID =
   import.meta.env.VITE_GOOGLE_CLIENT_ID ??
   (import.meta.env.MODE === 'test' ? 'test-google-client-id' : '');
@@ -642,6 +643,7 @@ function AppRoutes({
               onRefreshSession={onRefreshSession}
               onToggleAttentionCollapsed={onToggleAttentionCollapsed}
               isAttentionCollapsed={isAttentionCollapsed}
+              screenId="canvas"
               session={session}
               setViewMode={setViewMode}
               viewMode={viewMode}
@@ -649,23 +651,36 @@ function AppRoutes({
           </ProtectedRoute>
         }
       />
+      {WORKSPACE_SCREEN_ROUTE_IDS.map((screenId) => (
+        <Route
+          key={screenId}
+          path={`/w/:workspaceSlug/${screenId}`}
+          element={
+            <ProtectedRoute session={session}>
+              <WorkspaceScreenRoute
+                onLogout={onLogout}
+                onRefreshSession={onRefreshSession}
+                onToggleAttentionCollapsed={onToggleAttentionCollapsed}
+                isAttentionCollapsed={isAttentionCollapsed}
+                screenId={screenId}
+                session={session}
+                setViewMode={setViewMode}
+                viewMode={viewMode}
+              />
+            </ProtectedRoute>
+          }
+        />
+      ))}
       <Route
-        path="/w/:workspaceSlug/:screenId"
+        path="*"
         element={
-          <ProtectedRoute session={session}>
-            <WorkspaceScreenRoute
-              onLogout={onLogout}
-              onRefreshSession={onRefreshSession}
-              onToggleAttentionCollapsed={onToggleAttentionCollapsed}
-              isAttentionCollapsed={isAttentionCollapsed}
-              session={session}
-              setViewMode={setViewMode}
-              viewMode={viewMode}
-            />
-          </ProtectedRoute>
+          <RouteStateScreen
+            eyebrow="Route error"
+            summary="The requested path does not exist in the current Stitchly shell."
+            title="Page not found"
+          />
         }
       />
-      <Route path="*" element={<Navigate replace to={getDefaultAppPath(session)} />} />
     </Routes>
   );
 }
@@ -687,7 +702,13 @@ function WorkspaceIndexRedirect({ session }) {
   const workspace = session.workspaces.find((candidate) => candidate.slug === workspaceSlug);
 
   if (!workspace) {
-    return <Navigate replace to={getDefaultAppPath(session)} />;
+    return (
+      <RouteStateScreen
+        eyebrow="Workspace route"
+        summary={`No workspace matched the slug "${workspaceSlug}".`}
+        title="Workspace not found"
+      />
+    );
   }
 
   return <Navigate replace to={buildCanvasHomePath(workspace.slug)} />;
@@ -786,15 +807,37 @@ function CanvasWorkflowRoute({
   }, [navigate, resolvedWorkspace, workflowId, workspaceHintId]);
 
   if (!workflowId) {
-    return <Navigate replace to={getDefaultAppPath(session)} />;
+    return (
+      <RouteStateScreen
+        eyebrow="Workflow route"
+        summary="The workflow URL is missing its workflow identifier."
+        title="Workflow route is incomplete"
+      />
+    );
   }
 
   if (resolveState === 'loading') {
     return <LoadingScreen />;
   }
 
+  if (resolveState === 'error') {
+    return (
+      <RouteStateScreen
+        eyebrow="Workflow route"
+        summary={`Stitchly could not verify which workspace owns workflow "${workflowId}".`}
+        title="Workflow lookup failed"
+      />
+    );
+  }
+
   if (!resolvedWorkspace) {
-    return <Navigate replace to={getDefaultAppPath(session)} />;
+    return (
+      <RouteStateScreen
+        eyebrow="Workflow route"
+        summary={`Workflow "${workflowId}" was not found in any accessible workspace.`}
+        title="Workflow not found"
+      />
+    );
   }
 
   return (
@@ -824,26 +867,35 @@ function WorkspaceScreenRoute({
   onRefreshSession,
   onToggleAttentionCollapsed,
   isAttentionCollapsed,
+  screenId,
   session,
   setViewMode,
   viewMode
 }) {
   const navigate = useNavigate();
-  const { screenId, workspaceSlug } = useParams();
+  const { workspaceSlug } = useParams();
   const resolvedScreenId = screenId ?? 'canvas';
   const activeWorkspace = session.workspaces.find((workspace) => workspace.slug === workspaceSlug);
 
   if (!activeWorkspace) {
-    return <Navigate replace to={getDefaultAppPath(session)} />;
-  }
-
-  if (resolvedScreenId === 'workflows') {
-    return <Navigate replace to={buildCanvasHomePath(activeWorkspace.slug)} />;
+    return (
+      <RouteStateScreen
+        eyebrow="Workspace route"
+        summary={`No workspace matched the slug "${workspaceSlug}".`}
+        title="Workspace not found"
+      />
+    );
   }
 
   const activeScreen = APP_SCREENS.find((screen) => screen.id === resolvedScreenId);
   if (!activeScreen) {
-    return <Navigate replace to={buildCanvasHomePath(activeWorkspace.slug)} />;
+    return (
+      <RouteStateScreen
+        eyebrow="Screen route"
+        summary={`The screen "${resolvedScreenId}" is not a supported workspace route.`}
+        title="Screen not found"
+      />
+    );
   }
 
   return (
@@ -1110,7 +1162,7 @@ function ProductShell({
                     `dashboard-nav-item${isActive ? ' dashboard-nav-item--active' : ''}`
                   }
                   aria-label={screen.label}
-                  to={`/w/${activeWorkspace.slug}/${screen.id}`}
+                  to={buildWorkspaceScreenPath(activeWorkspace.slug, screen.id)}
                 >
                   <span className="dashboard-nav-item__icon" aria-hidden="true">
                     <DashboardNavIcon screenId={screen.id} />
@@ -5146,21 +5198,6 @@ function LoginRoute({ onGoogleLogin, onLogin }) {
                   return;
                 }
 
-                if (canUseDevAuthFallback() || shouldUseDevGoogleAuthFallback()) {
-                  setIsGoogleSubmitting(true);
-                  void onGoogleLogin('dev-google-auth-code')
-                    .then((session) => {
-                      navigate(getDefaultAppPath(session), { replace: true });
-                    })
-                    .catch((requestError) => {
-                      setError(requestError.message ?? 'Unable to sign in with Google.');
-                    })
-                    .finally(() => {
-                      setIsGoogleSubmitting(false);
-                    });
-                  return;
-                }
-
                 if (!isGoogleReady) {
                   setError('Google sign-in is still loading.');
                   return;
@@ -5375,6 +5412,21 @@ function LoadingScreen() {
         </div>
       </section>
     </AuthShellLayout>
+  );
+}
+
+function RouteStateScreen({ eyebrow = 'Route error', summary, title }) {
+  const location = useLocation();
+
+  return (
+    <div className="dashboard-route-loading">
+      <div className="dashboard-route-loading__card" role="alert">
+        <span className="dashboard-route-loading__eyebrow">{eyebrow}</span>
+        <strong>{title}</strong>
+        <span>{summary}</span>
+        <code className="dashboard-route-loading__path">{location.pathname}</code>
+      </div>
+    </div>
   );
 }
 
@@ -5761,7 +5813,7 @@ function OverviewScreen({ activeWorkspace, viewMode }) {
           <div className="dashboard-section-card__actions">
             <button
               className="accent-button"
-              onClick={() => navigate(`/w/${activeWorkspace.slug}/workflows`)}
+              onClick={() => navigate(buildWorkspaceScreenPath(activeWorkspace.slug, 'workflows'))}
               type="button"
             >
               Open Workflows
@@ -6716,6 +6768,10 @@ function getDefaultAppPath(session) {
 
 function buildCanvasHomePath(workspaceSlug) {
   return `/w/${workspaceSlug}/canvas`;
+}
+
+function buildWorkspaceScreenPath(workspaceSlug, screenId) {
+  return `/w/${workspaceSlug}/${screenId}`;
 }
 
 function buildWorkflowPath(workflowId, workspaceId = null) {

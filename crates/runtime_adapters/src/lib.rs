@@ -1,4 +1,10 @@
-use std::{collections::BTreeMap, fs, path::PathBuf, time::Duration as StdDuration};
+use std::{
+    collections::BTreeMap,
+    env, fs,
+    path::{Path, PathBuf},
+    process::Command,
+    time::Duration as StdDuration,
+};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::Utc;
@@ -19,6 +25,7 @@ pub struct AdapterExecutionContext {
     pub workflow_id: Option<String>,
     pub run_id: Option<String>,
     pub workflow_duckdb_path: Option<PathBuf>,
+    pub disable_live_dolt: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -70,10 +77,10 @@ impl RuntimeAdapters {
         match definition.type_id.as_str() {
             "checkpoint_read" => execute_checkpoint_read(node),
             "checkpoint_write" => execute_checkpoint_write(node, inputs, context),
-            "dolt_repo_source" => execute_dolt_repo_source(node),
+            "dolt_repo_source" => execute_dolt_repo_source(node, context),
             "dolt_repo_sync" => execute_dolt_repo_sync(node, inputs),
             "dolt_change_manifest" => execute_dolt_change_manifest(node, inputs),
-            "dolt_dump" => execute_dolt_dump(node, inputs),
+            "dolt_dump" => execute_dolt_dump(node, inputs, context),
             "dolt_diff_export" => execute_dolt_diff_export(node, inputs),
             "load_to_duckdb" => execute_load_to_duckdb(node, inputs, context),
             "quality_check" => execute_quality_check(node, inputs),
@@ -614,6 +621,10 @@ struct DoltRepoDatasetMetadataPayload {
     previous_commit: Option<String>,
     #[serde(default)]
     repo_family: Option<String>,
+    #[serde(default)]
+    resolution_mode: Option<String>,
+    #[serde(default)]
+    working_copy_path: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
@@ -1011,7 +1022,10 @@ struct GmailSendResponse {
     thread_id: Option<String>,
 }
 
-fn execute_dolt_repo_source(node: &WorkflowNode) -> Result<NodeExecutionResult, AdapterError> {
+fn execute_dolt_repo_source(
+    node: &WorkflowNode,
+    context: &AdapterExecutionContext,
+) -> Result<NodeExecutionResult, AdapterError> {
     let config: DoltRepoSourceConfig =
         serde_json::from_value(node.config.clone()).map_err(|error| {
             AdapterError::InvalidConfig {
@@ -1027,8 +1041,35 @@ fn execute_dolt_repo_source(node: &WorkflowNode) -> Result<NodeExecutionResult, 
     let repository = config.repository.trim().to_string();
     let repo_family = derive_dolt_repo_family(&repository);
     let checkout_ref = normalize_optional_config_string(config.checkout_ref);
-    let profile = mock_dolt_repo_profile(&repository);
-    let current_commit = resolve_dolt_current_commit(profile, checkout_ref.as_deref());
+    let managed_workflow_storage = managed_workflow_root_from_context(context).is_some();
+    let (current_commit, resolution_mode, working_copy_path) =
+        if managed_workflow_storage && !context.disable_live_dolt {
+            let prepared = prepare_actual_dolt_working_copy(
+                context,
+                &repository,
+                config.branch.trim(),
+                checkout_ref.as_deref(),
+                clone_mode,
+                sync_strategy,
+                &node.node_id,
+            )?;
+            (
+                prepared.current_commit,
+                "live_dolt".to_string(),
+                Some(prepared.repo_dir.display().to_string()),
+            )
+        } else {
+            let profile = mock_dolt_repo_profile(&repository);
+            (
+                resolve_dolt_current_commit(profile, checkout_ref.as_deref()),
+                if context.disable_live_dolt {
+                    "mock_profile_live_dolt_disabled".to_string()
+                } else {
+                    "mock_profile".to_string()
+                },
+                None,
+            )
+        };
     let log_commit = current_commit.clone();
     let mut outputs = PortValues::new();
     let repo_payload = TypedValue {
@@ -1044,9 +1085,12 @@ fn execute_dolt_repo_source(node: &WorkflowNode) -> Result<NodeExecutionResult, 
             },
             "metadata": {
                 "repo_family": repo_family,
+                "current_commit": current_commit,
                 "clone_mode": clone_mode.as_str(),
                 "sync_strategy": sync_strategy.as_str(),
                 "working_copy": clone_mode.working_copy_label(),
+                "working_copy_path": working_copy_path,
+                "resolution_mode": resolution_mode,
             }
         }),
     };
@@ -1428,6 +1472,7 @@ fn execute_dolt_change_manifest(
 fn execute_dolt_dump(
     node: &WorkflowNode,
     inputs: &PortValues,
+    context: &AdapterExecutionContext,
 ) -> Result<NodeExecutionResult, AdapterError> {
     let config: DoltDumpConfig = serde_json::from_value(node.config.clone()).map_err(|error| {
         AdapterError::InvalidConfig {
@@ -1479,6 +1524,7 @@ fn execute_dolt_dump(
         previous_commit,
         repo_family,
         manifest_changed_tables,
+        upstream_live_working_copy_path,
         source_kind_label,
     ) = match input_kind {
         "dolt_repo_dataset" => {
@@ -1504,6 +1550,8 @@ fn execute_dolt_dump(
                 .as_ref()
                 .and_then(|metadata| normalize_non_empty_string(metadata.repo_family.clone()))
                 .unwrap_or_else(|| derive_dolt_repo_family(&repository));
+            let upstream_live_working_copy_path =
+                resolve_upstream_live_working_copy_path(repo_payload.metadata.as_ref());
 
             (
                 repo_payload.repo_ref.connection_ref.trim().to_string(),
@@ -1514,6 +1562,7 @@ fn execute_dolt_dump(
                 previous_commit,
                 repo_family,
                 Vec::new(),
+                upstream_live_working_copy_path,
                 "repo_handle",
             )
         }
@@ -1562,6 +1611,7 @@ fn execute_dolt_dump(
                 previous_commit,
                 repo_family,
                 manifest_changed_tables,
+                None,
                 "change_manifest",
             )
         }
@@ -1579,27 +1629,121 @@ fn execute_dolt_dump(
         &selected_tables,
         &manifest_changed_tables,
     );
-    let known_tables = mock_dolt_dump_table_catalog(&repository);
-    let exported_tables: Vec<Value> = export_table_names
-        .iter()
-        .map(|table_name| {
-            let row_count = known_tables
-                .iter()
-                .find(|(known_table_name, _)| *known_table_name == table_name)
-                .map(|(_, row_count)| *row_count);
-            json!({
-                "source_table": table_name,
-                "file_path": format!(
-                    "{}/{}.{}",
-                    build_dolt_dump_bundle_path(&repo_family, &current_commit, output_format),
-                    table_name,
-                    output_format.file_extension()
-                ),
-                "row_count": row_count,
+    let mut actual_materialization_error = None;
+    let materialized_bundle = if dolt_cli_is_available() && !context.disable_live_dolt {
+        match try_materialize_actual_dolt_dump_bundle(
+            context,
+            output_format,
+            &repository,
+            &branch,
+            checkout_ref.as_deref(),
+            &repo_family,
+            &current_commit,
+            &export_table_names,
+            upstream_live_working_copy_path.as_deref(),
+            &node.node_id,
+        ) {
+            Ok(bundle) => bundle,
+            Err(error) => {
+                actual_materialization_error = Some(error.to_string());
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let managed_workflow_storage = managed_workflow_root_from_context(context).is_some();
+    let (
+        bundle_path,
+        effective_current_commit,
+        effective_output_format,
+        exported_tables,
+        materialization_label,
+    ) = if let Some(bundle) = materialized_bundle {
+        (
+            bundle.bundle_path,
+            bundle.current_commit,
+            bundle.effective_format,
+            bundle.exported_tables,
+            "materialized bundle files",
+        )
+    } else if let Some(bundle) = try_resolve_existing_dolt_dump_bundle(
+        context,
+        output_format,
+        &repo_family,
+        &current_commit,
+        &export_table_names,
+    ) {
+        (
+            bundle.bundle_path,
+            bundle.current_commit,
+            bundle.effective_format,
+            bundle.exported_tables,
+            "existing bundle files",
+        )
+    } else if let Some(bundle) = try_materialize_seeded_dolt_dump_bundle(
+        context,
+        output_format,
+        &repo_family,
+        &current_commit,
+        &export_table_names,
+        &node.node_id,
+    )? {
+        (
+            bundle.bundle_path,
+            bundle.current_commit,
+            bundle.effective_format,
+            bundle.exported_tables,
+            "seeded export files",
+        )
+    } else {
+        if managed_workflow_storage {
+            let example_table = export_table_names
+                .first()
+                .map(String::as_str)
+                .unwrap_or("table_name");
+            let seed_hints = dolt_dump_seed_hints(context, &repo_family, example_table);
+            return Err(AdapterError::ExecutionFailed {
+                    node_id: node.node_id.clone(),
+                    message: format!(
+                        "dolt_dump could not materialize bundle files for `{repository}`. Install the Dolt CLI, reuse an existing bundle under `files/{}`, or seed exported files such as {}.{}",
+                        build_dolt_dump_bundle_path(&repo_family, &current_commit, output_format),
+                        seed_hints
+                            .iter()
+                            .map(|hint| format!("`{hint}`"))
+                            .collect::<Vec<_>>()
+                            .join(" or "),
+                        actual_materialization_error
+                            .as_deref()
+                            .map(|detail| format!(" Last Dolt attempt: {detail}"))
+                            .unwrap_or_default()
+                    ),
+                });
+        }
+
+        let exported_tables = export_table_names
+            .iter()
+            .map(|table_name| {
+                json!({
+                    "source_table": table_name,
+                    "file_path": format!(
+                        "{}/{}.{}",
+                        build_dolt_dump_bundle_path(&repo_family, &current_commit, output_format),
+                        table_name,
+                        output_format.file_extension()
+                    ),
+                    "row_count": Value::Null,
+                })
             })
-        })
-        .collect();
-    let bundle_path = build_dolt_dump_bundle_path(&repo_family, &current_commit, output_format);
+            .collect::<Vec<_>>();
+        (
+            build_dolt_dump_bundle_path(&repo_family, &current_commit, output_format),
+            current_commit.clone(),
+            output_format,
+            exported_tables,
+            "metadata-only bundle",
+        )
+    };
 
     let mut outputs = PortValues::new();
     outputs.insert(
@@ -1610,14 +1754,14 @@ fn execute_dolt_dump(
                 "kind": "dolt_dump_bundle",
                 "directory_ref": {
                     "path": bundle_path,
-                    "format": output_format.as_str(),
+                    "format": effective_output_format.as_str(),
                 },
                 "repo_ref": {
                     "connection_ref": connection_ref,
                     "repository": repository,
                     "branch": branch,
                     "checkout_ref": checkout_ref,
-                    "current_commit": current_commit,
+                    "current_commit": effective_current_commit,
                 },
                 "metadata": {
                     "repo_family": repo_family,
@@ -1636,10 +1780,10 @@ fn execute_dolt_dump(
     Ok(NodeExecutionResult {
         outputs,
         logs: vec![format!(
-            "Exported {} Dolt table(s) from `{}` as `{}` using `{}` input.",
+            "Exported {} Dolt table(s) from `{}` as `{}` using `{}` input ({materialization_label}).",
             export_table_names.len(),
             repository,
-            output_format.as_str(),
+            effective_output_format.as_str(),
             source_kind_label
         )],
     })
@@ -1845,6 +1989,1050 @@ fn execute_dolt_diff_export(
             change_filter.as_str()
         )],
     })
+}
+
+fn managed_workflow_root_from_context(context: &AdapterExecutionContext) -> Option<PathBuf> {
+    let workflow_duckdb_path = context.workflow_duckdb_path.as_ref()?;
+    let db_dir = workflow_duckdb_path.parent()?;
+    let file_name = workflow_duckdb_path.file_name()?.to_str()?;
+    let db_dir_name = db_dir.file_name()?.to_str()?;
+
+    if file_name.eq_ignore_ascii_case("workflow.duckdb") && db_dir_name == "db" {
+        db_dir.parent().map(Path::to_path_buf)
+    } else {
+        None
+    }
+}
+
+fn workflow_root_from_context(context: &AdapterExecutionContext) -> Option<PathBuf> {
+    managed_workflow_root_from_context(context).or_else(|| {
+        context
+            .workflow_duckdb_path
+            .as_ref()
+            .and_then(|path| path.parent())
+            .map(Path::to_path_buf)
+    })
+}
+
+fn workflow_files_root_from_context(context: &AdapterExecutionContext) -> Option<PathBuf> {
+    workflow_root_from_context(context).map(|root| root.join("files"))
+}
+
+fn resolve_workflow_file_path(
+    context: &AdapterExecutionContext,
+    file_path: &str,
+) -> Option<PathBuf> {
+    let candidate = PathBuf::from(file_path);
+    if candidate.is_absolute() {
+        return Some(candidate);
+    }
+
+    workflow_files_root_from_context(context).map(|root| root.join(candidate))
+}
+
+fn duckdb_scan_sql_for_file_path(file_path: &Path, node_id: &str) -> Result<String, AdapterError> {
+    let path_literal = quote_duckdb_string_literal(file_path.to_string_lossy().as_ref());
+    let extension = file_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase());
+
+    match extension.as_deref() {
+        Some("csv") => Ok(format!(
+            "select * from read_csv_auto({path_literal}, header = true)"
+        )),
+        Some("parquet") => Ok(format!("select * from read_parquet({path_literal})")),
+        Some(other) => Err(AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!(
+                "unsupported artifact file extension `.{other}` at `{}`.",
+                file_path.display()
+            ),
+        }),
+        None => Err(AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!(
+                "artifact file `{}` is missing a supported extension.",
+                file_path.display()
+            ),
+        }),
+    }
+}
+
+fn describe_duckdb_table_columns(
+    connection: &DuckDbConnection,
+    schema_name: &str,
+    table_name: &str,
+    node_id: &str,
+) -> Result<Vec<Value>, AdapterError> {
+    let mut stmt = connection
+        .prepare(
+            "select column_name,
+                    data_type,
+                    case when is_nullable = 'YES' then 1 else 0 end as nullable
+             from information_schema.columns
+             where table_schema = ?1
+               and table_name = ?2
+             order by ordinal_position asc",
+        )
+        .map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!(
+                "failed to inspect created table `{schema_name}.{table_name}` columns: {error}"
+            ),
+        })?;
+
+    stmt.query_map([schema_name, table_name], |row| {
+        Ok(json!({
+            "name": row.get::<_, String>(0)?,
+            "type": row.get::<_, String>(1)?,
+            "nullable": row.get::<_, i64>(2)? != 0,
+            "primary_key": false
+        }))
+    })
+    .map_err(|error| AdapterError::ExecutionFailed {
+        node_id: node_id.to_string(),
+        message: format!(
+            "failed to query created table `{schema_name}.{table_name}` columns: {error}"
+        ),
+    })?
+    .collect::<duckdb::Result<Vec<_>>>()
+    .map_err(|error| AdapterError::ExecutionFailed {
+        node_id: node_id.to_string(),
+        message: format!(
+            "failed to collect created table `{schema_name}.{table_name}` columns: {error}"
+        ),
+    })
+}
+
+fn load_duckdb_table_row_count(
+    connection: &DuckDbConnection,
+    schema_name: &str,
+    table_name: &str,
+    node_id: &str,
+) -> Result<u64, AdapterError> {
+    let qualified_table = format!(
+        "{}.{}",
+        quote_duckdb_identifier(schema_name),
+        quote_duckdb_identifier(table_name)
+    );
+    connection
+        .query_row(
+            &format!("select count(*) from {qualified_table}"),
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|count| count.max(0) as u64)
+        .map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!(
+                "failed to count rows in created table `{schema_name}.{table_name}`: {error}"
+            ),
+        })
+}
+
+fn persist_load_to_duckdb_tables_from_files(
+    connection: &DuckDbConnection,
+    context: &AdapterExecutionContext,
+    target_schema: &str,
+    resolved_bundle: &mut ResolvedLoadToDuckDbBundle,
+    node_id: &str,
+) -> Result<bool, AdapterError> {
+    let resolved_paths = resolved_bundle
+        .loaded_tables
+        .iter()
+        .map(|table| {
+            resolve_workflow_file_path(context, &table.file_path).ok_or_else(|| {
+                AdapterError::ExecutionFailed {
+                    node_id: node_id.to_string(),
+                    message: format!(
+                        "failed to resolve workflow artifact path for `{}`.",
+                        table.file_path
+                    ),
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if !resolved_paths.iter().any(|path| path.is_file()) {
+        return Ok(false);
+    }
+
+    let schema_identifier = quote_duckdb_identifier(target_schema);
+    connection
+        .execute_batch(&format!("create schema if not exists {schema_identifier};"))
+        .map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!(
+                "failed to ensure staging schema `{target_schema}` exists in workflow DuckDB: {error}"
+            ),
+        })?;
+
+    for (table, resolved_path) in resolved_bundle
+        .loaded_tables
+        .iter_mut()
+        .zip(resolved_paths.iter())
+    {
+        if !resolved_path.is_file() {
+            return Err(AdapterError::ExecutionFailed {
+                node_id: node_id.to_string(),
+                message: format!(
+                    "expected bundle artifact `{}` for `{}` but the file does not exist.",
+                    resolved_path.display(),
+                    table.source_table
+                ),
+            });
+        }
+
+        let scan_sql = duckdb_scan_sql_for_file_path(resolved_path, node_id)?;
+        let qualified_table = format!(
+            "{}.{}",
+            schema_identifier,
+            quote_duckdb_identifier(&table.staging_table_name)
+        );
+        connection
+            .execute_batch(&format!(
+                "create or replace table {qualified_table} as {scan_sql};"
+            ))
+            .map_err(|error| AdapterError::ExecutionFailed {
+                node_id: node_id.to_string(),
+                message: format!(
+                    "failed to load `{}` into staging table `{target_schema}.{}`
+using DuckDB: {error}",
+                    resolved_path.display(),
+                    table.staging_table_name
+                ),
+            })?;
+
+        table.columns = describe_duckdb_table_columns(
+            connection,
+            target_schema,
+            &table.staging_table_name,
+            node_id,
+        )?;
+        table.row_count = Some(load_duckdb_table_row_count(
+            connection,
+            target_schema,
+            &table.staging_table_name,
+            node_id,
+        )?);
+    }
+
+    Ok(true)
+}
+
+fn dolt_cli_is_available() -> bool {
+    let mut command = Command::new("dolt");
+    command.arg("version");
+    apply_dolt_command_environment(&mut command);
+    command
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+fn apply_dolt_command_environment(command: &mut Command) {
+    if let Some(home_dir) = ensure_dolt_home_dir() {
+        command.env("HOME", &home_dir);
+    }
+    command.env("NO_COLOR", "1");
+    command.env("CLICOLOR", "0");
+    command.env("TERM", "dumb");
+}
+
+fn ensure_dolt_home_dir() -> Option<PathBuf> {
+    let home_dir = resolve_dolt_home_dir()?;
+    fs::create_dir_all(home_dir.join(".dolt")).ok()?;
+    Some(home_dir)
+}
+
+fn resolve_dolt_home_dir() -> Option<PathBuf> {
+    if let Some(explicit_home) = env::var_os("STITCHLY_DOLT_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+    {
+        return Some(explicit_home);
+    }
+
+    let state_dir = env::var_os("STITCHLY_STATE_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    let current_dir = env::current_dir().ok();
+
+    build_dolt_home_dir_path(state_dir.as_deref(), current_dir.as_deref())
+}
+
+fn build_dolt_home_dir_path(
+    state_dir: Option<&Path>,
+    current_dir: Option<&Path>,
+) -> Option<PathBuf> {
+    state_dir
+        .map(|path| path.join("tooling").join("dolt-home"))
+        .or_else(|| {
+            current_dir.map(|path| path.join(".stitchly").join("tooling").join("dolt-home"))
+        })
+}
+
+fn sanitize_repository_storage_name(repository: &str) -> String {
+    repository
+        .chars()
+        .map(|character| match character {
+            'a'..='z' | 'A'..='Z' | '0'..='9' => character,
+            _ => '_',
+        })
+        .collect()
+}
+
+fn run_command_capture_stdout(
+    program: &str,
+    args: &[&str],
+    current_dir: Option<&Path>,
+    node_id: &str,
+) -> Result<String, AdapterError> {
+    let mut command = Command::new(program);
+    command.args(args);
+    if let Some(current_dir) = current_dir {
+        command.current_dir(current_dir);
+    }
+    if program == "dolt" {
+        apply_dolt_command_environment(&mut command);
+    }
+
+    let output = command
+        .output()
+        .map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!("failed to start `{program}`: {error}"),
+        })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            format!("process exited with status {:?}", output.status)
+        };
+
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!("`{program} {}` failed: {detail}", args.join(" ")),
+        });
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn strip_ansi_escape_sequences(text: &str) -> String {
+    let mut cleaned = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+
+    while let Some(character) = chars.next() {
+        if character == '\u{1b}' {
+            if matches!(chars.peek(), Some('[')) {
+                chars.next();
+                while let Some(next_character) = chars.next() {
+                    if matches!(next_character, '@'..='~') {
+                        break;
+                    }
+                }
+                continue;
+            }
+        }
+
+        cleaned.push(character);
+    }
+
+    cleaned
+}
+
+fn parse_dolt_head_commit(output: &str) -> Option<String> {
+    strip_ansi_escape_sequences(output)
+        .lines()
+        .map(str::trim)
+        .find_map(|line| line.strip_prefix("commit ").map(str::trim))
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn first_visible_output_line(output: &str) -> String {
+    let cleaned = strip_ansi_escape_sequences(output);
+    if let Some(first_line) = cleaned.lines().map(str::trim).find(|line| !line.is_empty()) {
+        return first_line.to_string();
+    }
+
+    "<empty output>".to_string()
+}
+
+fn try_resolve_dolt_head_commit(repo_dir: &Path, node_id: &str) -> Result<String, AdapterError> {
+    let output = run_command_capture_stdout("dolt", &["log", "-n", "1"], Some(repo_dir), node_id)?;
+    parse_dolt_head_commit(&output).ok_or_else(|| AdapterError::ExecutionFailed {
+        node_id: node_id.to_string(),
+        message: format!(
+            "`dolt log -n 1` returned unexpected output while resolving HEAD commit in `{}`: {}",
+            repo_dir.display(),
+            first_visible_output_line(&output)
+        ),
+    })
+}
+
+fn resolve_upstream_live_working_copy_path(
+    metadata: Option<&DoltRepoDatasetMetadataPayload>,
+) -> Option<PathBuf> {
+    let metadata = metadata?;
+    if metadata.resolution_mode.as_deref()? != "live_dolt" {
+        return None;
+    }
+
+    metadata
+        .working_copy_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+fn resolve_dolt_dump_csv_path(repo_dir: &Path, table_name: &str) -> Option<PathBuf> {
+    let candidate_paths = [
+        repo_dir.join(format!("{table_name}.csv")),
+        repo_dir.join("doltdump").join(format!("{table_name}.csv")),
+    ];
+
+    candidate_paths.into_iter().find(|path| path.is_file())
+}
+
+fn workflow_relative_bundle_path(bundle_relative_path: &str, file_name: &str) -> String {
+    format!("{bundle_relative_path}/{file_name}")
+}
+
+struct ActualDoltDumpBundle {
+    bundle_path: String,
+    current_commit: String,
+    effective_format: DoltDumpOutputFormat,
+    exported_tables: Vec<Value>,
+}
+
+struct PreparedDoltWorkingCopy {
+    current_commit: String,
+    repo_dir: PathBuf,
+}
+
+#[derive(Clone, Copy)]
+enum SeededArtifactFormat {
+    Csv,
+    Parquet,
+}
+
+impl SeededArtifactFormat {
+    fn file_extension(self) -> &'static str {
+        match self {
+            Self::Csv => "csv",
+            Self::Parquet => "parquet",
+        }
+    }
+}
+
+struct SeededArtifactSource {
+    path: PathBuf,
+    format: SeededArtifactFormat,
+}
+
+fn dolt_seed_source_roots(context: &AdapterExecutionContext, repo_family: &str) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+
+    if let Some(files_root) = workflow_files_root_from_context(context) {
+        roots.push(files_root.join("raw").join("dolt").join(repo_family));
+        roots.push(files_root.join("seeds").join("dolt").join(repo_family));
+    }
+
+    if let Some(seed_root) = env::var("STITCHLY_DOLT_EXPORT_ROOT")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        roots.push(seed_root.join(repo_family));
+        roots.push(seed_root);
+    }
+
+    if let Ok(current_dir) = env::current_dir() {
+        roots.push(
+            current_dir
+                .join("data")
+                .join("raw")
+                .join("dolt")
+                .join(repo_family),
+        );
+    }
+
+    let mut deduped = Vec::new();
+    for root in roots {
+        if !deduped.iter().any(|existing: &PathBuf| existing == &root) {
+            deduped.push(root);
+        }
+    }
+
+    deduped
+}
+
+fn resolve_seeded_artifact_source(
+    seed_root: &Path,
+    table_name: &str,
+    output_format: DoltDumpOutputFormat,
+) -> Option<SeededArtifactSource> {
+    let direct_preferred =
+        seed_root.join(format!("{table_name}.{}", output_format.file_extension()));
+    if direct_preferred.is_file() {
+        return Some(SeededArtifactSource {
+            path: direct_preferred,
+            format: match output_format {
+                DoltDumpOutputFormat::Csv => SeededArtifactFormat::Csv,
+                DoltDumpOutputFormat::Parquet => SeededArtifactFormat::Parquet,
+            },
+        });
+    }
+
+    let nested_preferred = seed_root
+        .join(output_format.as_str())
+        .join(format!("{table_name}.{}", output_format.file_extension()));
+    if nested_preferred.is_file() {
+        return Some(SeededArtifactSource {
+            path: nested_preferred,
+            format: match output_format {
+                DoltDumpOutputFormat::Csv => SeededArtifactFormat::Csv,
+                DoltDumpOutputFormat::Parquet => SeededArtifactFormat::Parquet,
+            },
+        });
+    }
+
+    let fallback_format = match output_format {
+        DoltDumpOutputFormat::Csv => SeededArtifactFormat::Parquet,
+        DoltDumpOutputFormat::Parquet => SeededArtifactFormat::Csv,
+    };
+    let direct_fallback =
+        seed_root.join(format!("{table_name}.{}", fallback_format.file_extension()));
+    if direct_fallback.is_file() {
+        return Some(SeededArtifactSource {
+            path: direct_fallback,
+            format: fallback_format,
+        });
+    }
+
+    let nested_fallback = seed_root
+        .join(fallback_format.file_extension())
+        .join(format!("{table_name}.{}", fallback_format.file_extension()));
+    if nested_fallback.is_file() {
+        return Some(SeededArtifactSource {
+            path: nested_fallback,
+            format: fallback_format,
+        });
+    }
+
+    None
+}
+
+fn copy_or_convert_seeded_artifact(
+    source: &SeededArtifactSource,
+    destination_file: &Path,
+    output_format: DoltDumpOutputFormat,
+    conversion_connection: Option<&DuckDbConnection>,
+    node_id: &str,
+) -> Result<(), AdapterError> {
+    copy_or_convert_tabular_artifact(
+        &source.path,
+        source.format,
+        destination_file,
+        output_format,
+        conversion_connection,
+        node_id,
+        "seeded artifact",
+    )
+}
+
+fn copy_or_convert_actual_dolt_dump_artifact(
+    source_csv: &Path,
+    destination_file: &Path,
+    output_format: DoltDumpOutputFormat,
+    conversion_connection: Option<&DuckDbConnection>,
+    node_id: &str,
+) -> Result<(), AdapterError> {
+    copy_or_convert_tabular_artifact(
+        source_csv,
+        SeededArtifactFormat::Csv,
+        destination_file,
+        output_format,
+        conversion_connection,
+        node_id,
+        "Dolt dump artifact",
+    )
+}
+
+fn copy_or_convert_tabular_artifact(
+    source_path: &Path,
+    source_format: SeededArtifactFormat,
+    destination_file: &Path,
+    output_format: DoltDumpOutputFormat,
+    conversion_connection: Option<&DuckDbConnection>,
+    node_id: &str,
+    source_label: &str,
+) -> Result<(), AdapterError> {
+    match (source_format, output_format) {
+        (SeededArtifactFormat::Csv, DoltDumpOutputFormat::Csv)
+        | (SeededArtifactFormat::Parquet, DoltDumpOutputFormat::Parquet) => {
+            fs::copy(source_path, destination_file).map_err(|error| {
+                AdapterError::ExecutionFailed {
+                    node_id: node_id.to_string(),
+                    message: format!(
+                        "failed to copy {source_label} `{}` to `{}`: {error}",
+                        source_path.display(),
+                        destination_file.display()
+                    ),
+                }
+            })?;
+        }
+        (SeededArtifactFormat::Csv, DoltDumpOutputFormat::Parquet) => {
+            let connection =
+                conversion_connection.ok_or_else(|| AdapterError::ExecutionFailed {
+                    node_id: node_id.to_string(),
+                    message: format!(
+                        "failed to open workflow DuckDB for {source_label} CSV -> parquet conversion."
+                    ),
+                })?;
+            let source_sql = duckdb_scan_sql_for_file_path(source_path, node_id)?;
+            connection
+                .execute_batch(&format!(
+                    "copy ({source_sql}) to {} (format parquet);",
+                    quote_duckdb_string_literal(destination_file.to_string_lossy().as_ref())
+                ))
+                .map_err(|error| AdapterError::ExecutionFailed {
+                    node_id: node_id.to_string(),
+                    message: format!(
+                        "failed to convert {source_label} CSV `{}` to parquet at `{}`: {error}",
+                        source_path.display(),
+                        destination_file.display()
+                    ),
+                })?;
+        }
+        (SeededArtifactFormat::Parquet, DoltDumpOutputFormat::Csv) => {
+            let connection =
+                conversion_connection.ok_or_else(|| AdapterError::ExecutionFailed {
+                    node_id: node_id.to_string(),
+                    message: format!(
+                        "failed to open workflow DuckDB for {source_label} parquet -> CSV conversion."
+                    ),
+                })?;
+            let source_sql = duckdb_scan_sql_for_file_path(source_path, node_id)?;
+            connection
+                .execute_batch(&format!(
+                    "copy ({source_sql}) to {} (header true, format csv);",
+                    quote_duckdb_string_literal(destination_file.to_string_lossy().as_ref())
+                ))
+                .map_err(|error| AdapterError::ExecutionFailed {
+                    node_id: node_id.to_string(),
+                    message: format!(
+                        "failed to convert {source_label} parquet `{}` to CSV at `{}`: {error}",
+                        source_path.display(),
+                        destination_file.display()
+                    ),
+                })?;
+        }
+    }
+
+    Ok(())
+}
+
+fn try_resolve_existing_dolt_dump_bundle(
+    context: &AdapterExecutionContext,
+    output_format: DoltDumpOutputFormat,
+    repo_family: &str,
+    current_commit: &str,
+    export_table_names: &[String],
+) -> Option<ActualDoltDumpBundle> {
+    let files_root = workflow_files_root_from_context(context)?;
+    let bundle_path = build_dolt_dump_bundle_path(repo_family, current_commit, output_format);
+    let bundle_root = files_root.join(&bundle_path);
+    if !bundle_root.is_dir() {
+        return None;
+    }
+
+    let exported_tables = export_table_names
+        .iter()
+        .map(|table_name| {
+            let relative_path = workflow_relative_bundle_path(
+                &bundle_path,
+                &format!("{table_name}.{}", output_format.file_extension()),
+            );
+            let absolute_path = files_root.join(&relative_path);
+            if !absolute_path.is_file() {
+                return None;
+            }
+
+            Some(json!({
+                "source_table": table_name,
+                "file_path": relative_path,
+                "row_count": Value::Null,
+            }))
+        })
+        .collect::<Option<Vec<_>>>()?;
+
+    Some(ActualDoltDumpBundle {
+        bundle_path,
+        current_commit: current_commit.to_string(),
+        effective_format: output_format,
+        exported_tables,
+    })
+}
+
+fn try_materialize_seeded_dolt_dump_bundle(
+    context: &AdapterExecutionContext,
+    output_format: DoltDumpOutputFormat,
+    repo_family: &str,
+    current_commit: &str,
+    export_table_names: &[String],
+    node_id: &str,
+) -> Result<Option<ActualDoltDumpBundle>, AdapterError> {
+    let Some(files_root) = workflow_files_root_from_context(context) else {
+        return Ok(None);
+    };
+
+    let seed_roots = dolt_seed_source_roots(context, repo_family);
+
+    for seed_root in seed_roots {
+        let seeded_sources = export_table_names
+            .iter()
+            .map(|table_name| resolve_seeded_artifact_source(&seed_root, table_name, output_format))
+            .collect::<Option<Vec<_>>>();
+
+        let Some(seeded_sources) = seeded_sources else {
+            continue;
+        };
+
+        let effective_format = output_format;
+        let bundle_path =
+            build_dolt_dump_bundle_path(repo_family, current_commit, effective_format);
+        let bundle_root = files_root.join(&bundle_path);
+
+        if bundle_root.exists() {
+            fs::remove_dir_all(&bundle_root).map_err(|error| AdapterError::ExecutionFailed {
+                node_id: node_id.to_string(),
+                message: format!(
+                    "failed to clear existing seeded bundle directory `{}`: {error}",
+                    bundle_root.display()
+                ),
+            })?;
+        }
+        fs::create_dir_all(&bundle_root).map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!(
+                "failed to create seeded bundle directory `{}`: {error}",
+                bundle_root.display()
+            ),
+        })?;
+
+        let needs_conversion = seeded_sources.iter().any(|source| {
+            matches!(
+                (source.format, effective_format),
+                (SeededArtifactFormat::Csv, DoltDumpOutputFormat::Parquet)
+                    | (SeededArtifactFormat::Parquet, DoltDumpOutputFormat::Csv)
+            )
+        });
+        let conversion_connection = if needs_conversion {
+            open_runtime_workflow_duckdb(context, node_id)?
+        } else {
+            None
+        };
+
+        let mut exported_tables = Vec::with_capacity(export_table_names.len());
+        for (table_name, source) in export_table_names.iter().zip(seeded_sources.iter()) {
+            let destination_file = bundle_root.join(format!(
+                "{table_name}.{}",
+                effective_format.file_extension()
+            ));
+            copy_or_convert_seeded_artifact(
+                source,
+                &destination_file,
+                effective_format,
+                conversion_connection.as_ref(),
+                node_id,
+            )?;
+            exported_tables.push(json!({
+                "source_table": table_name,
+                "file_path": workflow_relative_bundle_path(
+                    &bundle_path,
+                    &format!("{table_name}.{}", effective_format.file_extension())
+                ),
+                "row_count": Value::Null,
+            }));
+        }
+
+        return Ok(Some(ActualDoltDumpBundle {
+            bundle_path,
+            current_commit: current_commit.to_string(),
+            effective_format,
+            exported_tables,
+        }));
+    }
+
+    Ok(None)
+}
+
+fn dolt_dump_seed_hints(
+    context: &AdapterExecutionContext,
+    repo_family: &str,
+    table_name: &str,
+) -> Vec<String> {
+    let mut hints = Vec::new();
+
+    hints.push(format!("data/raw/dolt/{repo_family}/{table_name}.csv"));
+    hints.push(format!("data/raw/dolt/{repo_family}/{table_name}.parquet"));
+
+    if workflow_files_root_from_context(context).is_some() {
+        hints.push(format!("files/raw/dolt/{repo_family}/{table_name}.csv"));
+        hints.push(format!("files/raw/dolt/{repo_family}/{table_name}.parquet"));
+    }
+
+    hints
+}
+
+fn prepare_actual_dolt_working_copy(
+    context: &AdapterExecutionContext,
+    repository: &str,
+    branch: &str,
+    checkout_ref: Option<&str>,
+    clone_mode: DoltCloneMode,
+    sync_strategy: DoltSyncStrategy,
+    node_id: &str,
+) -> Result<PreparedDoltWorkingCopy, AdapterError> {
+    let files_root =
+        workflow_files_root_from_context(context).ok_or_else(|| AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: "dolt_repo_source requires managed workflow storage for live Dolt execution."
+                .to_string(),
+        })?;
+    if !dolt_cli_is_available() {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: "dolt_repo_source requires the Dolt CLI for live execution.".to_string(),
+        });
+    }
+    if matches!(clone_mode, DoltCloneMode::Depth1) {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: "live dolt_repo_source does not yet support clone_mode `depth_1`.".to_string(),
+        });
+    }
+
+    let working_copy_root = files_root.join("artifacts").join("dolt_working_copies");
+    fs::create_dir_all(&working_copy_root).map_err(|error| AdapterError::ExecutionFailed {
+        node_id: node_id.to_string(),
+        message: format!(
+            "failed to create Dolt working copy root `{}`: {error}",
+            working_copy_root.display()
+        ),
+    })?;
+
+    let repo_dir_name = sanitize_repository_storage_name(repository);
+    let repo_dir = working_copy_root.join(&repo_dir_name);
+    if matches!(clone_mode, DoltCloneMode::FreshClone) && repo_dir.exists() {
+        fs::remove_dir_all(&repo_dir).map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!(
+                "failed to reset Dolt working copy `{}` for fresh clone: {error}",
+                repo_dir.display()
+            ),
+        })?;
+    }
+
+    if !repo_dir.exists() {
+        run_command_capture_stdout(
+            "dolt",
+            &["clone", repository, &repo_dir_name],
+            Some(&working_copy_root),
+            node_id,
+        )?;
+    } else if matches!(sync_strategy, DoltSyncStrategy::PullBeforeExecution) {
+        if !branch.trim().is_empty() {
+            run_command_capture_stdout("dolt", &["checkout", branch], Some(&repo_dir), node_id)?;
+        }
+        run_command_capture_stdout("dolt", &["pull"], Some(&repo_dir), node_id)?;
+    }
+
+    if let Some(checkout_ref) = checkout_ref.filter(|value| !value.trim().is_empty()) {
+        run_command_capture_stdout(
+            "dolt",
+            &["checkout", checkout_ref],
+            Some(&repo_dir),
+            node_id,
+        )?;
+    } else if !branch.trim().is_empty() {
+        run_command_capture_stdout("dolt", &["checkout", branch], Some(&repo_dir), node_id)?;
+    }
+
+    let current_commit =
+        try_resolve_dolt_head_commit(&repo_dir, node_id).map_err(|error| match error {
+            AdapterError::ExecutionFailed { message, .. } => AdapterError::ExecutionFailed {
+                node_id: node_id.to_string(),
+                message: format!(
+                    "failed to resolve the current Dolt commit for `{}` from `{}`: {message}",
+                    repository,
+                    repo_dir.display()
+                ),
+            },
+            other => other,
+        })?;
+
+    Ok(PreparedDoltWorkingCopy {
+        current_commit,
+        repo_dir,
+    })
+}
+
+fn try_materialize_actual_dolt_dump_bundle(
+    context: &AdapterExecutionContext,
+    output_format: DoltDumpOutputFormat,
+    repository: &str,
+    branch: &str,
+    checkout_ref: Option<&str>,
+    repo_family: &str,
+    current_commit: &str,
+    export_table_names: &[String],
+    upstream_live_working_copy_path: Option<&Path>,
+    node_id: &str,
+) -> Result<Option<ActualDoltDumpBundle>, AdapterError> {
+    let Some(files_root) = workflow_files_root_from_context(context) else {
+        return Ok(None);
+    };
+    if !dolt_cli_is_available() {
+        return Ok(None);
+    }
+
+    let working_copy_root = files_root.join("artifacts").join("dolt_working_copies");
+    fs::create_dir_all(&working_copy_root).map_err(|error| AdapterError::ExecutionFailed {
+        node_id: node_id.to_string(),
+        message: format!(
+            "failed to create Dolt working copy root `{}`: {error}",
+            working_copy_root.display()
+        ),
+    })?;
+
+    let repo_dir_name = sanitize_repository_storage_name(repository);
+    let repo_dir = if let Some(upstream_repo_dir) = upstream_live_working_copy_path {
+        if !upstream_repo_dir.is_dir() {
+            return Err(AdapterError::ExecutionFailed {
+                node_id: node_id.to_string(),
+                message: format!(
+                    "upstream live Dolt working copy `{}` no longer exists for `{repository}`.",
+                    upstream_repo_dir.display()
+                ),
+            });
+        }
+
+        upstream_repo_dir.to_path_buf()
+    } else {
+        let repo_dir = working_copy_root.join(&repo_dir_name);
+        if !repo_dir.exists() {
+            run_command_capture_stdout(
+                "dolt",
+                &["clone", repository, &repo_dir_name],
+                Some(&working_copy_root),
+                node_id,
+            )?;
+        } else {
+            if !branch.trim().is_empty() {
+                run_command_capture_stdout(
+                    "dolt",
+                    &["checkout", branch],
+                    Some(&repo_dir),
+                    node_id,
+                )?;
+            }
+            run_command_capture_stdout("dolt", &["pull"], Some(&repo_dir), node_id)?;
+        }
+
+        if let Some(checkout_ref) = checkout_ref.filter(|value| !value.trim().is_empty()) {
+            run_command_capture_stdout(
+                "dolt",
+                &["checkout", checkout_ref],
+                Some(&repo_dir),
+                node_id,
+            )?;
+        } else if !branch.trim().is_empty() {
+            run_command_capture_stdout("dolt", &["checkout", branch], Some(&repo_dir), node_id)?;
+        }
+
+        repo_dir
+    };
+
+    run_command_capture_stdout("dolt", &["dump", "-r", "csv"], Some(&repo_dir), node_id)?;
+    let actual_commit = try_resolve_dolt_head_commit(&repo_dir, node_id)
+        .unwrap_or_else(|_| current_commit.to_string());
+    let effective_format = output_format;
+    let bundle_path = build_dolt_dump_bundle_path(repo_family, &actual_commit, effective_format);
+    let bundle_root = files_root.join(&bundle_path);
+    if bundle_root.exists() {
+        fs::remove_dir_all(&bundle_root).map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!(
+                "failed to clear existing bundle directory `{}`: {error}",
+                bundle_root.display()
+            ),
+        })?;
+    }
+    fs::create_dir_all(&bundle_root).map_err(|error| AdapterError::ExecutionFailed {
+        node_id: node_id.to_string(),
+        message: format!(
+            "failed to create bundle directory `{}`: {error}",
+            bundle_root.display()
+        ),
+    })?;
+    let conversion_connection = if matches!(effective_format, DoltDumpOutputFormat::Parquet) {
+        open_runtime_workflow_duckdb(context, node_id)?
+    } else {
+        None
+    };
+
+    let mut exported_tables = Vec::with_capacity(export_table_names.len());
+    for table_name in export_table_names {
+        let Some(source_csv) = resolve_dolt_dump_csv_path(&repo_dir, table_name) else {
+            return Err(AdapterError::ExecutionFailed {
+                node_id: node_id.to_string(),
+                message: format!(
+                    "expected Dolt dump to produce `{table_name}.csv` under either `{}` or `{}`, but neither file was found.",
+                    repo_dir.display(),
+                    repo_dir.join("doltdump").display()
+                ),
+            });
+        };
+
+        let destination_file = bundle_root.join(format!(
+            "{table_name}.{}",
+            effective_format.file_extension()
+        ));
+        copy_or_convert_actual_dolt_dump_artifact(
+            &source_csv,
+            &destination_file,
+            effective_format,
+            conversion_connection.as_ref(),
+            node_id,
+        )?;
+
+        exported_tables.push(json!({
+            "source_table": table_name,
+            "file_path": workflow_relative_bundle_path(
+                &bundle_path,
+                &format!("{table_name}.{}", effective_format.file_extension())
+            ),
+            "row_count": Value::Null,
+        }));
+    }
+
+    Ok(Some(ActualDoltDumpBundle {
+        bundle_path,
+        current_commit: actual_commit,
+        effective_format,
+        exported_tables,
+    }))
 }
 
 fn open_runtime_workflow_duckdb(
@@ -2508,7 +3696,7 @@ fn execute_load_to_duckdb(
         .and_then(Value::as_str)
         .unwrap_or_default();
 
-    let resolved_bundle = match input_kind {
+    let mut resolved_bundle = match input_kind {
         "dolt_dump_bundle" => {
             let payload: DoltDumpBundlePayload = serde_json::from_value(bundle_input.value.clone())
                 .map_err(|error| AdapterError::ExecutionFailed {
@@ -2537,6 +3725,31 @@ fn execute_load_to_duckdb(
         }
     }?;
 
+    let load_manifest_path = build_load_to_duckdb_manifest_path(
+        &resolved_bundle.repo_family,
+        &resolved_bundle.bundle_kind,
+        resolved_bundle.previous_commit.as_deref(),
+        &resolved_bundle.current_commit,
+    );
+    let mut loaded_from_files = false;
+    if let Some(connection) = open_runtime_workflow_duckdb(context, &node.node_id)? {
+        loaded_from_files = persist_load_to_duckdb_tables_from_files(
+            &connection,
+            context,
+            target_schema,
+            &mut resolved_bundle,
+            &node.node_id,
+        )?;
+        if !loaded_from_files {
+            persist_load_to_duckdb_tables(
+                &connection,
+                target_schema,
+                &resolved_bundle,
+                &node.node_id,
+            )?;
+        }
+    }
+
     let primary_table =
         resolved_bundle
             .loaded_tables
@@ -2561,12 +3774,6 @@ fn execute_load_to_duckdb(
             })
         })
         .collect::<Vec<_>>();
-    let load_manifest_path = build_load_to_duckdb_manifest_path(
-        &resolved_bundle.repo_family,
-        &resolved_bundle.bundle_kind,
-        resolved_bundle.previous_commit.as_deref(),
-        &resolved_bundle.current_commit,
-    );
     let loaded_tables_metadata = resolved_bundle
         .loaded_tables
         .iter()
@@ -2598,10 +3805,6 @@ fn execute_load_to_duckdb(
             value
         })
         .collect::<Vec<_>>();
-
-    if let Some(connection) = open_runtime_workflow_duckdb(context, &node.node_id)? {
-        persist_load_to_duckdb_tables(&connection, target_schema, &resolved_bundle, &node.node_id)?;
-    }
 
     let mut outputs = PortValues::new();
     outputs.insert(
@@ -2681,10 +3884,15 @@ fn execute_load_to_duckdb(
     Ok(NodeExecutionResult {
         outputs,
         logs: vec![format!(
-            "Prepared {table_count} staging table(s) in `{target_schema}` from {bundle_label} for `{repository}` using `{table_mapping}` and `{schema_handling}` ({merge_context_summary}).",
+            "Prepared {table_count} staging table(s) in `{target_schema}` from {bundle_label} for `{repository}` using `{table_mapping}` and `{schema_handling}` ({merge_context_summary}; {load_summary}).",
             repository = resolved_bundle.repository,
             table_mapping = table_mapping.as_str(),
-            schema_handling = schema_handling.as_str()
+            schema_handling = schema_handling.as_str(),
+            load_summary = if loaded_from_files {
+                "loaded bundle files into DuckDB"
+            } else {
+                "used bundle metadata only"
+            }
         )],
     })
 }
@@ -5012,13 +6220,159 @@ fn normalize_text_input_value(
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        env, fs,
+        path::{Path, PathBuf},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    use duckdb::Connection as DuckDbConnection;
     use serde_json::{json, Value};
     use workflow_schema::{DataType, NodePosition, TypedValue, WorkflowNode};
 
-    use super::{build_gmail_mime_message, RuntimeAdapters};
+    use super::{
+        build_dolt_home_dir_path, build_gmail_mime_message,
+        copy_or_convert_actual_dolt_dump_artifact, parse_dolt_head_commit,
+        quote_duckdb_string_literal, resolve_dolt_dump_csv_path,
+        resolve_upstream_live_working_copy_path, strip_ansi_escape_sequences,
+        AdapterExecutionContext, DoltDumpOutputFormat, DoltRepoDatasetMetadataPayload,
+        RuntimeAdapters,
+    };
     use crate::PortValues;
     use node_registry::builtin_node_definitions;
+
+    fn unique_test_workflow_root(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        env::temp_dir().join(format!(
+            "stitchly_runtime_adapters_{label}_{}_{}",
+            std::process::id(),
+            nanos
+        ))
+    }
+
+    #[test]
+    fn parse_dolt_head_commit_reads_commit_line() {
+        let output = "commit 48puq5af61vq4d92l68du7bee0tu9u0v\nAuthor: test\n";
+        assert_eq!(
+            parse_dolt_head_commit(output).as_deref(),
+            Some("48puq5af61vq4d92l68du7bee0tu9u0v")
+        );
+    }
+
+    #[test]
+    fn strip_ansi_escape_sequences_removes_terminal_color_codes() {
+        assert_eq!(
+            strip_ansi_escape_sequences("\u{1b}[33mcommit abc123 \u{1b}[0m"),
+            "commit abc123 "
+        );
+    }
+
+    #[test]
+    fn parse_dolt_head_commit_reads_colorized_commit_line() {
+        let output = "\u{1b}[33mcommit 48puq5af61vq4d92l68du7bee0tu9u0v \u{1b}[0m\nAuthor: test\n";
+        assert_eq!(
+            parse_dolt_head_commit(output).as_deref(),
+            Some("48puq5af61vq4d92l68du7bee0tu9u0v")
+        );
+    }
+
+    #[test]
+    fn parse_dolt_head_commit_returns_none_for_unexpected_output() {
+        assert_eq!(parse_dolt_head_commit("Author: test\nDate: now\n"), None);
+    }
+
+    #[test]
+    fn resolve_upstream_live_working_copy_path_reads_live_repo_metadata() {
+        let metadata = DoltRepoDatasetMetadataPayload {
+            resolution_mode: Some("live_dolt".to_string()),
+            working_copy_path: Some("/tmp/stitchly-dolt-live/repo".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            resolve_upstream_live_working_copy_path(Some(&metadata)),
+            Some(PathBuf::from("/tmp/stitchly-dolt-live/repo"))
+        );
+    }
+
+    #[test]
+    fn resolve_upstream_live_working_copy_path_ignores_mock_repo_metadata() {
+        let metadata = DoltRepoDatasetMetadataPayload {
+            resolution_mode: Some("mock_profile".to_string()),
+            working_copy_path: Some("/tmp/stitchly-dolt-live/repo".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            resolve_upstream_live_working_copy_path(Some(&metadata)),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_dolt_dump_csv_path_finds_doltdump_subdirectory_output() {
+        let workflow_root = unique_test_workflow_root("dolt_dump_output_path");
+        let repo_dir = workflow_root.join("repo");
+        let dump_dir = repo_dir.join("doltdump");
+        fs::create_dir_all(&dump_dir).expect("doltdump directory");
+        fs::write(
+            dump_dir.join("us_treasury.csv"),
+            "curve_date,tenor,yield_pct\n",
+        )
+        .expect("dump csv");
+
+        assert_eq!(
+            resolve_dolt_dump_csv_path(&repo_dir, "us_treasury"),
+            Some(dump_dir.join("us_treasury.csv"))
+        );
+
+        let _ = fs::remove_dir_all(&workflow_root);
+    }
+
+    #[test]
+    fn copy_or_convert_actual_dolt_dump_artifact_writes_parquet() {
+        let workflow_root = unique_test_workflow_root("dolt_dump_parquet_conversion");
+        let source_csv = workflow_root.join("us_treasury.csv");
+        let destination_file = workflow_root.join("bundle").join("us_treasury.parquet");
+        fs::create_dir_all(destination_file.parent().expect("bundle parent"))
+            .expect("bundle directory");
+        fs::write(
+            &source_csv,
+            "curve_date,tenor,yield_pct\n2026-06-11,2Y,4.75\n2026-06-11,10Y,4.21\n",
+        )
+        .expect("source csv");
+
+        let duckdb_path = workflow_root.join("workflow.duckdb");
+        let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb should open");
+
+        copy_or_convert_actual_dolt_dump_artifact(
+            &source_csv,
+            &destination_file,
+            DoltDumpOutputFormat::Parquet,
+            Some(&duckdb),
+            "dolt_dump",
+        )
+        .expect("csv to parquet conversion should succeed");
+
+        assert!(destination_file.is_file(), "parquet file should exist");
+        let row_count: i64 = duckdb
+            .query_row(
+                &format!(
+                    "select count(*) from read_parquet({})",
+                    quote_duckdb_string_literal(destination_file.to_string_lossy().as_ref())
+                ),
+                [],
+                |row| row.get(0),
+            )
+            .expect("parquet row count query should succeed");
+        assert_eq!(row_count, 2);
+
+        let _ = fs::remove_dir_all(&workflow_root);
+    }
 
     #[test]
     fn dolt_repo_source_emits_dataset_reference_metadata() {
@@ -5694,6 +7048,105 @@ mod tests {
     }
 
     #[test]
+    fn dolt_dump_materializes_parquet_bundle_from_seeded_csv_exports() {
+        let registry = builtin_node_definitions();
+        let source_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_repo_source")
+            .expect("dolt_repo_source definition");
+        let dump_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "dolt_dump")
+            .expect("dolt_dump definition");
+        let workflow_root = unique_test_workflow_root("dolt_dump_seeded_csv");
+        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let seed_dir = workflow_root
+            .join("files")
+            .join("raw")
+            .join("dolt")
+            .join("rates");
+        fs::create_dir_all(&seed_dir).expect("seed directory should be created");
+        fs::write(
+            seed_dir.join("us_treasury.csv"),
+            "curve_date,tenor,yield_pct\n2026-06-01,2Y,4.820000\n2026-06-01,10Y,4.540000\n",
+        )
+        .expect("seed csv should be written");
+
+        let source_node = WorkflowNode {
+            node_id: "dolt_repo_source".to_string(),
+            type_id: "dolt_repo_source".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Repo Source".to_string()),
+            config: json!({
+                "connection_ref": "dolthub_public",
+                "repository": "seeded/rates",
+                "branch": "main"
+            }),
+            position: NodePosition::default(),
+        };
+        let source_result = RuntimeAdapters::default()
+            .execute(source_definition, &source_node, &PortValues::new())
+            .expect("dolt repo source should succeed");
+
+        let mut dump_inputs = PortValues::new();
+        dump_inputs.insert(
+            "repo".to_string(),
+            source_result
+                .outputs
+                .get("repo")
+                .expect("repo output should be present")
+                .clone(),
+        );
+        let dump_node = WorkflowNode {
+            node_id: "dolt_dump".to_string(),
+            type_id: "dolt_dump".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Dump".to_string()),
+            config: json!({
+                "output_format": "parquet",
+                "table_selection_mode": "manual_tables",
+                "selected_tables": ["us_treasury"]
+            }),
+            position: NodePosition::default(),
+        };
+        let context = AdapterExecutionContext {
+            workflow_duckdb_path: Some(duckdb_path.clone()),
+            ..AdapterExecutionContext::default()
+        };
+
+        let dump_result = RuntimeAdapters::default()
+            .execute_with_context(dump_definition, &dump_node, &dump_inputs, &context)
+            .expect("dolt dump should materialize seeded bundle");
+
+        let payload = dump_result
+            .outputs
+            .get("bundle")
+            .expect("bundle output should be present");
+        assert_eq!(payload.data_type, DataType::DirectoryRef);
+        assert_eq!(payload.value["directory_ref"]["format"], json!("csv"));
+        assert_eq!(
+            payload.value["directory_ref"]["path"],
+            json!("artifacts/dolt_dump/rates/pending_sync/csv")
+        );
+
+        let bundle_file = workflow_root
+            .join("files")
+            .join("artifacts")
+            .join("dolt_dump")
+            .join("rates")
+            .join("pending_sync")
+            .join("csv")
+            .join("us_treasury.csv");
+        assert!(bundle_file.is_file(), "csv bundle file should exist");
+
+        let csv_contents = fs::read_to_string(&bundle_file).expect("csv bundle should be readable");
+        assert!(csv_contents.contains("curve_date,tenor,yield_pct"));
+        assert!(csv_contents.contains("2026-06-01,2Y,4.820000"));
+
+        let _ = fs::remove_dir_all(&workflow_root);
+    }
+
+    #[test]
     fn dolt_diff_export_emits_delta_bundle_from_manifest_input() {
         let registry = builtin_node_definitions();
         let source_definition = registry
@@ -6088,6 +7541,117 @@ mod tests {
             payload.value["load_manifest_ref"]["path"],
             json!("artifacts/load_to_duckdb/earnings/a34ef9c/load_manifest.json")
         );
+    }
+
+    #[test]
+    fn load_to_duckdb_reads_actual_bundle_files_when_present() {
+        let registry = builtin_node_definitions();
+        let load_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "load_to_duckdb")
+            .expect("load_to_duckdb definition");
+        let workflow_root = unique_test_workflow_root("load_to_duckdb_actual_bundle");
+        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let bundle_dir = workflow_root
+            .join("files")
+            .join("artifacts")
+            .join("dolt_dump")
+            .join("rates")
+            .join("d0f61b4")
+            .join("csv");
+        fs::create_dir_all(&bundle_dir).expect("bundle directory should be created");
+        fs::write(
+            bundle_dir.join("us_treasury.csv"),
+            "curve_date,tenor,yield_pct\n2026-06-01,2Y,4.820000\n2026-06-01,10Y,4.540000\n",
+        )
+        .expect("sample csv should be written");
+
+        let mut inputs = PortValues::new();
+        inputs.insert(
+            "bundle".to_string(),
+            TypedValue {
+                data_type: DataType::DirectoryRef,
+                value: json!({
+                    "kind": "dolt_dump_bundle",
+                    "directory_ref": {
+                        "path": "artifacts/dolt_dump/rates/d0f61b4/csv",
+                        "format": "csv",
+                    },
+                    "repo_ref": {
+                        "connection_ref": "dolthub_public",
+                        "repository": "post-no-preference/rates",
+                        "branch": "main",
+                        "checkout_ref": Value::Null,
+                        "current_commit": "d0f61b4",
+                    },
+                    "metadata": {
+                        "repo_family": "rates",
+                        "exported_tables": [
+                            {
+                                "source_table": "us_treasury",
+                                "file_path": "artifacts/dolt_dump/rates/d0f61b4/csv/us_treasury.csv",
+                                "row_count": Value::Null,
+                            }
+                        ]
+                    }
+                }),
+            },
+        );
+        let node = WorkflowNode {
+            node_id: "load_to_duckdb".to_string(),
+            type_id: "load_to_duckdb".to_string(),
+            definition_version: 1,
+            label: Some("Load to DuckDB".to_string()),
+            config: json!({
+                "target_schema": "staging"
+            }),
+            position: NodePosition::default(),
+        };
+        let context = AdapterExecutionContext {
+            workflow_duckdb_path: Some(duckdb_path.clone()),
+            ..AdapterExecutionContext::default()
+        };
+
+        let result = RuntimeAdapters::default()
+            .execute_with_context(load_definition, &node, &inputs, &context)
+            .expect("load_to_duckdb should load actual files");
+        let payload = result
+            .outputs
+            .get("table")
+            .expect("table output should be present");
+
+        assert_eq!(
+            payload.value["table_name"],
+            json!("rates__us_treasury__snapshot")
+        );
+        assert_eq!(
+            payload.value["schema_definition"]["columns"][0]["name"],
+            json!("curve_date")
+        );
+        assert_eq!(
+            payload.value["schema_definition"]["columns"][1]["name"],
+            json!("tenor")
+        );
+        assert_eq!(
+            payload.value["schema_definition"]["columns"][2]["name"],
+            json!("yield_pct")
+        );
+        assert_eq!(
+            payload.value["metadata"]["loaded_tables"][0]["row_count"],
+            json!(2)
+        );
+
+        let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb should open");
+        let row_count: i64 = duckdb
+            .query_row(
+                "select count(*) from staging.rates__us_treasury__snapshot",
+                [],
+                |row| row.get(0),
+            )
+            .expect("staging row count query should succeed");
+        assert_eq!(row_count, 2);
+
+        let _ = fs::remove_dir_all(&workflow_root);
     }
 
     #[test]
@@ -7398,5 +8962,28 @@ mod tests {
         assert!(!encoded.is_empty());
         assert!(!encoded.contains('+'));
         assert!(!encoded.contains('/'));
+    }
+
+    #[test]
+    fn dolt_home_dir_path_prefers_state_dir() {
+        let path = build_dolt_home_dir_path(
+            Some(Path::new("/tmp/stitchly-state")),
+            Some(Path::new("/workspace")),
+        );
+
+        assert_eq!(
+            path,
+            Some(PathBuf::from("/tmp/stitchly-state/tooling/dolt-home"))
+        );
+    }
+
+    #[test]
+    fn dolt_home_dir_path_falls_back_to_workspace_state_dir() {
+        let path = build_dolt_home_dir_path(None, Some(Path::new("/workspace")));
+
+        assert_eq!(
+            path,
+            Some(PathBuf::from("/workspace/.stitchly/tooling/dolt-home"))
+        );
     }
 }

@@ -33,6 +33,7 @@ pub struct RuntimeService {
 }
 
 pub const INTERNAL_PARAM_WORKFLOW_DUCKDB_PATH: &str = "__workflow_duckdb_path";
+pub const INTERNAL_PARAM_DISABLE_LIVE_DOLT: &str = "__disable_live_dolt";
 
 struct RuntimeState {
     runs: HashMap<String, Arc<RunRecord>>,
@@ -518,10 +519,15 @@ impl RuntimeService {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(PathBuf::from);
+        let disable_live_dolt = run_params
+            .get(INTERNAL_PARAM_DISABLE_LIVE_DOLT)
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let execution_context = AdapterExecutionContext {
             workflow_id: Some(workflow.workflow_id.clone()),
             run_id: Some(run_id.clone()),
             workflow_duckdb_path,
+            disable_live_dolt,
         };
 
         let mut outputs = BTreeMap::<(String, String), workflow_schema::TypedValue>::new();

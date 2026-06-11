@@ -8,5 +8,5 @@ chrono = { workspace = true }
 node_registry = { path = "../node_registry" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+utoipa = { workspace = true }
 workflow_schema = { path = "../workflow_schema" }
-

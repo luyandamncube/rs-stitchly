@@ -3618,6 +3618,12 @@ button.canvas-data-panel__overview-row:hover {
   text-transform: uppercase;
 }
 
+.dashboard-route-loading__path {
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.62);
+  word-break: break-all;
+}
+
 .dashboard-overview__grid {
   display: grid;
   gap: 18px;

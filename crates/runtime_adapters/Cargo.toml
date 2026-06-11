@@ -7,7 +7,7 @@ edition = "2021"
 anyhow = { workspace = true }
 base64 = "0.22.1"
 chrono = { workspace = true }
-duckdb = { version = "1.2.2", features = ["bundled"] }
+duckdb = { version = "1.2.2", features = ["bundled", "parquet"] }
 node_registry = { path = "../node_registry" }
 reqwest = { version = "0.12.24", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde = { workspace = true }

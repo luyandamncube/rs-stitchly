@@ -19,7 +19,6 @@ vi.mock('./components/CanvasWorkspace', () => ({
 }));
 
 const api = vi.hoisted(() => ({
-  canUseDevAuthFallback: vi.fn(),
   cancelWorkspaceRun: vi.fn(),
   connectWorkspaceGmail: vi.fn(),
   createWorkflow: vi.fn(),
@@ -44,7 +43,6 @@ const api = vi.hoisted(() => ({
   logout: vi.fn(),
   previewWorkspaceCatalogTableDelete: vi.fn(),
   runWorkspaceCatalogQuery: vi.fn(),
-  shouldUseDevGoogleAuthFallback: vi.fn(),
   updateWorkflow: vi.fn(),
   updateWorkflowState: vi.fn()
 }));
@@ -263,7 +261,6 @@ describe('App platform shell', () => {
     window.localStorage.clear();
     window.history.replaceState({}, '', '/');
     delete window.google;
-    api.canUseDevAuthFallback.mockReset();
     api.cancelWorkspaceRun.mockReset();
     api.connectWorkspaceGmail.mockReset();
     api.createWorkspace.mockReset();
@@ -288,11 +285,8 @@ describe('App platform shell', () => {
     api.logout.mockReset();
     api.previewWorkspaceCatalogTableDelete.mockReset();
     api.runWorkspaceCatalogQuery.mockReset();
-    api.shouldUseDevGoogleAuthFallback.mockReset();
     api.updateWorkflow.mockReset();
     api.updateWorkflowState.mockReset();
-    api.canUseDevAuthFallback.mockReturnValue(false);
-    api.shouldUseDevGoogleAuthFallback.mockReturnValue(false);
     api.getSession.mockResolvedValue(UNAUTHENTICATED_SESSION);
     api.getWorkflowState.mockResolvedValue({ last_opened_workflow_id: null });
     api.getWorkspaceCatalog.mockImplementation(async (workspaceId) => {
@@ -394,26 +388,6 @@ describe('App platform shell', () => {
     });
 
     delete window.google;
-  });
-
-  it('uses the local dev Google code fallback in embedded browsers', async () => {
-    api.shouldUseDevGoogleAuthFallback.mockReturnValue(true);
-    api.loginWithGoogleCode.mockResolvedValue(AUTHENTICATED_SESSION);
-
-    render(<App />);
-
-    expect(
-      await screen.findByRole('heading', { name: /log in/i })
-    ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: /continue with google/i }));
-
-    await waitFor(() => {
-      expect(api.loginWithGoogleCode).toHaveBeenCalledWith('dev-google-auth-code');
-    });
-    await waitFor(() => {
-      expect(screen.getByTestId('canvas-workspace')).toBeInTheDocument();
-    });
   });
 
   it('navigates to the canvas home route with a collapsed overlay rail', async () => {
@@ -1676,14 +1650,26 @@ describe('App platform shell', () => {
     expect(screen.getByTestId('canvas-workspace')).toBeInTheDocument();
   });
 
-  it('redirects the deprecated workflows route back to canvas home', async () => {
+  it('loads the explicit workflows workspace route', async () => {
     api.getSession.mockResolvedValue(AUTHENTICATED_SESSION);
+    api.getWorkflows.mockResolvedValue({ workflows: [] });
     window.history.replaceState({}, '', '/w/default-workspace/workflows');
 
     render(<App />);
 
-    await waitFor(() => {
-      expect(window.location.pathname).toBe('/w/default-workspace/canvas');
-    });
+    expect(await screen.findByText('No workflows yet')).toBeInTheDocument();
+    expect(api.getWorkflows).toHaveBeenCalledWith('ws_default');
+    expect(window.location.pathname).toBe('/w/default-workspace/workflows');
+  });
+
+  it('fails hard for unsupported workspace screens instead of redirecting', async () => {
+    api.getSession.mockResolvedValue(AUTHENTICATED_SESSION);
+    window.history.replaceState({}, '', '/w/default-workspace/not-a-screen');
+
+    render(<App />);
+
+    expect(await screen.findByText('Page not found')).toBeInTheDocument();
+    expect(screen.getByText('/w/default-workspace/not-a-screen')).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/w/default-workspace/not-a-screen');
   });
 });

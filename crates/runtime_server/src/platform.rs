@@ -1634,7 +1634,9 @@ impl PlatformStore {
         persist_run_snapshot_row(&connection, workspace_id, requested_by_user_id, snapshot)?;
         drop(connection);
         if should_sync_workflow_duckdb_run(snapshot) {
-            self.sync_workflow_duckdb_run(workspace_id, snapshot)?;
+            if let Err(error) = self.sync_workflow_duckdb_run(workspace_id, snapshot) {
+                warn_workflow_duckdb_run_sync_failure(workspace_id, snapshot, &error);
+            }
         }
         Ok(())
     }
@@ -1655,7 +1657,9 @@ impl PlatformStore {
         tx.commit()?;
         drop(connection);
         if should_sync_workflow_duckdb_run(snapshot) {
-            self.sync_workflow_duckdb_run(workspace_id, snapshot)?;
+            if let Err(error) = self.sync_workflow_duckdb_run(workspace_id, snapshot) {
+                warn_workflow_duckdb_run_sync_failure(workspace_id, snapshot, &error);
+            }
         }
         Ok(())
     }
@@ -3765,6 +3769,19 @@ fn should_sync_workflow_duckdb_run(snapshot: &RunSnapshot) -> bool {
     )
 }
 
+fn warn_workflow_duckdb_run_sync_failure(
+    workspace_id: &str,
+    snapshot: &RunSnapshot,
+    error: &anyhow::Error,
+) {
+    eprintln!(
+        "warning: failed to mirror run `{}` for workflow `{}` in workspace `{}` into workflow DuckDB: {error:#}",
+        snapshot.run_id,
+        snapshot.workflow_id,
+        workspace_id
+    );
+}
+
 fn workflow_duckdb_run_sync_enabled() -> bool {
     !matches!(
         env::var("STITCHLY_ENABLE_WORKFLOW_RUN_DUCKDB_SYNC")
@@ -5500,6 +5517,73 @@ mod tests {
             )
             .expect("mirrored output row count");
         assert_eq!(mirrored_output_rows, 2);
+    }
+
+    #[test]
+    fn run_snapshot_persists_even_when_workflow_duckdb_mirroring_fails() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Mirror Failure Workspace")
+            .expect("workspace");
+        let workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+        let created = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
+            .expect("workflow creates");
+
+        let started_at = Utc
+            .with_ymd_and_hms(2026, 6, 11, 12, 0, 0)
+            .single()
+            .expect("valid datetime");
+        let finished_at = started_at + Duration::seconds(2);
+        let snapshot = RunSnapshot {
+            run_id: "run_duckdb_sync_failure".to_string(),
+            workflow_id: created.workflow.workflow_id.clone(),
+            workflow_version: created.workflow.version,
+            status: RunStatus::Succeeded,
+            trigger: RunTrigger {
+                kind: TriggerKind::Manual,
+            },
+            started_at: Some(started_at),
+            finished_at: Some(finished_at),
+            node_runs: vec![NodeRunSnapshot {
+                node_id: "table_output_bad_payload".to_string(),
+                type_id: "table_output".to_string(),
+                status: NodeRunStatus::Succeeded,
+                attempt: 1,
+                started_at: Some(started_at),
+                finished_at: Some(finished_at),
+                last_output: Some(TypedValue {
+                    data_type: workflow_schema::DataType::Json,
+                    value: serde_json::json!({
+                        "kind": "table_output_write",
+                        "table_name": "missing_target_schema"
+                    }),
+                }),
+                log_count: 1,
+                error: None,
+            }],
+            logs: vec![],
+            error: None,
+        };
+
+        store
+            .persist_run_snapshot(&workspace.workspace_id, Some("usr_builder"), &snapshot)
+            .expect("sqlite run snapshot persists even when workflow duckdb mirror fails");
+
+        let connection = store.connection();
+        let persisted_run_count: i64 = connection
+            .query_row(
+                "select count(*)
+                 from runs
+                 where workspace_id = ?1 and run_id = ?2",
+                params![workspace.workspace_id, snapshot.run_id],
+                |row| row.get(0),
+            )
+            .expect("run row count");
+        assert_eq!(persisted_run_count, 1);
     }
 
     #[test]

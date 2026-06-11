@@ -2,16 +2,17 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use utoipa::ToSchema;
 use workflow_schema::DataType;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PortDirection {
     Input,
     Output,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutorKind {
     RustNative,
@@ -20,7 +21,7 @@ pub enum ExecutorKind {
     EngineAdapter,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum IsolationMode {
     InProcess,
@@ -29,7 +30,7 @@ pub enum IsolationMode {
     Container,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct PortDefinition {
     pub port_id: String,
     pub display_name: String,
@@ -41,7 +42,7 @@ pub struct PortDefinition {
     pub description: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct RuntimeBinding {
     pub executor_kind: ExecutorKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -49,7 +50,7 @@ pub struct RuntimeBinding {
     pub isolation_mode: IsolationMode,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct NodeCapabilities {
     #[serde(default)]
     pub reads_external_state: bool,
@@ -65,7 +66,7 @@ pub struct NodeCapabilities {
     pub may_emit_structured_logs: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct NodeUi {
     pub icon: String,
     pub color_token: String,
@@ -77,7 +78,7 @@ pub struct NodeUi {
     pub node_card: Option<NodeCardUi>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct NodeCardUi {
     pub variant: String,
     pub icon_key: String,
@@ -91,7 +92,7 @@ pub struct NodeCardUi {
     pub size: NodeCardSize,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct NodeCardTopChip {
     #[serde(default)]
     pub visible: bool,
@@ -99,7 +100,7 @@ pub struct NodeCardTopChip {
     pub text: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct NodeCardHeader {
     pub title_source: String,
     #[serde(default)]
@@ -110,7 +111,7 @@ pub struct NodeCardHeader {
     pub status_badge: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct NodeCardRow {
     pub row_id: String,
     pub kind: String,
@@ -123,13 +124,13 @@ pub struct NodeCardRow {
     pub truncate: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct NodeCardValueBinding {
     pub source: String,
     pub path: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct NodeCardFooter {
     pub kind: String,
     pub label: String,
@@ -139,7 +140,7 @@ pub struct NodeCardFooter {
     pub icon_key: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct NodeCardHandles {
     pub input_layout: String,
     pub output_layout: String,
@@ -148,13 +149,13 @@ pub struct NodeCardHandles {
     pub align_to_rows: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct NodeCardSize {
     pub width: u32,
     pub density: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct NodeDefinition {
     pub type_id: String,
     pub version: u32,

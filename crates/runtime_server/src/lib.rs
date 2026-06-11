@@ -1,11 +1,19 @@
-use std::{convert::Infallible, env, fs, path::Path as FsPath};
+use std::{
+    convert::Infallible,
+    env, fs,
+    path::{Path as FsPath, PathBuf},
+};
 
 use api_contract::{
     AuthSessionResponse, ConnectionsResponse, CreateRunRequest, CreateWorkflowRequest,
-    CreateWorkspaceRequest, DeleteWorkflowResponse, DeleteWorkspaceResponse, ErrorResponse,
-    EventTarget, EventTargetKind, GoogleAuthCodeRequest, LogLevel, LoginRequest,
-    NodeDefinitionsResponse, NodeRunStatus, RunErrorCategory, RunErrorSummary, RunEvent,
-    RunEventType, RunEventsResponse, RunLogsResponse, RunSnapshot, RunStatus,
+    CreateWorkspaceRequest, DeleteWorkflowResponse, DeleteWorkspaceResponse,
+    DoltDiagnosticsResponse, ErrorResponse, EventTarget, EventTargetKind, GoogleAuthCodeRequest,
+    LogLevel, LoginRequest, NodeDefinitionsResponse, NodeRunStatus, RunErrorCategory,
+    RunErrorSummary, RunEvent, RunEventType, RunEventsResponse, RunLogsResponse, RunSnapshot,
+    RunStatus, TestingDiagnosticCheck, TestingDiagnosticStatus, TestingDoltDumpLoadRequest,
+    TestingDoltDumpLoadResponse, TestingDoltDumpOutputFormat, TestingDoltDumpTableSelectionMode,
+    TestingDoltRepoDumpRequest, TestingDoltRepoDumpResponse, TestingDoltRepoDumpTableSelectionMode,
+    TestingDoltRepoRequest, TestingDoltRepoResponse, TestingLoadedTableCount,
     UpdateWorkflowRequest, UpdateWorkflowStateRequest, ValidateWorkflowRequest,
     ValidateWorkflowResponse, WorkflowListResponse, WorkflowResponse, WorkflowStateResponse,
     WorkspaceCatalogDeleteTablePreviewResponse, WorkspaceCatalogDeleteTableResponse,
@@ -19,21 +27,30 @@ use axum::{
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{
         sse::{Event, KeepAlive},
-        IntoResponse, Sse,
+        Html, IntoResponse, Sse,
     },
     routing::{get, post},
     Json, Router,
 };
+use duckdb::Connection as DuckDbConnection;
 use futures::{stream, StreamExt};
 use platform::{AuthenticatedSession, PlatformStore};
 use runtime_core::{
-    RunEventSubscription, RuntimeError, RuntimeService, INTERNAL_PARAM_WORKFLOW_DUCKDB_PATH,
+    RunEventSubscription, RuntimeError, RuntimeService, INTERNAL_PARAM_DISABLE_LIVE_DOLT,
+    INTERNAL_PARAM_WORKFLOW_DUCKDB_PATH,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::{
+    process::Command,
+    time::{sleep, timeout, Duration},
+};
 use tokio_stream::wrappers::BroadcastStream;
+use utoipa::OpenApi;
 use uuid::Uuid;
-use workflow_schema::WorkflowDefinition;
+use workflow_schema::{
+    NodePosition, WorkflowDefinition, WorkflowEdge, WorkflowNode, CURRENT_SCHEMA_VERSION,
+};
 
 pub mod platform;
 
@@ -46,6 +63,10 @@ pub struct AppState {
 
 const GOOGLE_TOKEN_ENDPOINT: &str = "https://oauth2.googleapis.com/token";
 const GOOGLE_USERINFO_ENDPOINT: &str = "https://openidconnect.googleapis.com/v1/userinfo";
+const OPENAPI_DOC_PATH: &str = "/api-docs/openapi.json";
+const SWAGGER_UI_PATH: &str = "/swagger-ui";
+const DIAGNOSTIC_COMMAND_TIMEOUT_SECONDS: u64 = 5;
+const TESTING_DOLT_REPO_TIMEOUT_SECONDS: u64 = 600;
 
 #[derive(Clone)]
 struct GoogleAuthClient {
@@ -100,6 +121,62 @@ struct GoogleAccessTokenResult {
     scopes: Vec<String>,
     token_type: Option<String>,
 }
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        login,
+        logout,
+        get_session,
+        list_workspaces,
+        create_workspace,
+        get_workspace,
+        delete_workspace,
+        list_workflows,
+        create_workflow,
+        get_workflow,
+        update_workflow,
+        delete_workflow,
+        get_workflow_state,
+        update_workflow_state,
+        list_workspace_catalogs,
+        get_workspace_catalog_schema,
+        get_workspace_catalog_table,
+        preview_workspace_catalog_table_delete,
+        delete_workspace_catalog_table,
+        run_workspace_catalog_query,
+        list_workspace_runs,
+        create_workspace_run,
+        get_workspace_run,
+        cancel_workspace_run,
+        get_workspace_run_events,
+        get_workspace_run_logs,
+        validate_workflow,
+        create_run,
+        get_run,
+        cancel_run,
+        list_node_definitions,
+        list_connections,
+        get_dolt_diagnostics,
+        run_testing_dolt_repo,
+        run_testing_dolt_repo_dump,
+        run_testing_dolt_dump_load
+    ),
+    tags(
+        (name = "Auth", description = "Session-oriented authentication endpoints."),
+        (name = "Workspaces", description = "Workspace management and navigation state."),
+        (name = "Workflows", description = "Workflow persistence and validation."),
+        (name = "Catalog", description = "DuckDB catalog inspection and query endpoints."),
+        (name = "Runs", description = "Workflow execution, inspection, and cancellation."),
+        (name = "Metadata", description = "Static metadata used by the Stitchly UI."),
+        (name = "Testing", description = "Ad hoc development diagnostics and environment probes.")
+    ),
+    info(
+        title = "Stitchly Runtime API",
+        description = "Debug-oriented OpenAPI surface for the Stitchly runtime and workspace backend."
+    )
+)]
+struct ApiDoc;
 
 #[derive(Clone, Debug, Serialize)]
 struct SendEmailRuntimeDeliveryPayload {
@@ -195,11 +272,61 @@ pub fn app(runtime: RuntimeService, platform: PlatformStore) -> Router {
         .route("/api/runs/:run_id/events", get(stream_run_events))
         .route("/api/node-definitions", get(list_node_definitions))
         .route("/api/connections", get(list_connections))
+        .route("/api/testing/dolt", get(get_dolt_diagnostics))
+        .route("/api/testing/dolt/repo", post(run_testing_dolt_repo))
+        .route("/api/testing/dolt/repo-dump", post(run_testing_dolt_repo_dump))
+        .route("/api/testing/dolt/dump", post(run_testing_dolt_repo_dump))
+        .route("/api/testing/dolt/dump-load", post(run_testing_dolt_dump_load))
+        .route(OPENAPI_DOC_PATH, get(get_openapi_document))
+        .route(SWAGGER_UI_PATH, get(get_swagger_ui))
+        .route(&format!("{SWAGGER_UI_PATH}/"), get(get_swagger_ui))
         .with_state(AppState {
             runtime,
             platform,
             google_auth,
         })
+}
+
+async fn get_openapi_document() -> Json<utoipa::openapi::OpenApi> {
+    Json(ApiDoc::openapi())
+}
+
+async fn get_swagger_ui() -> Html<String> {
+    Html(format!(
+        r##"<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Stitchly API Docs</title>
+    <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+    <style>
+      html, body {{
+        margin: 0;
+        background: #111216;
+      }}
+
+      #swagger-ui {{
+        min-height: 100vh;
+      }}
+    </style>
+  </head>
+  <body>
+    <div id="swagger-ui"></div>
+    <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+    <script>
+      window.ui = SwaggerUIBundle({{
+        url: "{OPENAPI_DOC_PATH}",
+        dom_id: "#swagger-ui",
+        deepLinking: true,
+        displayRequestDuration: true,
+        filter: true,
+        persistAuthorization: true,
+      }});
+    </script>
+  </body>
+</html>"##
+    ))
 }
 
 impl GoogleAuthClient {
@@ -362,6 +489,16 @@ impl GoogleAuthClient {
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/auth/login",
+    tag = "Auth",
+    request_body = LoginRequest,
+    responses(
+        (status = 200, description = "Authenticated session created.", body = AuthSessionResponse),
+        (status = 401, description = "Invalid credentials.", body = ErrorResponse)
+    )
+)]
 async fn login(
     State(state): State<AppState>,
     Json(request): Json<LoginRequest>,
@@ -443,6 +580,14 @@ async fn login_with_google_code(
     Ok((response_headers, Json(session.session)))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/auth/logout",
+    tag = "Auth",
+    responses(
+        (status = 200, description = "Session cleared and cookie removed.", body = AuthSessionResponse)
+    )
+)]
 async fn logout(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -459,6 +604,14 @@ async fn logout(
     Ok((response_headers, Json(unauthenticated_session())))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/auth/session",
+    tag = "Auth",
+    responses(
+        (status = 200, description = "Current session state.", body = AuthSessionResponse)
+    )
+)]
 async fn get_session(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -471,6 +624,15 @@ async fn get_session(
     ))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/workspaces",
+    tag = "Workspaces",
+    responses(
+        (status = 200, description = "Accessible workspaces for the authenticated user.", body = WorkspaceListResponse),
+        (status = 401, description = "Authentication required.", body = ErrorResponse)
+    )
+)]
 async fn list_workspaces(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -483,6 +645,18 @@ async fn list_workspaces(
     Ok(Json(workspaces))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/workspaces",
+    tag = "Workspaces",
+    request_body = CreateWorkspaceRequest,
+    responses(
+        (status = 201, description = "Workspace created.", body = WorkspaceResponse),
+        (status = 400, description = "Invalid workspace request.", body = ErrorResponse),
+        (status = 401, description = "Authentication required.", body = ErrorResponse),
+        (status = 409, description = "Workspace conflict.", body = ErrorResponse)
+    )
+)]
 async fn create_workspace(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -496,6 +670,19 @@ async fn create_workspace(
     Ok((StatusCode::CREATED, Json(WorkspaceResponse { workspace })))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/workspaces/{workspace_id}",
+    tag = "Workspaces",
+    params(
+        ("workspace_id" = String, Path, description = "Workspace identifier.")
+    ),
+    responses(
+        (status = 200, description = "Workspace details.", body = WorkspaceResponse),
+        (status = 401, description = "Authentication required.", body = ErrorResponse),
+        (status = 404, description = "Workspace not found.", body = ErrorResponse)
+    )
+)]
 async fn get_workspace(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -510,6 +697,20 @@ async fn get_workspace(
     Ok(Json(WorkspaceResponse { workspace }))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/workspaces/{workspace_id}",
+    tag = "Workspaces",
+    params(
+        ("workspace_id" = String, Path, description = "Workspace identifier.")
+    ),
+    responses(
+        (status = 200, description = "Workspace deleted.", body = DeleteWorkspaceResponse),
+        (status = 401, description = "Authentication required.", body = ErrorResponse),
+        (status = 403, description = "Owner role required.", body = ErrorResponse),
+        (status = 404, description = "Workspace not found.", body = ErrorResponse)
+    )
+)]
 async fn delete_workspace(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -593,6 +794,19 @@ async fn connect_workspace_gmail(
     ))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/workspaces/{workspace_id}/workflows",
+    tag = "Workflows",
+    params(
+        ("workspace_id" = String, Path, description = "Workspace identifier.")
+    ),
+    responses(
+        (status = 200, description = "Persisted workflows in the workspace.", body = WorkflowListResponse),
+        (status = 401, description = "Authentication required.", body = ErrorResponse),
+        (status = 404, description = "Workspace not found.", body = ErrorResponse)
+    )
+)]
 async fn list_workflows(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -606,6 +820,22 @@ async fn list_workflows(
     Ok(Json(workflows))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/workspaces/{workspace_id}/workflows",
+    tag = "Workflows",
+    params(
+        ("workspace_id" = String, Path, description = "Workspace identifier.")
+    ),
+    request_body = CreateWorkflowRequest,
+    responses(
+        (status = 201, description = "Workflow created.", body = WorkflowResponse),
+        (status = 400, description = "Invalid workflow payload.", body = ErrorResponse),
+        (status = 401, description = "Authentication required.", body = ErrorResponse),
+        (status = 404, description = "Workspace not found.", body = ErrorResponse),
+        (status = 409, description = "Workflow conflict.", body = ErrorResponse)
+    )
+)]
 async fn create_workflow(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -620,6 +850,20 @@ async fn create_workflow(
     Ok((StatusCode::CREATED, Json(workflow)))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/workspaces/{workspace_id}/workflows/{workflow_id}",
+    tag = "Workflows",
+    params(
+        ("workspace_id" = String, Path, description = "Workspace identifier."),
+        ("workflow_id" = String, Path, description = "Workflow identifier.")
+    ),
+    responses(
+        (status = 200, description = "Workflow definition and summary.", body = WorkflowResponse),
+        (status = 401, description = "Authentication required.", body = ErrorResponse),
+        (status = 404, description = "Workflow not found.", body = ErrorResponse)
+    )
+)]
 async fn get_workflow(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -638,6 +882,23 @@ async fn get_workflow(
     Ok(Json(workflow))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/workspaces/{workspace_id}/workflows/{workflow_id}",
+    tag = "Workflows",
+    params(
+        ("workspace_id" = String, Path, description = "Workspace identifier."),
+        ("workflow_id" = String, Path, description = "Workflow identifier.")
+    ),
+    request_body = UpdateWorkflowRequest,
+    responses(
+        (status = 200, description = "Workflow updated.", body = WorkflowResponse),
+        (status = 400, description = "Invalid workflow payload.", body = ErrorResponse),
+        (status = 401, description = "Authentication required.", body = ErrorResponse),
+        (status = 404, description = "Workflow not found.", body = ErrorResponse),
+        (status = 409, description = "Workflow conflict.", body = ErrorResponse)
+    )
+)]
 async fn update_workflow(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -662,6 +923,20 @@ async fn update_workflow(
     Ok(Json(workflow))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/workspaces/{workspace_id}/workflows/{workflow_id}",
+    tag = "Workflows",
+    params(
+        ("workspace_id" = String, Path, description = "Workspace identifier."),
+        ("workflow_id" = String, Path, description = "Workflow identifier.")
+    ),
+    responses(
+        (status = 200, description = "Workflow archived.", body = DeleteWorkflowResponse),
+        (status = 401, description = "Authentication required.", body = ErrorResponse),
+        (status = 404, description = "Workflow not found.", body = ErrorResponse)
+    )
+)]
 async fn delete_workflow(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -680,6 +955,19 @@ async fn delete_workflow(
     Ok(Json(response))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/workspaces/{workspace_id}/workflow-state",
+    tag = "Workspaces",
+    params(
+        ("workspace_id" = String, Path, description = "Workspace identifier.")
+    ),
+    responses(
+        (status = 200, description = "Last-opened workflow pointer for the workspace.", body = WorkflowStateResponse),
+        (status = 401, description = "Authentication required.", body = ErrorResponse),
+        (status = 404, description = "Workspace not found.", body = ErrorResponse)
+    )
+)]
 async fn get_workflow_state(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -693,6 +981,21 @@ async fn get_workflow_state(
     Ok(Json(state_response))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/workspaces/{workspace_id}/workflow-state",
+    tag = "Workspaces",
+    params(
+        ("workspace_id" = String, Path, description = "Workspace identifier.")
+    ),
+    request_body = UpdateWorkflowStateRequest,
+    responses(
+        (status = 200, description = "Workspace navigation state updated.", body = WorkflowStateResponse),
+        (status = 400, description = "Invalid workflow state request.", body = ErrorResponse),
+        (status = 401, description = "Authentication required.", body = ErrorResponse),
+        (status = 404, description = "Workspace not found.", body = ErrorResponse)
+    )
+)]
 async fn update_workflow_state(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -711,6 +1014,19 @@ async fn update_workflow_state(
     Ok(Json(state_response))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/workspaces/{workspace_id}/catalog",
+    tag = "Catalog",
+    params(
+        ("workspace_id" = String, Path, description = "Workspace identifier.")
+    ),
+    responses(
+        (status = 200, description = "Catalogs for workflow DuckDB databases in the workspace.", body = WorkspaceCatalogResponse),
+        (status = 401, description = "Authentication required.", body = ErrorResponse),
+        (status = 404, description = "Workspace not found.", body = ErrorResponse)
+    )
+)]
 async fn list_workspace_catalogs(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -724,6 +1040,21 @@ async fn list_workspace_catalogs(
     Ok(Json(catalog))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/workspaces/{workspace_id}/catalog/{workflow_id}/schemas/{schema_name}",
+    tag = "Catalog",
+    params(
+        ("workspace_id" = String, Path, description = "Workspace identifier."),
+        ("workflow_id" = String, Path, description = "Workflow identifier."),
+        ("schema_name" = String, Path, description = "DuckDB schema name.")
+    ),
+    responses(
+        (status = 200, description = "Schema details.", body = WorkspaceCatalogSchemaResponse),
+        (status = 401, description = "Authentication required.", body = ErrorResponse),
+        (status = 404, description = "Schema not found.", body = ErrorResponse)
+    )
+)]
 async fn get_workspace_catalog_schema(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -747,6 +1078,22 @@ async fn get_workspace_catalog_schema(
     Ok(Json(schema))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/workspaces/{workspace_id}/catalog/{workflow_id}/schemas/{schema_name}/tables/{table_name}",
+    tag = "Catalog",
+    params(
+        ("workspace_id" = String, Path, description = "Workspace identifier."),
+        ("workflow_id" = String, Path, description = "Workflow identifier."),
+        ("schema_name" = String, Path, description = "DuckDB schema name."),
+        ("table_name" = String, Path, description = "DuckDB table name.")
+    ),
+    responses(
+        (status = 200, description = "Table details and sample rows.", body = WorkspaceCatalogTableResponse),
+        (status = 401, description = "Authentication required.", body = ErrorResponse),
+        (status = 404, description = "Table not found.", body = ErrorResponse)
+    )
+)]
 async fn get_workspace_catalog_table(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -776,6 +1123,22 @@ async fn get_workspace_catalog_table(
     Ok(Json(table))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/workspaces/{workspace_id}/catalog/{workflow_id}/schemas/{schema_name}/tables/{table_name}/delete-preview",
+    tag = "Catalog",
+    params(
+        ("workspace_id" = String, Path, description = "Workspace identifier."),
+        ("workflow_id" = String, Path, description = "Workflow identifier."),
+        ("schema_name" = String, Path, description = "DuckDB schema name."),
+        ("table_name" = String, Path, description = "DuckDB table name.")
+    ),
+    responses(
+        (status = 200, description = "Delete impact preview for the table.", body = WorkspaceCatalogDeleteTablePreviewResponse),
+        (status = 401, description = "Authentication required.", body = ErrorResponse),
+        (status = 404, description = "Table not found.", body = ErrorResponse)
+    )
+)]
 async fn preview_workspace_catalog_table_delete(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -805,6 +1168,23 @@ async fn preview_workspace_catalog_table_delete(
     Ok(Json(preview))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/workspaces/{workspace_id}/catalog/{workflow_id}/schemas/{schema_name}/tables/{table_name}",
+    tag = "Catalog",
+    params(
+        ("workspace_id" = String, Path, description = "Workspace identifier."),
+        ("workflow_id" = String, Path, description = "Workflow identifier."),
+        ("schema_name" = String, Path, description = "DuckDB schema name."),
+        ("table_name" = String, Path, description = "DuckDB table name.")
+    ),
+    responses(
+        (status = 200, description = "Table deleted from the catalog.", body = WorkspaceCatalogDeleteTableResponse),
+        (status = 400, description = "Table cannot be deleted.", body = ErrorResponse),
+        (status = 401, description = "Authentication required.", body = ErrorResponse),
+        (status = 404, description = "Table not found.", body = ErrorResponse)
+    )
+)]
 async fn delete_workspace_catalog_table(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -834,6 +1214,22 @@ async fn delete_workspace_catalog_table(
     Ok(Json(response))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/workspaces/{workspace_id}/catalog/{workflow_id}/query",
+    tag = "Catalog",
+    params(
+        ("workspace_id" = String, Path, description = "Workspace identifier."),
+        ("workflow_id" = String, Path, description = "Workflow identifier.")
+    ),
+    request_body = WorkspaceCatalogQueryRequest,
+    responses(
+        (status = 200, description = "Read-only query results.", body = WorkspaceCatalogQueryResponse),
+        (status = 400, description = "Invalid or unsafe query.", body = ErrorResponse),
+        (status = 401, description = "Authentication required.", body = ErrorResponse),
+        (status = 404, description = "Workflow not found.", body = ErrorResponse)
+    )
+)]
 async fn run_workspace_catalog_query(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -858,6 +1254,19 @@ async fn run_workspace_catalog_query(
     Ok(Json(response))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/workspaces/{workspace_id}/runs",
+    tag = "Runs",
+    params(
+        ("workspace_id" = String, Path, description = "Workspace identifier.")
+    ),
+    responses(
+        (status = 200, description = "Historical and live runs for the workspace.", body = WorkspaceRunsResponse),
+        (status = 401, description = "Authentication required.", body = ErrorResponse),
+        (status = 404, description = "Workspace not found.", body = ErrorResponse)
+    )
+)]
 async fn list_workspace_runs(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -892,6 +1301,22 @@ async fn list_workspace_runs(
     Ok(Json(WorkspaceRunsResponse { runs }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/workspaces/{workspace_id}/runs",
+    tag = "Runs",
+    params(
+        ("workspace_id" = String, Path, description = "Workspace identifier.")
+    ),
+    request_body = CreateRunRequest,
+    responses(
+        (status = 202, description = "Run accepted for execution.", body = api_contract::CreateRunResponse),
+        (status = 400, description = "Invalid workflow or run request.", body = ErrorResponse),
+        (status = 401, description = "Authentication required.", body = ErrorResponse),
+        (status = 404, description = "Workflow not found.", body = ErrorResponse),
+        (status = 409, description = "Run conflict.", body = ErrorResponse)
+    )
+)]
 async fn create_workspace_run(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -993,6 +1418,20 @@ async fn create_workspace_run(
     Ok((StatusCode::ACCEPTED, Json(response)))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/workspaces/{workspace_id}/runs/{run_id}",
+    tag = "Runs",
+    params(
+        ("workspace_id" = String, Path, description = "Workspace identifier."),
+        ("run_id" = String, Path, description = "Run identifier.")
+    ),
+    responses(
+        (status = 200, description = "Run snapshot.", body = WorkspaceRunResponse),
+        (status = 401, description = "Authentication required.", body = ErrorResponse),
+        (status = 404, description = "Run not found.", body = ErrorResponse)
+    )
+)]
 async fn get_workspace_run(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1024,6 +1463,21 @@ async fn get_workspace_run(
     Ok(Json(WorkspaceRunResponse { run: snapshot }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/workspaces/{workspace_id}/runs/{run_id}/cancel",
+    tag = "Runs",
+    params(
+        ("workspace_id" = String, Path, description = "Workspace identifier."),
+        ("run_id" = String, Path, description = "Run identifier.")
+    ),
+    responses(
+        (status = 200, description = "Run cancelled or marked cancelled.", body = WorkspaceRunResponse),
+        (status = 401, description = "Authentication required.", body = ErrorResponse),
+        (status = 404, description = "Run not found.", body = ErrorResponse),
+        (status = 409, description = "Run is not cancellable.", body = ErrorResponse)
+    )
+)]
 async fn cancel_workspace_run(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1091,6 +1545,20 @@ async fn cancel_workspace_run(
     Ok(Json(WorkspaceRunResponse { run: snapshot }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/workspaces/{workspace_id}/runs/{run_id}/events",
+    tag = "Runs",
+    params(
+        ("workspace_id" = String, Path, description = "Workspace identifier."),
+        ("run_id" = String, Path, description = "Run identifier.")
+    ),
+    responses(
+        (status = 200, description = "Recorded run events.", body = RunEventsResponse),
+        (status = 401, description = "Authentication required.", body = ErrorResponse),
+        (status = 404, description = "Run not found.", body = ErrorResponse)
+    )
+)]
 async fn get_workspace_run_events(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1131,6 +1599,20 @@ async fn get_workspace_run_events(
     Ok(Json(RunEventsResponse { events }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/workspaces/{workspace_id}/runs/{run_id}/logs",
+    tag = "Runs",
+    params(
+        ("workspace_id" = String, Path, description = "Workspace identifier."),
+        ("run_id" = String, Path, description = "Run identifier.")
+    ),
+    responses(
+        (status = 200, description = "Run logs.", body = RunLogsResponse),
+        (status = 401, description = "Authentication required.", body = ErrorResponse),
+        (status = 404, description = "Run not found.", body = ErrorResponse)
+    )
+)]
 async fn get_workspace_run_logs(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1174,6 +1656,15 @@ async fn get_workspace_run_logs(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/workflows/validate",
+    tag = "Workflows",
+    request_body = ValidateWorkflowRequest,
+    responses(
+        (status = 200, description = "Validation result with errors and warnings.", body = ValidateWorkflowResponse)
+    )
+)]
 async fn validate_workflow(
     State(state): State<AppState>,
     Json(request): Json<ValidateWorkflowRequest>,
@@ -1181,6 +1672,17 @@ async fn validate_workflow(
     Json(state.runtime.validate_workflow(&request.workflow))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/runs",
+    tag = "Runs",
+    request_body = CreateRunRequest,
+    responses(
+        (status = 202, description = "Run accepted for execution.", body = api_contract::CreateRunResponse),
+        (status = 400, description = "Invalid workflow or run request.", body = ErrorResponse),
+        (status = 409, description = "Run conflict.", body = ErrorResponse)
+    )
+)]
 async fn create_run(
     State(state): State<AppState>,
     Json(request): Json<CreateRunRequest>,
@@ -1193,6 +1695,18 @@ async fn create_run(
     Ok((StatusCode::ACCEPTED, Json(response)))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/runs/{run_id}",
+    tag = "Runs",
+    params(
+        ("run_id" = String, Path, description = "Run identifier.")
+    ),
+    responses(
+        (status = 200, description = "Run snapshot.", body = RunSnapshot),
+        (status = 404, description = "Run not found.", body = ErrorResponse)
+    )
+)]
 async fn get_run(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
@@ -1205,6 +1719,18 @@ async fn get_run(
     Ok(Json(snapshot))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/runs/{run_id}/cancel",
+    tag = "Runs",
+    params(
+        ("run_id" = String, Path, description = "Run identifier.")
+    ),
+    responses(
+        (status = 200, description = "Run cancelled.", body = RunSnapshot),
+        (status = 409, description = "Only active runs can be cancelled.", body = ErrorResponse)
+    )
+)]
 async fn cancel_run(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
@@ -1231,14 +1757,967 @@ async fn stream_run_events(
     Ok(Sse::new(event_stream(subscription)).keep_alive(KeepAlive::default()))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/node-definitions",
+    tag = "Metadata",
+    responses(
+        (status = 200, description = "Available node definitions.", body = NodeDefinitionsResponse)
+    )
+)]
 async fn list_node_definitions(State(state): State<AppState>) -> Json<NodeDefinitionsResponse> {
     Json(state.runtime.node_definitions())
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/connections",
+    tag = "Metadata",
+    responses(
+        (status = 200, description = "Available connection definitions.", body = ConnectionsResponse)
+    )
+)]
 async fn list_connections(State(state): State<AppState>) -> Json<ConnectionsResponse> {
     Json(ConnectionsResponse {
         connections: state.runtime.connections(),
     })
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/testing/dolt",
+    tag = "Testing",
+    responses(
+        (status = 200, description = "Dolt CLI installation and basic command diagnostics.", body = DoltDiagnosticsResponse)
+    )
+)]
+async fn get_dolt_diagnostics() -> Json<DoltDiagnosticsResponse> {
+    Json(collect_dolt_diagnostics().await)
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/testing/dolt/repo",
+    tag = "Testing",
+    description = "Execute the scaffolded dolt_repo_source test workflow with real defaults. The request needs a repo path such as `post-no-preference/rates` and may optionally include `branch`; the backend uses `dolthub_public`, `reuse_local_copy`, and `pull_before_execution` by default, and falls back to `main` when branch is omitted. The request blocks until the workflow succeeds or fails.",
+    request_body = TestingDoltRepoRequest,
+    responses(
+        (status = 200, description = "Executed a scaffolded dolt_repo_source workflow.", body = TestingDoltRepoResponse),
+        (status = 400, description = "Invalid dolt repo test request.", body = ErrorResponse),
+        (status = 500, description = "Failed to execute the scaffolded dolt repo workflow.", body = ErrorResponse)
+    )
+)]
+async fn run_testing_dolt_repo(
+    State(state): State<AppState>,
+    Json(request): Json<TestingDoltRepoRequest>,
+) -> Result<Json<TestingDoltRepoResponse>, ApiError> {
+    let repository = request.repo.trim();
+    if repository.is_empty() {
+        return Err(ApiError::bad_request(
+            "Testing dolt repo requires a non-empty repo value.".to_string(),
+        ));
+    }
+    let branch = request
+        .branch
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("main");
+
+    let workflow = build_testing_dolt_repo_workflow(repository, branch);
+    let (workflow_root, workflow_duckdb_path) = allocate_testing_workflow_root("dolt_repo")?;
+    let mut params = serde_json::Map::new();
+    params.insert(
+        INTERNAL_PARAM_WORKFLOW_DUCKDB_PATH.to_string(),
+        Value::String(workflow_duckdb_path.display().to_string()),
+    );
+
+    let run = state
+        .runtime
+        .create_run(CreateRunRequest {
+            workflow,
+            trigger: Default::default(),
+            params,
+        })
+        .await
+        .map_err(ApiError::from)?;
+
+    let (snapshot, completed) = wait_for_run_completion(
+        &state.runtime,
+        &run.run_id,
+        Duration::from_secs(TESTING_DOLT_REPO_TIMEOUT_SECONDS),
+    )
+    .await?;
+    let repo_output = snapshot
+        .node_runs
+        .iter()
+        .find(|node_run| node_run.node_id == "dolt_repo_source")
+        .and_then(|node_run| node_run.last_output.clone());
+
+    Ok(Json(TestingDoltRepoResponse {
+        run_id: run.run_id,
+        completed,
+        timed_out: !completed,
+        workflow_root: Some(workflow_root.display().to_string()),
+        workflow_duckdb_path: Some(workflow_duckdb_path.display().to_string()),
+        repo_output,
+        snapshot,
+    }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/testing/dolt/repo-dump",
+    tag = "Testing",
+    description = "Execute the scaffolded dolt_repo_source -> dolt_dump test workflow as a standalone live run. This route always provisions workflow storage so the shared runtime adapters attempt real Dolt execution and real bundle materialization rather than silently returning a metadata-only mock bundle.",
+    request_body = TestingDoltRepoDumpRequest,
+    responses(
+        (status = 200, description = "Executed a scaffolded dolt_repo_source -> dolt_dump workflow.", body = TestingDoltRepoDumpResponse),
+        (status = 400, description = "Invalid dolt repo dump test request.", body = ErrorResponse),
+        (status = 500, description = "Failed to execute the scaffolded dolt repo dump workflow.", body = ErrorResponse)
+    )
+)]
+async fn run_testing_dolt_repo_dump(
+    State(state): State<AppState>,
+    Json(request): Json<TestingDoltRepoDumpRequest>,
+) -> Result<Json<TestingDoltRepoDumpResponse>, ApiError> {
+    let repository = request.repo.trim();
+    if repository.is_empty() {
+        return Err(ApiError::bad_request(
+            "Testing dolt repo dump requires a non-empty repo value.".to_string(),
+        ));
+    }
+
+    let selected_tables = normalize_testing_selected_tables(&request.selected_tables);
+    if matches!(
+        request.table_selection_mode,
+        TestingDoltRepoDumpTableSelectionMode::ManualTables
+    ) && selected_tables.is_empty()
+    {
+        return Err(ApiError::bad_request(
+            "Manual table selection requires at least one selected table.".to_string(),
+        ));
+    }
+
+    let branch = request
+        .branch
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("main");
+
+    let workflow = build_testing_dolt_repo_dump_workflow(
+        repository,
+        branch,
+        &request.output_format,
+        &request.table_selection_mode,
+        selected_tables,
+    );
+    let timeout_seconds = request.timeout_seconds.unwrap_or(60).clamp(1, 300);
+
+    let (workflow_root, workflow_duckdb_path) = allocate_testing_workflow_root("dolt_repo_dump")?;
+
+    let mut params = serde_json::Map::new();
+    params.insert(
+        INTERNAL_PARAM_WORKFLOW_DUCKDB_PATH.to_string(),
+        Value::String(workflow_duckdb_path.display().to_string()),
+    );
+
+    let run = state
+        .runtime
+        .create_run(CreateRunRequest {
+            workflow,
+            trigger: Default::default(),
+            params,
+        })
+        .await
+        .map_err(ApiError::from)?;
+
+    let (snapshot, completed) = wait_for_run_completion(
+        &state.runtime,
+        &run.run_id,
+        Duration::from_secs(timeout_seconds),
+    )
+    .await?;
+    let bundle_output = snapshot
+        .node_runs
+        .iter()
+        .find(|node_run| node_run.node_id == "dolt_dump")
+        .and_then(|node_run| node_run.last_output.clone());
+
+    Ok(Json(TestingDoltRepoDumpResponse {
+        run_id: run.run_id,
+        completed,
+        timed_out: !completed,
+        workflow_root: Some(workflow_root.display().to_string()),
+        workflow_duckdb_path: Some(workflow_duckdb_path.display().to_string()),
+        bundle_output,
+        snapshot,
+    }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/testing/dolt/dump-load",
+    tag = "Testing",
+    description = "Execute the scaffolded dolt_repo_source -> dolt_dump -> load_to_duckdb test workflow. This route always provisions a workflow DuckDB file and returns actual per-table count(*) results. If you already have exported CSV or parquet files, pass seed_export_root to stage them into the temporary workflow root and skip live Dolt materialization.",
+    request_body = TestingDoltDumpLoadRequest,
+    responses(
+        (status = 200, description = "Executed the scaffolded dolt dump + load workflow.", body = TestingDoltDumpLoadResponse),
+        (status = 400, description = "Invalid dolt dump load test request.", body = ErrorResponse),
+        (status = 500, description = "Failed to execute the scaffolded dolt dump load workflow.", body = ErrorResponse)
+    )
+)]
+async fn run_testing_dolt_dump_load(
+    State(state): State<AppState>,
+    Json(request): Json<TestingDoltDumpLoadRequest>,
+) -> Result<Json<TestingDoltDumpLoadResponse>, ApiError> {
+    let repository = request.repository.trim();
+    if repository.is_empty() {
+        return Err(ApiError::bad_request(
+            "Testing dolt dump load requires a non-empty repository.".to_string(),
+        ));
+    }
+
+    let selected_tables = normalize_testing_selected_tables(&request.selected_tables);
+    if matches!(
+        request.table_selection_mode,
+        TestingDoltDumpTableSelectionMode::ManualTables
+    ) && selected_tables.is_empty()
+    {
+        return Err(ApiError::bad_request(
+            "Manual table selection requires at least one selected table.".to_string(),
+        ));
+    }
+
+    let connection_ref = request
+        .connection_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("dolthub_public");
+    let branch = request
+        .branch
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("main");
+    let checkout_ref = request
+        .checkout_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let target_schema = request
+        .target_schema
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("staging");
+    let timeout_seconds = request.timeout_seconds.unwrap_or(30).clamp(1, 300);
+
+    let (workflow_root, workflow_duckdb_path) = allocate_testing_workflow_root("dolt_dump_load")?;
+    if let Some(seed_export_root) = request.seed_export_root.as_deref() {
+        stage_testing_dolt_seed_exports(seed_export_root, repository, &workflow_root)?;
+    }
+
+    let workflow = build_testing_dolt_dump_load_workflow(
+        repository,
+        connection_ref,
+        branch,
+        checkout_ref.clone(),
+        &request.output_format,
+        &request.table_selection_mode,
+        selected_tables,
+        target_schema,
+    );
+    let mut params = serde_json::Map::new();
+    params.insert(
+        INTERNAL_PARAM_WORKFLOW_DUCKDB_PATH.to_string(),
+        Value::String(workflow_duckdb_path.display().to_string()),
+    );
+    if request.seed_export_root.is_some() {
+        params.insert(
+            INTERNAL_PARAM_DISABLE_LIVE_DOLT.to_string(),
+            Value::Bool(true),
+        );
+    }
+
+    let run = state
+        .runtime
+        .create_run(CreateRunRequest {
+            workflow,
+            trigger: Default::default(),
+            params,
+        })
+        .await
+        .map_err(ApiError::from)?;
+
+    let (snapshot, completed) = wait_for_run_completion(
+        &state.runtime,
+        &run.run_id,
+        Duration::from_secs(timeout_seconds),
+    )
+    .await?;
+    let bundle_output = snapshot
+        .node_runs
+        .iter()
+        .find(|node_run| node_run.node_id == "dolt_dump")
+        .and_then(|node_run| node_run.last_output.clone());
+    let table_output = snapshot
+        .node_runs
+        .iter()
+        .find(|node_run| node_run.node_id == "load_to_duckdb")
+        .and_then(|node_run| node_run.last_output.clone());
+    let loaded_table_counts = if completed && snapshot.status == RunStatus::Succeeded {
+        if let Some(table_output) = table_output.as_ref() {
+            collect_testing_loaded_table_counts(&workflow_duckdb_path, table_output)?
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    Ok(Json(TestingDoltDumpLoadResponse {
+        run_id: run.run_id,
+        completed,
+        timed_out: !completed,
+        workflow_root: Some(workflow_root.display().to_string()),
+        workflow_duckdb_path: Some(workflow_duckdb_path.display().to_string()),
+        bundle_output,
+        table_output,
+        loaded_table_counts,
+        snapshot,
+    }))
+}
+
+#[derive(Debug)]
+struct CommandDiagnosticOutcome {
+    success: bool,
+    detail: String,
+}
+
+fn build_testing_dolt_repo_workflow(repository: &str, branch: &str) -> WorkflowDefinition {
+    WorkflowDefinition {
+        schema_version: CURRENT_SCHEMA_VERSION,
+        workflow_id: format!("wf_testing_dolt_repo_{}", Uuid::new_v4().simple()),
+        version: 1,
+        name: "Testing Dolt Repo".to_string(),
+        description: Some(
+            "Scaffolded ad hoc runtime test for dolt_repo_source with real defaults.".to_string(),
+        ),
+        nodes: vec![WorkflowNode {
+            node_id: "dolt_repo_source".to_string(),
+            type_id: "dolt_repo_source".to_string(),
+            definition_version: 1,
+            label: Some("Dolt Repo Source".to_string()),
+            config: serde_json::json!({
+                "connection_ref": "dolthub_public",
+                "repository": repository,
+                "branch": branch,
+                "checkout_ref": "",
+                "clone_mode": "reuse_local_copy",
+                "sync_strategy": "pull_before_execution",
+            }),
+            position: NodePosition::default(),
+        }],
+        edges: Vec::new(),
+        metadata: Default::default(),
+    }
+}
+
+fn build_testing_dolt_repo_dump_workflow(
+    repository: &str,
+    branch: &str,
+    output_format: &TestingDoltDumpOutputFormat,
+    table_selection_mode: &TestingDoltRepoDumpTableSelectionMode,
+    selected_tables: Vec<String>,
+) -> WorkflowDefinition {
+    WorkflowDefinition {
+        schema_version: CURRENT_SCHEMA_VERSION,
+        workflow_id: format!("wf_testing_dolt_repo_dump_{}", Uuid::new_v4().simple()),
+        version: 1,
+        name: "Testing Dolt Repo Dump".to_string(),
+        description: Some(
+            "Scaffolded ad hoc runtime test for dolt_repo_source -> dolt_dump.".to_string(),
+        ),
+        nodes: vec![
+            WorkflowNode {
+                node_id: "dolt_repo_source".to_string(),
+                type_id: "dolt_repo_source".to_string(),
+                definition_version: 1,
+                label: Some("Dolt Repo Source".to_string()),
+                config: serde_json::json!({
+                    "connection_ref": "dolthub_public",
+                    "repository": repository,
+                    "branch": branch,
+                    "checkout_ref": "",
+                    "clone_mode": "reuse_local_copy",
+                    "sync_strategy": "pull_before_execution",
+                }),
+                position: NodePosition::default(),
+            },
+            WorkflowNode {
+                node_id: "dolt_dump".to_string(),
+                type_id: "dolt_dump".to_string(),
+                definition_version: 1,
+                label: Some("Dolt Dump".to_string()),
+                config: serde_json::json!({
+                    "output_format": testing_dolt_dump_output_format_value(output_format),
+                    "table_selection_mode": testing_dolt_repo_dump_table_selection_mode_value(table_selection_mode),
+                    "selected_tables": selected_tables,
+                    "artifact_retention": "keep_latest_success",
+                    "output_directory_policy": "ephemeral_run_bundle",
+                }),
+                position: NodePosition::default(),
+            },
+        ],
+        edges: vec![WorkflowEdge {
+            edge_id: "edge_repo_source_to_dolt_dump".to_string(),
+            source_node_id: "dolt_repo_source".to_string(),
+            source_port_id: "repo_out".to_string(),
+            target_node_id: "dolt_dump".to_string(),
+            target_port_id: "repo".to_string(),
+        }],
+        metadata: Default::default(),
+    }
+}
+
+fn build_testing_dolt_dump_load_workflow(
+    repository: &str,
+    connection_ref: &str,
+    branch: &str,
+    checkout_ref: Option<String>,
+    output_format: &TestingDoltDumpOutputFormat,
+    table_selection_mode: &TestingDoltDumpTableSelectionMode,
+    selected_tables: Vec<String>,
+    target_schema: &str,
+) -> WorkflowDefinition {
+    let checkout_ref = checkout_ref.unwrap_or_default();
+
+    WorkflowDefinition {
+        schema_version: CURRENT_SCHEMA_VERSION,
+        workflow_id: format!("wf_testing_dolt_dump_load_{}", Uuid::new_v4().simple()),
+        version: 1,
+        name: "Testing Dolt Dump Load".to_string(),
+        description: Some(
+            "Scaffolded ad hoc runtime test for dolt_repo_source -> dolt_dump -> load_to_duckdb."
+                .to_string(),
+        ),
+        nodes: vec![
+            WorkflowNode {
+                node_id: "dolt_repo_source".to_string(),
+                type_id: "dolt_repo_source".to_string(),
+                definition_version: 1,
+                label: Some("Dolt Repo Source".to_string()),
+                config: serde_json::json!({
+                    "connection_ref": connection_ref,
+                    "repository": repository,
+                    "branch": branch,
+                    "checkout_ref": checkout_ref,
+                }),
+                position: NodePosition::default(),
+            },
+            WorkflowNode {
+                node_id: "dolt_dump".to_string(),
+                type_id: "dolt_dump".to_string(),
+                definition_version: 1,
+                label: Some("Dolt Dump".to_string()),
+                config: serde_json::json!({
+                    "output_format": testing_dolt_dump_output_format_value(output_format),
+                    "table_selection_mode": testing_dolt_dump_table_selection_mode_value(table_selection_mode),
+                    "selected_tables": selected_tables,
+                    "artifact_retention": "keep_latest_success",
+                    "output_directory_policy": "ephemeral_run_bundle",
+                }),
+                position: NodePosition::default(),
+            },
+            WorkflowNode {
+                node_id: "load_to_duckdb".to_string(),
+                type_id: "load_to_duckdb".to_string(),
+                definition_version: 1,
+                label: Some("Load to DuckDB".to_string()),
+                config: serde_json::json!({
+                    "target_schema": target_schema,
+                    "table_mapping": "bundle_aware_staging_names",
+                    "schema_handling": "infer_on_first_load_validate_on_recurring",
+                    "delta_context_preservation": "preserve_commit_range_and_delete_flags",
+                }),
+                position: NodePosition::default(),
+            },
+        ],
+        edges: vec![
+            WorkflowEdge {
+                edge_id: "edge_repo_source_to_dolt_dump".to_string(),
+                source_node_id: "dolt_repo_source".to_string(),
+                source_port_id: "repo_out".to_string(),
+                target_node_id: "dolt_dump".to_string(),
+                target_port_id: "repo".to_string(),
+            },
+            WorkflowEdge {
+                edge_id: "edge_dolt_dump_to_load_to_duckdb".to_string(),
+                source_node_id: "dolt_dump".to_string(),
+                source_port_id: "bundle".to_string(),
+                target_node_id: "load_to_duckdb".to_string(),
+                target_port_id: "bundle".to_string(),
+            },
+        ],
+        metadata: Default::default(),
+    }
+}
+
+fn testing_dolt_dump_output_format_value(
+    output_format: &TestingDoltDumpOutputFormat,
+) -> &'static str {
+    match output_format {
+        TestingDoltDumpOutputFormat::Csv => "csv",
+        TestingDoltDumpOutputFormat::Parquet => "parquet",
+    }
+}
+
+fn testing_dolt_repo_dump_table_selection_mode_value(
+    table_selection_mode: &TestingDoltRepoDumpTableSelectionMode,
+) -> &'static str {
+    match table_selection_mode {
+        TestingDoltRepoDumpTableSelectionMode::AllTables => "all_tables",
+        TestingDoltRepoDumpTableSelectionMode::ManualTables => "manual_tables",
+    }
+}
+
+fn testing_dolt_dump_table_selection_mode_value(
+    table_selection_mode: &TestingDoltDumpTableSelectionMode,
+) -> &'static str {
+    match table_selection_mode {
+        TestingDoltDumpTableSelectionMode::PreferManifestScope => "prefer_manifest_scope",
+        TestingDoltDumpTableSelectionMode::AllTables => "all_tables",
+        TestingDoltDumpTableSelectionMode::ManualTables => "manual_tables",
+    }
+}
+
+fn normalize_testing_selected_tables(selected_tables: &[String]) -> Vec<String> {
+    let mut normalized = Vec::new();
+
+    for table_name in selected_tables {
+        let trimmed = table_name.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if !normalized.iter().any(|existing| existing == trimmed) {
+            normalized.push(trimmed.to_string());
+        }
+    }
+
+    normalized
+}
+
+fn derive_testing_dolt_repo_family(repository: &str) -> String {
+    repository
+        .rsplit('/')
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("repo")
+        .to_string()
+}
+
+fn stage_testing_dolt_seed_exports(
+    seed_export_root: &str,
+    repository: &str,
+    workflow_root: &FsPath,
+) -> Result<(), ApiError> {
+    let trimmed = seed_export_root.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::bad_request(
+            "seed_export_root must not be empty when provided.".to_string(),
+        ));
+    }
+
+    let repo_family = derive_testing_dolt_repo_family(repository);
+    let base_source_root = PathBuf::from(trimmed);
+    let source_root = if base_source_root.join(&repo_family).is_dir() {
+        base_source_root.join(&repo_family)
+    } else {
+        base_source_root
+    };
+    if !source_root.is_dir() {
+        return Err(ApiError::bad_request(format!(
+            "seed_export_root `{}` does not contain a readable directory for repo family `{repo_family}`.",
+            source_root.display()
+        )));
+    }
+
+    let target_root = workflow_root
+        .join("files")
+        .join("raw")
+        .join("dolt")
+        .join(&repo_family);
+    copy_testing_directory_recursive(&source_root, &target_root).map_err(ApiError::internal)
+}
+
+fn copy_testing_directory_recursive(
+    source_root: &FsPath,
+    target_root: &FsPath,
+) -> anyhow::Result<()> {
+    fs::create_dir_all(target_root)?;
+
+    for entry in fs::read_dir(source_root)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let target_path = target_root.join(entry.file_name());
+        let metadata = entry.metadata()?;
+
+        if metadata.is_dir() {
+            copy_testing_directory_recursive(&source_path, &target_path)?;
+        } else if metadata.is_file() {
+            if let Some(parent) = target_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(&source_path, &target_path)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn allocate_testing_workflow_root(test_name: &str) -> Result<(PathBuf, PathBuf), ApiError> {
+    let state_dir = env::var("STITCHLY_STATE_DIR")
+        .ok()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(".stitchly"));
+    let workflow_root = state_dir
+        .join("testing")
+        .join(test_name)
+        .join(Uuid::new_v4().simple().to_string());
+    let workflow_duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+
+    fs::create_dir_all(workflow_root.join("db")).map_err(|error| {
+        ApiError::internal(anyhow::anyhow!(
+            "failed to create testing workflow db directory `{}`: {error}",
+            workflow_root.join("db").display()
+        ))
+    })?;
+    fs::create_dir_all(workflow_root.join("files")).map_err(|error| {
+        ApiError::internal(anyhow::anyhow!(
+            "failed to create testing workflow files directory `{}`: {error}",
+            workflow_root.join("files").display()
+        ))
+    })?;
+
+    Ok((workflow_root, workflow_duckdb_path))
+}
+
+fn collect_testing_loaded_table_counts(
+    workflow_duckdb_path: &FsPath,
+    table_output: &workflow_schema::TypedValue,
+) -> Result<Vec<TestingLoadedTableCount>, ApiError> {
+    let targets = collect_testing_loaded_table_targets(table_output);
+    if targets.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let connection = DuckDbConnection::open(workflow_duckdb_path).map_err(ApiError::internal)?;
+    let mut counts = Vec::new();
+
+    for (source_table, target_schema, target_table) in targets {
+        let qualified_table = format!(
+            "{}.{}",
+            quote_testing_duckdb_identifier(&target_schema),
+            quote_testing_duckdb_identifier(&target_table)
+        );
+        let row_count = connection
+            .query_row(
+                &format!("select count(*) from {qualified_table}"),
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count.max(0) as u64)
+            .map_err(ApiError::internal)?;
+
+        counts.push(TestingLoadedTableCount {
+            source_table,
+            target_schema,
+            target_table,
+            row_count,
+        });
+    }
+
+    Ok(counts)
+}
+
+fn collect_testing_loaded_table_targets(
+    table_output: &workflow_schema::TypedValue,
+) -> Vec<(String, String, String)> {
+    let default_schema = table_output
+        .value
+        .get("schema_name")
+        .and_then(Value::as_str)
+        .unwrap_or("staging")
+        .to_string();
+
+    if let Some(loaded_tables) = table_output
+        .value
+        .get("metadata")
+        .and_then(|value| value.get("loaded_tables"))
+        .and_then(Value::as_array)
+    {
+        let targets = loaded_tables
+            .iter()
+            .filter_map(|entry| {
+                let target_table = entry.get("target_table").and_then(Value::as_str)?;
+                let (target_schema, target_table_name) = target_table.split_once('.')?;
+                let source_table = entry
+                    .get("source_table")
+                    .and_then(Value::as_str)
+                    .unwrap_or(target_table_name)
+                    .to_string();
+
+                Some((
+                    source_table,
+                    target_schema.to_string(),
+                    target_table_name.to_string(),
+                ))
+            })
+            .collect::<Vec<_>>();
+        if !targets.is_empty() {
+            return targets;
+        }
+    }
+
+    match (
+        table_output.value.get("table_name").and_then(Value::as_str),
+        table_output
+            .value
+            .get("schema_name")
+            .and_then(Value::as_str),
+    ) {
+        (Some(table_name), Some(schema_name)) => vec![(
+            table_name.to_string(),
+            schema_name.to_string(),
+            table_name.to_string(),
+        )],
+        (Some(table_name), None) => vec![(
+            table_name.to_string(),
+            default_schema.clone(),
+            table_name.to_string(),
+        )],
+        _ => Vec::new(),
+    }
+}
+
+fn quote_testing_duckdb_identifier(identifier: &str) -> String {
+    format!("\"{}\"", identifier.replace('"', "\"\""))
+}
+
+async fn wait_for_run_completion(
+    runtime: &RuntimeService,
+    run_id: &str,
+    timeout_duration: Duration,
+) -> Result<(RunSnapshot, bool), ApiError> {
+    let started = tokio::time::Instant::now();
+
+    loop {
+        let snapshot = runtime
+            .get_run(run_id)
+            .await
+            .ok_or_else(|| ApiError::internal(anyhow::anyhow!("Run `{run_id}` was not found.")))?;
+
+        if is_terminal_run_status(&snapshot.status) {
+            return Ok((snapshot, true));
+        }
+
+        if started.elapsed() >= timeout_duration {
+            return Ok((snapshot, false));
+        }
+
+        sleep(Duration::from_millis(100)).await;
+    }
+}
+
+async fn collect_dolt_diagnostics() -> DoltDiagnosticsResponse {
+    let executable_path = find_executable_on_path("dolt").map(|path| path.display().to_string());
+    let stitchly_dolt_home = env::var("STITCHLY_DOLT_HOME")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let mut diagnostics = vec![if let Some(path) = &executable_path {
+        TestingDiagnosticCheck {
+            key: "dolt_on_path".to_string(),
+            label: "Dolt executable".to_string(),
+            status: TestingDiagnosticStatus::Ok,
+            detail: format!("Found `dolt` on PATH at `{path}`."),
+        }
+    } else {
+        TestingDiagnosticCheck {
+            key: "dolt_on_path".to_string(),
+            label: "Dolt executable".to_string(),
+            status: TestingDiagnosticStatus::Error,
+            detail: "Could not find `dolt` on PATH for the backend process.".to_string(),
+        }
+    }];
+
+    diagnostics.push(match &stitchly_dolt_home {
+        Some(path) => {
+            let home_path = FsPath::new(path);
+            let (status, detail) = if home_path.is_dir() {
+                (
+                    TestingDiagnosticStatus::Ok,
+                    format!("STITCHLY_DOLT_HOME is set to `{path}` and the directory exists."),
+                )
+            } else {
+                (
+                    TestingDiagnosticStatus::Warn,
+                    format!("STITCHLY_DOLT_HOME is set to `{path}`, but that directory does not exist yet."),
+                )
+            };
+
+            TestingDiagnosticCheck {
+                key: "stitchly_dolt_home".to_string(),
+                label: "Stitchly Dolt home".to_string(),
+                status,
+                detail,
+            }
+        }
+        None => TestingDiagnosticCheck {
+            key: "stitchly_dolt_home".to_string(),
+            label: "Stitchly Dolt home".to_string(),
+            status: TestingDiagnosticStatus::Warn,
+            detail: "STITCHLY_DOLT_HOME is not set for the backend process.".to_string(),
+        },
+    });
+
+    let mut version = None;
+
+    if executable_path.is_some() {
+        let version_outcome = run_command_diagnostic("dolt", &["version"]).await;
+        if version_outcome.success {
+            version = Some(version_outcome.detail.clone());
+        }
+        diagnostics.push(TestingDiagnosticCheck {
+            key: "dolt_version".to_string(),
+            label: "Dolt version".to_string(),
+            status: if version_outcome.success {
+                TestingDiagnosticStatus::Ok
+            } else {
+                TestingDiagnosticStatus::Error
+            },
+            detail: version_outcome.detail,
+        });
+
+        let dump_help_outcome = run_command_diagnostic("dolt", &["dump", "--help"]).await;
+        diagnostics.push(TestingDiagnosticCheck {
+            key: "dolt_dump_help".to_string(),
+            label: "Dolt dump command".to_string(),
+            status: if dump_help_outcome.success {
+                TestingDiagnosticStatus::Ok
+            } else {
+                TestingDiagnosticStatus::Warn
+            },
+            detail: dump_help_outcome.detail,
+        });
+
+        let clone_help_outcome = run_command_diagnostic("dolt", &["clone", "--help"]).await;
+        diagnostics.push(TestingDiagnosticCheck {
+            key: "dolt_clone_help".to_string(),
+            label: "Dolt clone command".to_string(),
+            status: if clone_help_outcome.success {
+                TestingDiagnosticStatus::Ok
+            } else {
+                TestingDiagnosticStatus::Warn
+            },
+            detail: clone_help_outcome.detail,
+        });
+    } else {
+        diagnostics.push(TestingDiagnosticCheck {
+            key: "dolt_version".to_string(),
+            label: "Dolt version".to_string(),
+            status: TestingDiagnosticStatus::Error,
+            detail: "Skipped because `dolt` was not found on PATH.".to_string(),
+        });
+        diagnostics.push(TestingDiagnosticCheck {
+            key: "dolt_dump_help".to_string(),
+            label: "Dolt dump command".to_string(),
+            status: TestingDiagnosticStatus::Warn,
+            detail: "Skipped because `dolt` was not found on PATH.".to_string(),
+        });
+        diagnostics.push(TestingDiagnosticCheck {
+            key: "dolt_clone_help".to_string(),
+            label: "Dolt clone command".to_string(),
+            status: TestingDiagnosticStatus::Warn,
+            detail: "Skipped because `dolt` was not found on PATH.".to_string(),
+        });
+    }
+
+    DoltDiagnosticsResponse {
+        installed: executable_path.is_some(),
+        executable_path,
+        version,
+        stitchly_dolt_home,
+        diagnostics,
+    }
+}
+
+fn find_executable_on_path(tool_name: &str) -> Option<std::path::PathBuf> {
+    let path = env::var_os("PATH")?;
+    env::split_paths(&path)
+        .map(|dir| dir.join(tool_name))
+        .find(|candidate| candidate.is_file())
+}
+
+async fn run_command_diagnostic(program: &str, args: &[&str]) -> CommandDiagnosticOutcome {
+    let mut command = Command::new(program);
+    command.args(args);
+
+    let output = match timeout(
+        std::time::Duration::from_secs(DIAGNOSTIC_COMMAND_TIMEOUT_SECONDS),
+        command.output(),
+    )
+    .await
+    {
+        Ok(Ok(output)) => output,
+        Ok(Err(error)) => {
+            return CommandDiagnosticOutcome {
+                success: false,
+                detail: format!("Failed to launch `{program} {}`: {error}", args.join(" ")),
+            };
+        }
+        Err(_) => {
+            return CommandDiagnosticOutcome {
+                success: false,
+                detail: format!(
+                    "`{program} {}` did not complete within {}s.",
+                    args.join(" "),
+                    DIAGNOSTIC_COMMAND_TIMEOUT_SECONDS
+                ),
+            };
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let primary_output = if !stdout.is_empty() {
+        stdout
+    } else if !stderr.is_empty() {
+        stderr
+    } else {
+        "Command completed without output.".to_string()
+    };
+
+    CommandDiagnosticOutcome {
+        success: output.status.success(),
+        detail: if output.status.success() {
+            primary_output
+        } else {
+            let exit_code = output
+                .status
+                .code()
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "signal".to_string());
+            format!("Exited with {exit_code}: {primary_output}")
+        },
+    }
 }
 
 fn parse_google_scopes(scope_list: Option<&str>) -> Vec<String> {
@@ -1855,7 +3334,7 @@ fn map_google_auth_error(error: GoogleAuthError) -> ApiError {
 
 #[cfg(test)]
 mod tests {
-    use std::str;
+    use std::{fs, str};
 
     use api_contract::{
         RunErrorCategory, RunEventType, RunSnapshot, RunStatus, RunTrigger, TriggerKind,
@@ -1869,6 +3348,7 @@ mod tests {
     use serde_json::json;
     use tokio::time::{sleep, Duration};
     use tower::ServiceExt;
+    use uuid::Uuid;
     use workflow_schema::{NodePosition, WorkflowDefinition, WorkflowEdge, WorkflowNode};
 
     use super::{app, hydrate_send_email_runtime_delivery, AppState};
@@ -1895,6 +3375,275 @@ mod tests {
 
         let response = router.oneshot(request).await.expect("response");
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn swagger_openapi_document_lists_core_routes() {
+        let router = app(
+            runtime_core::RuntimeService::default(),
+            PlatformStore::for_tests().expect("platform store"),
+        );
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api-docs/openapi.json")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("openapi json");
+        let paths = payload["paths"].as_object().expect("paths object");
+
+        assert!(paths.contains_key("/api/auth/session"));
+        assert!(paths.contains_key("/api/testing/dolt"));
+        assert!(paths.contains_key("/api/testing/dolt/repo"));
+        assert!(paths.contains_key("/api/testing/dolt/repo-dump"));
+        assert!(paths.contains_key("/api/testing/dolt/dump-load"));
+        assert!(paths.contains_key("/api/workspaces/{workspace_id}/workflows/{workflow_id}"));
+        assert!(paths.contains_key("/api/workspaces/{workspace_id}/runs/{run_id}/logs"));
+        assert!(paths.contains_key("/api/workflows/validate"));
+    }
+
+    #[tokio::test]
+    async fn swagger_ui_route_serves_html() {
+        let router = app(
+            runtime_core::RuntimeService::default(),
+            PlatformStore::for_tests().expect("platform store"),
+        );
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/swagger-ui/")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        assert!(content_type.contains("text/html"));
+    }
+
+    #[tokio::test]
+    async fn testing_dolt_diagnostics_returns_structured_payload() {
+        let router = app(
+            runtime_core::RuntimeService::default(),
+            PlatformStore::for_tests().expect("platform store"),
+        );
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/testing/dolt")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json payload");
+
+        assert!(payload["installed"].is_boolean());
+        let diagnostics = payload["diagnostics"]
+            .as_array()
+            .expect("diagnostics array");
+        assert!(!diagnostics.is_empty());
+        assert!(diagnostics[0]["key"].is_string());
+        assert!(diagnostics[0]["status"].is_string());
+    }
+
+    #[tokio::test]
+    async fn testing_dolt_repo_rejects_empty_repo() {
+        let router = app(
+            runtime_core::RuntimeService::default(),
+            PlatformStore::for_tests().expect("platform store"),
+        );
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/testing/dolt/repo")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&json!({
+                    "repo": ""
+                }))
+                .expect("request body"),
+            ))
+            .expect("request builds");
+
+        let response = router.oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn testing_dolt_repo_accepts_explicit_branch() {
+        let workflow =
+            crate::build_testing_dolt_repo_workflow("post-no-preference/rates", "master");
+        let node = workflow.nodes.first().expect("dolt repo source node");
+
+        assert_eq!(node.config["repository"], json!("post-no-preference/rates"));
+        assert_eq!(node.config["branch"], json!("master"));
+        assert_eq!(node.config["clone_mode"], json!("reuse_local_copy"));
+        assert_eq!(node.config["sync_strategy"], json!("pull_before_execution"));
+    }
+
+    #[tokio::test]
+    async fn testing_dolt_repo_dump_scaffolds_runtime_nodes_with_fixed_defaults() {
+        let workflow = crate::build_testing_dolt_repo_dump_workflow(
+            "post-no-preference/rates",
+            "master",
+            &api_contract::TestingDoltDumpOutputFormat::Parquet,
+            &api_contract::TestingDoltRepoDumpTableSelectionMode::ManualTables,
+            vec!["us_treasury".to_string()],
+        );
+        let repo_source_node = workflow
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "dolt_repo_source")
+            .expect("repo source node");
+        let dump_node = workflow
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "dolt_dump")
+            .expect("dolt dump node");
+
+        assert_eq!(
+            repo_source_node.config["connection_ref"],
+            json!("dolthub_public")
+        );
+        assert_eq!(repo_source_node.config["branch"], json!("master"));
+        assert_eq!(
+            repo_source_node.config["clone_mode"],
+            json!("reuse_local_copy")
+        );
+        assert_eq!(
+            repo_source_node.config["sync_strategy"],
+            json!("pull_before_execution")
+        );
+        assert_eq!(dump_node.config["output_format"], json!("parquet"));
+        assert_eq!(
+            dump_node.config["table_selection_mode"],
+            json!("manual_tables")
+        );
+        assert_eq!(dump_node.config["selected_tables"], json!(["us_treasury"]));
+    }
+
+    #[tokio::test]
+    async fn testing_dolt_repo_dump_rejects_manual_selection_without_tables() {
+        let router = app(
+            runtime_core::RuntimeService::default(),
+            PlatformStore::for_tests().expect("platform store"),
+        );
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/testing/dolt/repo-dump")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&json!({
+                    "repo": "post-no-preference/rates",
+                    "branch": "master",
+                    "output_format": "parquet",
+                    "table_selection_mode": "manual_tables",
+                    "timeout_seconds": 5
+                }))
+                .expect("request body"),
+            ))
+            .expect("request builds");
+
+        let response = router.oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn testing_dolt_dump_load_returns_actual_row_counts_from_duckdb() {
+        let seed_root =
+            std::env::temp_dir().join(format!("stitchly-dolt-seeds-{}", Uuid::new_v4().simple()));
+        let repo_seed_root = seed_root.join("rates");
+        fs::create_dir_all(&repo_seed_root).expect("seed repo root");
+        fs::write(
+            repo_seed_root.join("us_treasury.csv"),
+            "curve_date,tenor,yield_pct\n2026-06-01,2Y,4.820000\n2026-06-01,10Y,4.540000\n",
+        )
+        .expect("seed csv");
+
+        let router = app(
+            runtime_core::RuntimeService::default(),
+            PlatformStore::for_tests().expect("platform store"),
+        );
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/testing/dolt/dump-load")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&json!({
+                    "repository": "post-no-preference/rates",
+                    "output_format": "csv",
+                    "table_selection_mode": "all_tables",
+                    "target_schema": "staging",
+                    "seed_export_root": seed_root.display().to_string(),
+                    "timeout_seconds": 10
+                }))
+                .expect("request body"),
+            ))
+            .expect("request builds");
+
+        let response = router.oneshot(request).await.expect("response");
+        let status = response.status();
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let body_text = String::from_utf8_lossy(&body).to_string();
+        assert_eq!(status, StatusCode::OK, "{body_text}");
+
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json payload");
+        assert_eq!(payload["completed"], json!(true));
+        assert_eq!(payload["timed_out"], json!(false));
+        assert_eq!(payload["snapshot"]["status"], json!("succeeded"));
+        assert_eq!(
+            payload["loaded_table_counts"][0]["target_table"],
+            json!("rates__us_treasury__snapshot")
+        );
+        assert_eq!(payload["loaded_table_counts"][0]["row_count"], json!(2));
+        assert_eq!(
+            payload["table_output"]["value"]["schema_name"],
+            json!("staging")
+        );
+
+        if let Some(workflow_root) = payload["workflow_root"].as_str() {
+            let _ = fs::remove_dir_all(workflow_root);
+        }
+        let _ = fs::remove_dir_all(&seed_root);
     }
 
     #[tokio::test]

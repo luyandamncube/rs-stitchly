@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use utoipa::ToSchema;
 
 pub const CURRENT_SCHEMA_VERSION: u32 = 1;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DataType {
     Bytes,
@@ -17,7 +18,7 @@ pub enum DataType {
     DatasetRef,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct TypedValue {
     pub data_type: DataType,
     pub value: Value,
@@ -40,7 +41,7 @@ impl TypedValue {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct WorkflowDefinition {
     pub schema_version: u32,
     pub workflow_id: String,
@@ -56,13 +57,13 @@ pub struct WorkflowDefinition {
     pub metadata: WorkflowMetadata,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct WorkflowMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub viewport: Option<ViewportMetadata>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct ViewportMetadata {
     #[serde(default)]
     pub x: f64,
@@ -72,7 +73,7 @@ pub struct ViewportMetadata {
     pub zoom: f64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct WorkflowNode {
     pub node_id: String,
     pub type_id: String,
@@ -85,7 +86,7 @@ pub struct WorkflowNode {
     pub position: NodePosition,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct NodePosition {
     #[serde(default)]
     pub x: f64,
@@ -93,7 +94,7 @@ pub struct NodePosition {
     pub y: f64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct WorkflowEdge {
     pub edge_id: String,
     pub source_node_id: String,

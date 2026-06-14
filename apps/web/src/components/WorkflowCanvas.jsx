@@ -57,6 +57,7 @@ const NODE_TYPES = {
   dolt_repo_source: memo(DoltRepoSourceNode),
   dolt_repo_sync: memo(DoltRepoSyncNode),
   load_to_duckdb: memo(LoadToDuckDbNode),
+  sql_transform: memo(SqlTransformNode),
   send_email: memo(SendEmailNode),
   table_merge: memo(TableMergeNode),
   table_input: memo(TableInputNode),
@@ -1786,6 +1787,90 @@ function LoadToDuckDbNode({ data, dragging, selected }) {
   )
 }
 
+function SqlTransformNode({ data, dragging, selected }) {
+  const runtime = data.uiState?.runtime ?? null
+  const nodeLabel = data.node?.label ?? data.label ?? 'SQL Transform'
+  const config = normalizeSqlTransformNodeConfig(
+    data.node?.config,
+    data.workflow,
+    data.node?.node_id
+  )
+  const runtimeState = runtime?.status ?? null
+  const executionWait = getNodeExecutionWaitState(data.node?.config)
+
+  return (
+    <div
+      className={buildWorkflowNodeCardClassName(
+        'workflow-node-card--transform workflow-node-card--sql-transform',
+        {
+          dragging,
+          hovered: Boolean(data.uiState?.interaction?.hovered),
+          selected
+        }
+      )}
+      data-runtime-state={runtimeState ?? undefined}
+      title={buildNodeRuntimeTitle(runtime, 'Click to select. Drag to move. Double-click to inspect.')}
+    >
+      <header className="workflow-node-card__header">
+        <div className="workflow-node-card__heading">
+          <span className="workflow-node-card__icon" aria-hidden="true">
+            SQL
+          </span>
+          <strong>{nodeLabel}</strong>
+        </div>
+        <div className="workflow-node-card__tools">
+          {executionWait.enabled ? (
+            <NodeExecutionWaitIcon
+              className="workflow-node-card__delay-icon"
+              hasAfterWait={executionWait.hasAfterWait}
+              hasBeforeWait={executionWait.hasBeforeWait}
+            />
+          ) : null}
+          <span className="workflow-node-card__menu" aria-hidden="true">
+            ...
+          </span>
+        </div>
+      </header>
+
+      <section className="workflow-node-card__body">
+        <div className="workflow-node-card__row workflow-node-card__row--summary">
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Mode</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.materialization_mode_label}
+            </span>
+          </div>
+          <div className="workflow-node-card__summary-head">
+            <span className="workflow-node-card__summary-label">Source</span>
+            <span className="workflow-node-card__summary-target workflow-node-card__summary-target--subject">
+              {config.source_table_label}
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <footer className="workflow-node-card__footer">
+        <span className="workflow-node-card__footer-meta">Target</span>
+        <strong>{config.target_label}</strong>
+      </footer>
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="table"
+        position={Position.Left}
+        type="target"
+      />
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="table"
+        position={Position.Right}
+        type="source"
+      />
+    </div>
+  )
+}
+
 function TableMergeNode({ data, dragging, selected }) {
   const runtime = data.uiState?.runtime ?? null
   const nodeLabel = data.node?.label ?? data.label ?? 'Table Merge'
@@ -2475,6 +2560,25 @@ function normalizeLoadToDuckDbNodeConfig(config = {}, workflow = null, nodeId = 
   }
 }
 
+function normalizeSqlTransformNodeConfig(config = {}, workflow = null, nodeId = null) {
+  const sourceContext = resolveConnectedSqlTransformNodeContext(workflow, nodeId)
+  const targetSchema =
+    typeof config?.target_schema === 'string' && config.target_schema.trim()
+      ? config.target_schema.trim()
+      : 'staging_curated'
+  const outputTableName =
+    typeof config?.output_table_name === 'string' && config.output_table_name.trim()
+      ? config.output_table_name.trim()
+      : 'normalized_view'
+
+  return {
+    materialization_mode_label:
+      config?.materialization_mode === 'view' ? 'view' : 'view only',
+    source_table_label: sourceContext?.sourceTable ?? '{{source}}',
+    target_label: `${targetSchema}.${outputTableName}`
+  }
+}
+
 function resolveConnectedDoltRepoSourceNodeConfig(workflow, nodeId) {
   if (!workflow || !nodeId) {
     return null
@@ -2711,6 +2815,155 @@ function resolveConnectedLoadToDuckDbNodeContext(workflow, nodeId) {
   return null
 }
 
+function resolveConnectedSqlTransformNodeContext(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return null
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'table'
+  )
+  if (!incomingEdge) {
+    return null
+  }
+
+  const sourceNode = workflow.nodes?.find((node) => node.node_id === incomingEdge.source_node_id)
+  if (!sourceNode) {
+    return null
+  }
+
+  if (sourceNode.type_id === 'load_to_duckdb') {
+    const sourceTables = resolveConnectedLoadToDuckDbNodeTableNames(workflow, sourceNode.node_id)
+    return {
+      sourceTable: sourceTables[0] ?? null,
+      sourceTypeId: sourceNode.type_id
+    }
+  }
+
+  if (sourceNode.type_id === 'table_input') {
+    return {
+      sourceTable:
+        typeof sourceNode.config?.table_name === 'string' && sourceNode.config.table_name.trim()
+          ? sourceNode.config.table_name.trim()
+          : null,
+      sourceTypeId: sourceNode.type_id
+    }
+  }
+
+  if (sourceNode.type_id === 'sql_transform') {
+    return {
+      sourceTable:
+        typeof sourceNode.config?.output_table_name === 'string' &&
+        sourceNode.config.output_table_name.trim()
+          ? sourceNode.config.output_table_name.trim()
+          : 'normalized_view',
+      sourceTypeId: sourceNode.type_id
+    }
+  }
+
+  return null
+}
+
+function resolveConnectedLoadToDuckDbNodeTableNames(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return []
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'bundle'
+  )
+  if (!incomingEdge) {
+    return []
+  }
+
+  const sourceNode = workflow.nodes?.find((node) => node.node_id === incomingEdge.source_node_id)
+  if (!sourceNode) {
+    return []
+  }
+
+  if (sourceNode.type_id === 'dolt_dump') {
+    const dumpContext = resolveConnectedDoltDumpNodeContext(workflow, sourceNode.node_id)
+    const repository =
+      typeof dumpContext?.repository === 'string' && dumpContext.repository.trim()
+        ? dumpContext.repository.trim()
+        : 'post-no-preference/earnings'
+
+    if (sourceNode.config?.table_selection_mode === 'manual_tables') {
+      return normalizeDoltDumpSelectedTables(sourceNode.config?.selected_tables)
+    }
+
+    if (
+      sourceNode.config?.table_selection_mode === 'prefer_manifest_scope' &&
+      dumpContext?.sourceTypeId === 'dolt_change_manifest'
+    ) {
+      return dumpContext?.changedTables ?? []
+    }
+
+    return mockDoltDumpTableNames(repository)
+  }
+
+  if (sourceNode.type_id === 'dolt_diff_export') {
+    return resolveConnectedDoltDiffExportNodeTableNames(workflow, sourceNode.node_id)
+  }
+
+  return []
+}
+
+function resolveConnectedDoltDiffExportNodeTableNames(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return []
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'manifest'
+  )
+  if (!incomingEdge) {
+    return []
+  }
+
+  const sourceNode = workflow.nodes?.find((node) => node.node_id === incomingEdge.source_node_id)
+  if (!sourceNode || sourceNode.type_id !== 'dolt_change_manifest') {
+    return []
+  }
+
+  const syncContext = resolveConnectedDoltRepoSyncNodeContext(workflow, sourceNode.node_id)
+  const repository =
+    typeof syncContext?.sourceConfig?.repository === 'string' &&
+    syncContext.sourceConfig.repository.trim()
+      ? syncContext.sourceConfig.repository.trim()
+      : 'post-no-preference/earnings'
+
+  return resolveMockDoltDumpManifestTables(repository, sourceNode.config)
+}
+
+function resolveConnectedLoadToDuckDbContextFromTableNode(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return null
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'table'
+  )
+  if (!incomingEdge) {
+    return null
+  }
+
+  const sourceNode = workflow.nodes?.find((node) => node.node_id === incomingEdge.source_node_id)
+  if (!sourceNode) {
+    return null
+  }
+
+  if (sourceNode.type_id === 'load_to_duckdb') {
+    return resolveConnectedLoadToDuckDbNodeContext(workflow, sourceNode.node_id)
+  }
+
+  if (sourceNode.type_id === 'sql_transform') {
+    return resolveConnectedLoadToDuckDbContextFromTableNode(workflow, sourceNode.node_id)
+  }
+
+  return null
+}
+
 function resolveConnectedCheckpointWriteNodeContext(workflow, nodeId) {
   if (!workflow || !nodeId) {
     return null
@@ -2729,7 +2982,10 @@ function resolveConnectedCheckpointWriteNodeContext(workflow, nodeId) {
   }
 
   if (sourceNode.type_id === 'table_merge') {
-    const loadContext = resolveConnectedLoadToDuckDbNodeContext(workflow, sourceNode.node_id)
+    const loadContext = resolveConnectedLoadToDuckDbContextFromTableNode(
+      workflow,
+      sourceNode.node_id
+    )
     if (!loadContext) {
       return {
         scopeLabel: 'repo + branch'
@@ -2784,7 +3040,10 @@ function resolveConnectedQualityCheckNodeContext(workflow, nodeId) {
     return null
   }
 
-  const loadContext = resolveConnectedLoadToDuckDbNodeContext(workflow, sourceNode.node_id)
+  const loadContext = resolveConnectedLoadToDuckDbContextFromTableNode(
+    workflow,
+    sourceNode.node_id
+  )
   if (!loadContext) {
     return {
       scopeLabel: 'repo + branch'
@@ -2932,6 +3191,18 @@ function resolveMockDoltDumpManifestTables(repository, manifestConfig = {}) {
     tableScope,
     selectedTables
   )
+}
+
+function mockDoltDumpTableNames(repository) {
+  switch (repository) {
+    case 'post-no-preference/rates':
+      return ['us_treasury']
+    case 'post-no-preference/options':
+      return ['option_chain']
+    case 'post-no-preference/earnings':
+    default:
+      return ['earnings_calendar']
+  }
 }
 
 function filterDoltChangeManifestTables(changedTables, tableScope, selectedTables) {

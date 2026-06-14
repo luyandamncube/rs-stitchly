@@ -378,6 +378,7 @@ function applyConnectionSideEffects(workflow, connection) {
   let nextInputShape = null
   if (
     sourceNode.type_id === 'table_input' ||
+    sourceNode.type_id === 'sql_transform' ||
     sourceNode.type_id === 'table_merge' ||
     sourceNode.type_id === 'checkpoint_write' ||
     sourceNode.type_id === 'quality_check'
@@ -476,6 +477,10 @@ function resolveCanvasNodeType(typeId) {
 
   if (typeId === 'load_to_duckdb') {
     return 'load_to_duckdb'
+  }
+
+  if (typeId === 'sql_transform') {
+    return 'sql_transform'
   }
 
   if (typeId === 'table_merge') {
@@ -740,6 +745,28 @@ const FALLBACK_NODE_DEFINITIONS = {
       default_width: 336
     },
     type_id: 'load_to_duckdb'
+  },
+  sql_transform: {
+    display_name: 'SQL Transform',
+    inputs: [
+      {
+        data_type: 'table_ref',
+        multiple: false,
+        port_id: 'table',
+        required: true
+      }
+    ],
+    outputs: [
+      {
+        data_type: 'table_ref',
+        multiple: false,
+        port_id: 'table'
+      }
+    ],
+    ui: {
+      default_width: 336
+    },
+    type_id: 'sql_transform'
   },
   table_merge: {
     display_name: 'Table Merge',

@@ -1787,6 +1787,124 @@ pub fn builtin_node_definitions() -> Vec<NodeDefinition> {
             },
         },
         NodeDefinition {
+            type_id: "sql_transform".to_string(),
+            version: 1,
+            display_name: "SQL Transform".to_string(),
+            category: "compute".to_string(),
+            description:
+                "Creates a workflow-local DuckDB view that reshapes staged tables into merge-ready outputs."
+                    .to_string(),
+            inputs: vec![PortDefinition {
+                port_id: "table".to_string(),
+                display_name: "Table".to_string(),
+                direction: PortDirection::Input,
+                data_type: DataType::TableRef,
+                required: true,
+                multiple: false,
+                description: Some(
+                    "Workflow-local staging table reference that will be queried by inline SQL."
+                        .to_string(),
+                ),
+            }],
+            outputs: vec![PortDefinition {
+                port_id: "table".to_string(),
+                display_name: "Table".to_string(),
+                direction: PortDirection::Output,
+                data_type: DataType::TableRef,
+                required: false,
+                multiple: false,
+                description: Some(
+                    "Workflow-local transformed table reference backed by a DuckDB view."
+                        .to_string(),
+                ),
+            }],
+            config_schema: json!({
+                "type": "object",
+                "required": ["target_schema", "output_table_name", "sql_text"],
+                "properties": {
+                    "target_schema": {
+                        "type": "string",
+                        "default": "staging_curated"
+                    },
+                    "output_table_name": {
+                        "type": "string",
+                        "default": "normalized_view"
+                    },
+                    "source_table_name": {
+                        "type": "string",
+                        "default": ""
+                    },
+                    "materialization_mode": {
+                        "type": "string",
+                        "enum": ["view"],
+                        "default": "view"
+                    },
+                    "sql_text": {
+                        "type": "string",
+                        "default": "select *\nfrom {{source}}"
+                    }
+                }
+            }),
+            runtime: RuntimeBinding {
+                executor_kind: ExecutorKind::RustNative,
+                adapter_id: None,
+                isolation_mode: IsolationMode::InProcess,
+            },
+            capabilities: NodeCapabilities {
+                supports_preview: true,
+                may_emit_structured_logs: true,
+                ..NodeCapabilities::default()
+            },
+            ui: NodeUi {
+                icon: "logic".to_string(),
+                color_token: "var(--node-transform)".to_string(),
+                default_width: 336,
+                default_height: 176,
+                help_text: Some(
+                    "Use inline DuckDB SQL to reshape staging tables into merge-ready workflow views."
+                        .to_string(),
+                ),
+                node_card: Some(NodeCardUi {
+                    variant: "compute".to_string(),
+                    icon_key: "logic".to_string(),
+                    top_chip: hidden_top_chip(),
+                    header: standard_header(),
+                    rows: vec![
+                        node_card_row(
+                            "materialization_mode",
+                            "kv",
+                            "Mode",
+                            "config",
+                            "materialization_mode",
+                            "text",
+                            Some("logic"),
+                            false,
+                        ),
+                        node_card_row(
+                            "target_schema",
+                            "kv",
+                            "Target",
+                            "config",
+                            "target_schema",
+                            "text",
+                            Some("table_output"),
+                            false,
+                        ),
+                    ],
+                    footer: Some(node_card_footer(
+                        "metric",
+                        "Output",
+                        "config",
+                        "output_table_name",
+                        "text",
+                        Some("status"),
+                    )),
+                    handles: node_card_handles("single_left", "single_right"),
+                    size: node_card_size(336),
+                }),
+            },
+        },
+        NodeDefinition {
             type_id: "table_merge".to_string(),
             version: 1,
             display_name: "Table Merge".to_string(),

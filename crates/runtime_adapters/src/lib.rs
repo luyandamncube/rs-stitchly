@@ -84,6 +84,7 @@ impl RuntimeAdapters {
             "dolt_diff_export" => execute_dolt_diff_export(node, inputs),
             "load_to_duckdb" => execute_load_to_duckdb(node, inputs, context),
             "quality_check" => execute_quality_check(node, inputs),
+            "sql_transform" => execute_sql_transform(node, inputs, context),
             "table_merge" => execute_table_merge(node, inputs, context),
             "text_input" => execute_text_input(node),
             "text_transform" => execute_text_transform(node, inputs),
@@ -897,6 +898,23 @@ struct TableOutputConfig {
     include_written_at: Option<bool>,
     #[serde(default)]
     open_in_catalog: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct SqlTransformConfig {
+    target_schema: String,
+    output_table_name: String,
+    sql_text: String,
+    #[serde(default)]
+    source_table_name: Option<String>,
+    #[serde(default)]
+    materialization_mode: Option<SqlTransformMaterializationMode>,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum SqlTransformMaterializationMode {
+    View,
 }
 
 #[derive(Deserialize)]
@@ -2131,6 +2149,90 @@ fn load_duckdb_table_row_count(
         })
 }
 
+fn load_duckdb_query_column_names(
+    connection: &DuckDbConnection,
+    query_sql: &str,
+    node_id: &str,
+) -> Result<Vec<String>, AdapterError> {
+    let statement = connection
+        .prepare(&format!(
+            "select * from ({query_sql}) as source_data limit 0"
+        ))
+        .map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!(
+                "failed to inspect workflow DuckDB query columns for file-backed load: {error}"
+            ),
+        })?;
+
+    Ok(statement.column_names())
+}
+
+fn build_load_to_duckdb_file_projection_sql(
+    connection: &DuckDbConnection,
+    scan_sql: &str,
+    repository: &str,
+    bundle_kind: &str,
+    current_commit: &str,
+    previous_commit: Option<&str>,
+    delete_rows_present: bool,
+    source_table: &str,
+    node_id: &str,
+) -> Result<String, AdapterError> {
+    let source_columns = load_duckdb_query_column_names(connection, scan_sql, node_id)?
+        .into_iter()
+        .map(|column| column.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    let mut metadata_projections = Vec::new();
+
+    let mut push_metadata_projection = |column_name: &str, expression: String| {
+        if !source_columns.contains(&column_name.to_ascii_lowercase()) {
+            metadata_projections.push(format!(
+                "{expression} as {}",
+                quote_duckdb_identifier(column_name)
+            ));
+        }
+    };
+
+    push_metadata_projection("source_repo", quote_duckdb_string_literal(repository));
+    push_metadata_projection("source_table", quote_duckdb_string_literal(source_table));
+    push_metadata_projection("batch_id", quote_duckdb_string_literal(current_commit));
+    push_metadata_projection(
+        "ingested_at",
+        "cast(current_timestamp as timestamp)".to_string(),
+    );
+    push_metadata_projection("bundle_kind", quote_duckdb_string_literal(bundle_kind));
+    if let Some(previous_commit) = previous_commit {
+        push_metadata_projection(
+            "previous_commit",
+            quote_duckdb_string_literal(previous_commit),
+        );
+    }
+    push_metadata_projection(
+        "current_commit",
+        quote_duckdb_string_literal(current_commit),
+    );
+    push_metadata_projection(
+        "delete_rows_present",
+        if delete_rows_present {
+            "true".to_string()
+        } else {
+            "false".to_string()
+        },
+    );
+
+    if metadata_projections.is_empty() {
+        return Ok(format!(
+            "select source_data.* from ({scan_sql}) as source_data"
+        ));
+    }
+
+    Ok(format!(
+        "select source_data.*, {} from ({scan_sql}) as source_data",
+        metadata_projections.join(", ")
+    ))
+}
+
 fn persist_load_to_duckdb_tables_from_files(
     connection: &DuckDbConnection,
     context: &AdapterExecutionContext,
@@ -2168,6 +2270,12 @@ fn persist_load_to_duckdb_tables_from_files(
             ),
         })?;
 
+    let repository = resolved_bundle.repository.clone();
+    let bundle_kind = resolved_bundle.bundle_kind;
+    let current_commit = resolved_bundle.current_commit.clone();
+    let previous_commit = resolved_bundle.previous_commit.clone();
+    let delete_rows_present = resolved_bundle.delete_rows_present;
+
     for (table, resolved_path) in resolved_bundle
         .loaded_tables
         .iter_mut()
@@ -2185,6 +2293,17 @@ fn persist_load_to_duckdb_tables_from_files(
         }
 
         let scan_sql = duckdb_scan_sql_for_file_path(resolved_path, node_id)?;
+        let projection_sql = build_load_to_duckdb_file_projection_sql(
+            connection,
+            &scan_sql,
+            &repository,
+            bundle_kind,
+            &current_commit,
+            previous_commit.as_deref(),
+            delete_rows_present,
+            &table.source_table,
+            node_id,
+        )?;
         let qualified_table = format!(
             "{}.{}",
             schema_identifier,
@@ -2192,7 +2311,7 @@ fn persist_load_to_duckdb_tables_from_files(
         );
         connection
             .execute_batch(&format!(
-                "create or replace table {qualified_table} as {scan_sql};"
+                "create or replace table {qualified_table} as {projection_sql};"
             ))
             .map_err(|error| AdapterError::ExecutionFailed {
                 node_id: node_id.to_string(),
@@ -2852,10 +2971,7 @@ fn prepare_actual_dolt_working_copy(
             node_id,
         )?;
     } else if matches!(sync_strategy, DoltSyncStrategy::PullBeforeExecution) {
-        if !branch.trim().is_empty() {
-            run_command_capture_stdout("dolt", &["checkout", branch], Some(&repo_dir), node_id)?;
-        }
-        run_command_capture_stdout("dolt", &["pull"], Some(&repo_dir), node_id)?;
+        refresh_actual_dolt_working_copy_to_branch_head(&repo_dir, branch, node_id)?;
     }
 
     if let Some(checkout_ref) = checkout_ref.filter(|value| !value.trim().is_empty()) {
@@ -2886,6 +3002,42 @@ fn prepare_actual_dolt_working_copy(
         current_commit,
         repo_dir,
     })
+}
+
+fn refresh_actual_dolt_working_copy_to_branch_head(
+    repo_dir: &Path,
+    branch: &str,
+    node_id: &str,
+) -> Result<(), AdapterError> {
+    let branch = branch.trim();
+    if branch.is_empty() {
+        run_command_capture_stdout(
+            "dolt",
+            &["fetch", "--prune", "origin"],
+            Some(repo_dir),
+            node_id,
+        )?;
+        return Ok(());
+    }
+
+    run_command_capture_stdout("dolt", &["checkout", branch], Some(repo_dir), node_id)?;
+    run_command_capture_stdout(
+        "dolt",
+        &["fetch", "--prune", "origin"],
+        Some(repo_dir),
+        node_id,
+    )?;
+
+    let remote_branch_ref = format!("origin/{branch}");
+    // Keep read-oriented workflows aligned to remote head without creating merge commits.
+    run_command_capture_stdout(
+        "dolt",
+        &["reset", "--hard", remote_branch_ref.as_str()],
+        Some(repo_dir),
+        node_id,
+    )?;
+
+    Ok(())
 }
 
 fn try_materialize_actual_dolt_dump_bundle(
@@ -2939,15 +3091,7 @@ fn try_materialize_actual_dolt_dump_bundle(
                 node_id,
             )?;
         } else {
-            if !branch.trim().is_empty() {
-                run_command_capture_stdout(
-                    "dolt",
-                    &["checkout", branch],
-                    Some(&repo_dir),
-                    node_id,
-                )?;
-            }
-            run_command_capture_stdout("dolt", &["pull"], Some(&repo_dir), node_id)?;
+            refresh_actual_dolt_working_copy_to_branch_head(&repo_dir, branch, node_id)?;
         }
 
         if let Some(checkout_ref) = checkout_ref.filter(|value| !value.trim().is_empty()) {
@@ -3284,6 +3428,83 @@ fn source_tables_from_table_reference(
     )])
 }
 
+fn resolve_sql_transform_source_table(
+    table_payload: &TableReferencePayload,
+    source_table_name: Option<&str>,
+    node_id: &str,
+) -> Result<(String, String), AdapterError> {
+    let source_tables = source_tables_from_table_reference(table_payload, node_id)?;
+    if let Some(source_table_name) = source_table_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let (schema_name, table_name) = parse_qualified_duckdb_table_name(
+            source_table_name,
+            &table_payload.schema_name,
+            node_id,
+        )?;
+        if source_tables
+            .iter()
+            .any(|(candidate_schema, candidate_table)| {
+                candidate_schema.eq_ignore_ascii_case(&schema_name)
+                    && candidate_table.eq_ignore_ascii_case(&table_name)
+            })
+        {
+            return Ok((schema_name, table_name));
+        }
+
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!(
+                "sql_transform source table `{source_table_name}` did not match any incoming table references. Available tables: `{}`.",
+                source_tables
+                    .iter()
+                    .map(|(schema_name, table_name)| format!("{schema_name}.{table_name}"))
+                    .collect::<Vec<_>>()
+                    .join("`, `")
+            ),
+        });
+    }
+
+    if source_tables.len() == 1 {
+        return Ok(source_tables[0].clone());
+    }
+
+    Err(AdapterError::ExecutionFailed {
+        node_id: node_id.to_string(),
+        message: format!(
+            "sql_transform requires `source_table_name` when multiple upstream tables are present. Available tables: `{}`.",
+            source_tables
+                .iter()
+                .map(|(schema_name, table_name)| format!("{schema_name}.{table_name}"))
+                .collect::<Vec<_>>()
+                .join("`, `")
+        ),
+    })
+}
+
+fn render_sql_transform_sql(
+    sql_text: &str,
+    source_schema_name: &str,
+    source_table_name: &str,
+) -> String {
+    let qualified_source = format!(
+        "{}.{}",
+        quote_duckdb_identifier(source_schema_name),
+        quote_duckdb_identifier(source_table_name)
+    );
+    sql_text
+        .replace("{{source}}", &qualified_source)
+        .replace(
+            "{{source_schema}}",
+            &quote_duckdb_identifier(source_schema_name),
+        )
+        .replace(
+            "{{source_table}}",
+            &quote_duckdb_identifier(source_table_name),
+        )
+}
+
 fn merge_live_source_sql(qualified_source: &str, source_columns: &[String]) -> String {
     if source_columns
         .iter()
@@ -3439,6 +3660,36 @@ fn persist_table_merge_tables(
                         node_id: node_id.to_string(),
                         message: format!(
                             "upsert merge into `{target_schema}.{source_table_name}` requires at least one merge key column."
+                        ),
+                    });
+                }
+                let target_columns = load_duckdb_table_column_names(
+                    connection,
+                    target_schema,
+                    &source_table_name,
+                    node_id,
+                )?;
+                let available_target_columns = target_columns
+                    .iter()
+                    .map(|column| column.to_ascii_lowercase())
+                    .collect::<Vec<_>>();
+                let missing_target_merge_keys = normalized_merge_keys
+                    .iter()
+                    .filter_map(|key| {
+                        if available_target_columns.contains(&key.to_ascii_lowercase()) {
+                            None
+                        } else {
+                            Some((*key).to_string())
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                if !missing_target_merge_keys.is_empty() {
+                    return Err(AdapterError::ExecutionFailed {
+                        node_id: node_id.to_string(),
+                        message: format!(
+                            "merge key(s) `{}` do not exist on durable target table `{target_schema}.{source_table_name}`. Existing target columns: `{}`.",
+                            missing_target_merge_keys.join(", "),
+                            target_columns.join("`, `")
                         ),
                     });
                 }
@@ -4058,6 +4309,173 @@ fn execute_table_merge(
             } else {
                 format!(" using merge key `{}`", merge_key_columns.join(", "))
             }
+        )],
+    })
+}
+
+fn execute_sql_transform(
+    node: &WorkflowNode,
+    inputs: &PortValues,
+    context: &AdapterExecutionContext,
+) -> Result<NodeExecutionResult, AdapterError> {
+    let config: SqlTransformConfig =
+        serde_json::from_value(node.config.clone()).map_err(|error| {
+            AdapterError::InvalidConfig {
+                node_id: node.node_id.clone(),
+                message: error.to_string(),
+            }
+        })?;
+
+    let table_input = inputs
+        .get("table")
+        .ok_or_else(|| AdapterError::MissingInput {
+            node_id: node.node_id.clone(),
+            port: "table".to_string(),
+        })?;
+
+    if table_input.data_type != DataType::TableRef {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: "sql_transform expects a `table_ref` input.".to_string(),
+        });
+    }
+
+    let table_payload: TableReferencePayload = serde_json::from_value(table_input.value.clone())
+        .map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: format!("invalid table reference payload: {error}"),
+        })?;
+
+    if table_payload.kind != "table_reference" {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: format!("unsupported table reference kind `{}`", table_payload.kind),
+        });
+    }
+
+    let target_schema = config.target_schema.trim();
+    if target_schema.is_empty() {
+        return Err(AdapterError::InvalidConfig {
+            node_id: node.node_id.clone(),
+            message: "`target_schema` must not be empty.".to_string(),
+        });
+    }
+
+    let output_table_name = config.output_table_name.trim();
+    if output_table_name.is_empty() {
+        return Err(AdapterError::InvalidConfig {
+            node_id: node.node_id.clone(),
+            message: "`output_table_name` must not be empty.".to_string(),
+        });
+    }
+
+    let sql_text = config.sql_text.trim();
+    if sql_text.is_empty() {
+        return Err(AdapterError::InvalidConfig {
+            node_id: node.node_id.clone(),
+            message: "`sql_text` must not be empty.".to_string(),
+        });
+    }
+
+    let materialization_mode = config
+        .materialization_mode
+        .unwrap_or(SqlTransformMaterializationMode::View);
+    let (source_schema_name, source_table_name) = resolve_sql_transform_source_table(
+        &table_payload,
+        config.source_table_name.as_deref(),
+        &node.node_id,
+    )?;
+
+    let connection = open_runtime_workflow_duckdb(context, &node.node_id)?.ok_or_else(|| {
+        AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: "sql_transform requires a workflow-local DuckDB context.".to_string(),
+        }
+    })?;
+
+    if duckdb_table_exists(&connection, target_schema, output_table_name, &node.node_id)? {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: format!(
+                "sql_transform cannot create view `{target_schema}.{output_table_name}` because a base table with that name already exists."
+            ),
+        });
+    }
+
+    let schema_identifier = quote_duckdb_identifier(target_schema);
+    let table_identifier = quote_duckdb_identifier(output_table_name);
+    let qualified_output = format!("{schema_identifier}.{table_identifier}");
+    let rendered_sql = render_sql_transform_sql(sql_text, &source_schema_name, &source_table_name);
+    connection
+        .execute_batch(&format!(
+            "create schema if not exists {schema_identifier};
+             create or replace view {qualified_output} as {rendered_sql};"
+        ))
+        .map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: format!(
+                "failed to materialize sql_transform view `{target_schema}.{output_table_name}`: {error}"
+            ),
+        })?;
+
+    let transformed_columns = describe_duckdb_table_columns(
+        &connection,
+        target_schema,
+        output_table_name,
+        &node.node_id,
+    )?;
+    let mut metadata = match table_payload.metadata.clone() {
+        Some(Value::Object(object)) => Value::Object(object),
+        Some(_) | None => json!({}),
+    };
+    if let Some(metadata_object) = metadata.as_object_mut() {
+        metadata_object.insert(
+            "source_schema".to_string(),
+            json!(source_schema_name.clone()),
+        );
+        metadata_object.insert("source_table".to_string(), json!(source_table_name.clone()));
+        metadata_object.insert("transform_kind".to_string(), json!("sql_transform"));
+        metadata_object.insert("materialization_mode".to_string(), json!("view"));
+        metadata_object.insert("target_schema".to_string(), json!(target_schema));
+        metadata_object.insert("target_table".to_string(), json!(output_table_name));
+    }
+
+    let mut outputs = PortValues::new();
+    outputs.insert(
+        "table".to_string(),
+        TypedValue {
+            data_type: DataType::TableRef,
+            value: json!({
+                "kind": "table_reference",
+                "catalog": table_payload.catalog,
+                "schema_name": target_schema,
+                "table_name": output_table_name,
+                "output_alias": output_table_name,
+                "selected_columns": [],
+                "row_filter": Value::Null,
+                "row_limit": Value::Null,
+                "refresh_schema": true,
+                "open_in_catalog": table_payload.open_in_catalog,
+                "schema_definition": {
+                    "columns": transformed_columns,
+                    "primary_key": [],
+                    "checks": [],
+                },
+                "schema_definitions": Value::Null,
+                "load_manifest_ref": table_payload.load_manifest_ref,
+                "metadata": metadata,
+            }),
+        },
+    );
+
+    let mode_label = match materialization_mode {
+        SqlTransformMaterializationMode::View => "view",
+    };
+
+    Ok(NodeExecutionResult {
+        outputs,
+        logs: vec![format!(
+            "Prepared sql_transform {mode_label} `{target_schema}.{output_table_name}` from `{source_schema_name}.{source_table_name}` using workflow-local DuckDB."
         )],
     })
 }
@@ -6235,7 +6653,7 @@ mod tests {
         build_dolt_home_dir_path, build_gmail_mime_message,
         copy_or_convert_actual_dolt_dump_artifact, parse_dolt_head_commit,
         quote_duckdb_string_literal, resolve_dolt_dump_csv_path,
-        resolve_upstream_live_working_copy_path, strip_ansi_escape_sequences,
+        resolve_upstream_live_working_copy_path, strip_ansi_escape_sequences, AdapterError,
         AdapterExecutionContext, DoltDumpOutputFormat, DoltRepoDatasetMetadataPayload,
         RuntimeAdapters,
     };
@@ -7650,6 +8068,32 @@ mod tests {
             )
             .expect("staging row count query should succeed");
         assert_eq!(row_count, 2);
+        let loaded_row: (String, String, String, String, bool) = duckdb
+            .query_row(
+                "select current_commit,
+                        source_repo,
+                        source_table,
+                        batch_id,
+                        ingested_at is not null
+                 from staging.rates__us_treasury__snapshot
+                 limit 1",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .expect("staging metadata query should succeed");
+        assert_eq!(loaded_row.0, "d0f61b4");
+        assert_eq!(loaded_row.1, "post-no-preference/rates");
+        assert_eq!(loaded_row.2, "us_treasury");
+        assert_eq!(loaded_row.3, "d0f61b4");
+        assert!(loaded_row.4);
 
         let _ = fs::remove_dir_all(&workflow_root);
     }
@@ -7879,6 +8323,207 @@ mod tests {
                 "Prepared upsert merge into `tables` from `staging.earnings_calendar` across 1 table definition(s) using merge key `symbol, report_date`."
             ]
         );
+    }
+
+    #[test]
+    fn table_merge_reports_missing_target_merge_key_before_duckdb_binder_error() {
+        let registry = builtin_node_definitions();
+        let definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "table_merge")
+            .expect("table_merge definition");
+        let workflow_root = unique_test_workflow_root("table_merge_missing_target_key");
+        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let connection = DuckDbConnection::open(&duckdb_path).expect("duckdb should open");
+        connection
+            .execute_batch(
+                "create schema staging;
+                 create schema tables;
+                 create table staging.rates__us_treasury__snapshot (
+                   date date,
+                   tenor varchar,
+                   yield_pct double
+                 );
+                 insert into staging.rates__us_treasury__snapshot values
+                   ('2026-06-11', '2Y', 4.75);
+                 create table tables.rates__us_treasury__snapshot (
+                   tenor varchar,
+                   batch_id varchar,
+                   delete_rows_present boolean
+                 );",
+            )
+            .expect("schemas and tables should be created");
+        drop(connection);
+
+        let node = WorkflowNode {
+            node_id: "table_merge".to_string(),
+            type_id: "table_merge".to_string(),
+            definition_version: 1,
+            label: None,
+            config: json!({
+                "target_schema": "tables",
+                "write_policy": "upsert",
+                "merge_key_columns": ["date"],
+                "delete_handling": "apply_delete_markers",
+                "schema_drift_behavior": "fail_and_require_review"
+            }),
+            position: NodePosition::default(),
+        };
+        let mut inputs = PortValues::new();
+        inputs.insert(
+            "table".to_string(),
+            TypedValue {
+                data_type: DataType::TableRef,
+                value: json!({
+                    "kind": "table_reference",
+                    "catalog": "workflow.duckdb",
+                    "schema_name": "staging",
+                    "table_name": "rates__us_treasury__snapshot",
+                    "output_alias": "rates__us_treasury__snapshot",
+                    "selected_columns": [],
+                    "row_filter": Value::Null,
+                    "row_limit": Value::Null,
+                    "refresh_schema": true,
+                    "open_in_catalog": false,
+                    "schema_definition": {
+                        "columns": [],
+                        "primary_key": [],
+                        "checks": []
+                    }
+                }),
+            },
+        );
+        let context = AdapterExecutionContext {
+            workflow_duckdb_path: Some(duckdb_path.clone()),
+            ..AdapterExecutionContext::default()
+        };
+
+        let error = RuntimeAdapters::default()
+            .execute_with_context(definition, &node, &inputs, &context)
+            .expect_err("table merge should fail with a clear target schema error");
+
+        match error {
+            AdapterError::ExecutionFailed { message, .. } => {
+                assert_eq!(
+                    message,
+                    "merge key(s) `date` do not exist on durable target table `tables.rates__us_treasury__snapshot`. Existing target columns: `tenor`, `batch_id`, `delete_rows_present`."
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        let _ = fs::remove_dir_all(&workflow_root);
+    }
+
+    #[test]
+    fn sql_transform_emits_view_backed_table_reference_output() {
+        let registry = builtin_node_definitions();
+        let definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "sql_transform")
+            .expect("sql_transform definition");
+        let workflow_root = unique_test_workflow_root("sql_transform_view_output");
+        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let connection = DuckDbConnection::open(&duckdb_path).expect("duckdb should open");
+        connection
+            .execute_batch(
+                "create schema staging;
+                 create table staging.rates__us_treasury__snapshot (
+                   date date,
+                   tenor varchar,
+                   yield_pct double
+                 );
+                 insert into staging.rates__us_treasury__snapshot values
+                   ('2026-06-11', '2Y', 4.75);",
+            )
+            .expect("staging table should be created");
+        drop(connection);
+
+        let node = WorkflowNode {
+            node_id: "sql_transform".to_string(),
+            type_id: "sql_transform".to_string(),
+            definition_version: 1,
+            label: None,
+            config: json!({
+                "target_schema": "staging_curated",
+                "output_table_name": "rates__us_treasury__snapshot_normalized",
+                "materialization_mode": "view",
+                "sql_text": "select date as curve_date, tenor, yield_pct from {{source}}"
+            }),
+            position: NodePosition::default(),
+        };
+        let mut inputs = PortValues::new();
+        inputs.insert(
+            "table".to_string(),
+            TypedValue {
+                data_type: DataType::TableRef,
+                value: json!({
+                    "kind": "table_reference",
+                    "catalog": "workflow.duckdb",
+                    "schema_name": "staging",
+                    "table_name": "rates__us_treasury__snapshot",
+                    "output_alias": "rates__us_treasury__snapshot",
+                    "selected_columns": [],
+                    "row_filter": Value::Null,
+                    "row_limit": Value::Null,
+                    "refresh_schema": true,
+                    "open_in_catalog": false,
+                    "schema_definition": {
+                        "columns": [],
+                        "primary_key": [],
+                        "checks": []
+                    },
+                    "metadata": {
+                        "repository": "post-no-preference/rates"
+                    }
+                }),
+            },
+        );
+        let context = AdapterExecutionContext {
+            workflow_duckdb_path: Some(duckdb_path.clone()),
+            ..AdapterExecutionContext::default()
+        };
+
+        let result = RuntimeAdapters::default()
+            .execute_with_context(definition, &node, &inputs, &context)
+            .expect("sql_transform should succeed");
+        let payload = result
+            .outputs
+            .get("table")
+            .expect("table output should be present");
+        assert_eq!(payload.data_type, DataType::TableRef);
+        assert_eq!(payload.value["schema_name"], json!("staging_curated"));
+        assert_eq!(
+            payload.value["table_name"],
+            json!("rates__us_treasury__snapshot_normalized")
+        );
+        assert_eq!(
+            payload.value["metadata"]["transform_kind"],
+            json!("sql_transform")
+        );
+        assert_eq!(
+            payload.value["metadata"]["materialization_mode"],
+            json!("view")
+        );
+        assert_eq!(
+            payload.value["schema_definition"]["columns"][0]["name"],
+            json!("curve_date")
+        );
+
+        let connection = DuckDbConnection::open(&duckdb_path).expect("duckdb should reopen");
+        let row: (String, String, f64) = connection
+            .query_row(
+                "select curve_date::varchar, tenor, yield_pct
+                 from staging_curated.rates__us_treasury__snapshot_normalized",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("view should query");
+        assert_eq!(row.0, "2026-06-11");
+        assert_eq!(row.1, "2Y");
+        assert_eq!(row.2, 4.75);
+
+        let _ = fs::remove_dir_all(&workflow_root);
     }
 
     #[test]

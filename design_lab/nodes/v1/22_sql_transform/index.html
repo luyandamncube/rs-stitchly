@@ -1,0 +1,981 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Design Lab · SQL Transform</title>
+    <link rel="stylesheet" href="../shared.css" />
+    <style>
+      .lab-page--sql {
+        place-items: stretch;
+        padding: 28px;
+      }
+
+      .lab-stage--sql {
+        position: relative;
+        width: min(100%, 1540px);
+        min-height: 900px;
+        margin: 0 auto;
+        padding: 28px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 372px;
+        gap: 26px;
+        align-items: stretch;
+        border-radius: 28px;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 15% 16%, rgba(245, 110, 15, 0.08), transparent 19%),
+          radial-gradient(circle at 56% 20%, rgba(89, 194, 181, 0.09), transparent 18%),
+          radial-gradient(circle at 86% 13%, rgba(120, 195, 132, 0.07), transparent 17%),
+          linear-gradient(180deg, rgba(13, 13, 16, 0.88), rgba(9, 9, 11, 0.98));
+        box-shadow:
+          0 32px 64px rgba(0, 0, 0, 0.28),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+      }
+
+      .lab-stage--sql::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image: radial-gradient(circle, rgba(255, 255, 255, 0.12) 1px, transparent 1px);
+        background-size: 24px 24px;
+        pointer-events: none;
+      }
+
+      .flow-scene {
+        position: relative;
+        min-height: 844px;
+      }
+
+      .flow-caption {
+        position: absolute;
+        left: 0;
+        top: 0;
+        z-index: 2;
+        display: grid;
+        gap: 6px;
+        max-width: 590px;
+      }
+
+      .flow-caption__eyebrow {
+        color: rgba(255, 255, 255, 0.54);
+        font-size: 0.76rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      .flow-caption h1 {
+        margin: 0;
+        font-size: 1.14rem;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+      }
+
+      .flow-caption p {
+        margin: 0;
+        color: rgba(255, 255, 255, 0.62);
+        font-size: 0.88rem;
+        line-height: 1.55;
+      }
+
+      .flow-connection {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        pointer-events: none;
+      }
+
+      .flow-connection path {
+        fill: none;
+        stroke: rgba(120, 195, 132, 0.74);
+        stroke-width: 2.2;
+        stroke-linecap: round;
+      }
+
+      .flow-connection path.flow-connection__accent {
+        stroke: rgba(89, 194, 181, 0.84);
+      }
+
+      .flow-connection circle {
+        fill: #0d0d10;
+        stroke: rgba(120, 195, 132, 0.84);
+        stroke-width: 2;
+      }
+
+      .flow-connection circle.flow-connection__accent-dot {
+        stroke: rgba(89, 194, 181, 0.9);
+      }
+
+      .flow-node {
+        position: absolute;
+        z-index: 2;
+      }
+
+      .flow-node--load {
+        left: 66px;
+        top: 364px;
+        width: 286px;
+      }
+
+      .flow-node--sql {
+        left: 430px;
+        top: 296px;
+        width: 338px;
+      }
+
+      .flow-node--merge {
+        left: 848px;
+        top: 362px;
+        width: 298px;
+      }
+
+      .flow-node--selected {
+        background: rgba(39, 39, 44, 0.98);
+        box-shadow:
+          0 0 0 1px rgba(245, 110, 15, 0.82),
+          0 18px 34px rgba(0, 0, 0, 0.22);
+      }
+
+      .node-card--load,
+      .node-card--sql,
+      .node-card--merge {
+        min-height: 0;
+        padding: 8px 9px;
+        border-radius: 10px;
+        background: rgba(34, 34, 39, 0.96);
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.07);
+      }
+
+      .node-card--load .node-card__header,
+      .node-card--sql .node-card__header,
+      .node-card--merge .node-card__header {
+        min-height: 28px;
+      }
+
+      .node-card--load .node-card__heading,
+      .node-card--sql .node-card__heading,
+      .node-card--merge .node-card__heading {
+        gap: 10px;
+        align-items: flex-start;
+      }
+
+      .node-card--load .node-card__icon,
+      .node-card--sql .node-card__icon,
+      .node-card--merge .node-card__icon {
+        margin-top: 2px;
+      }
+
+      .node-card__icon--duckdb,
+      .node-panel__title-icon--duckdb {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+
+      .node-card__icon--duckdb {
+        width: 20px;
+        height: 20px;
+      }
+
+      .node-panel__title-icon--duckdb {
+        width: 18px;
+        height: 18px;
+      }
+
+      .duckdb-mark {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+
+      .node-card__icon--sql,
+      .node-panel__title-icon--sql {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 999px;
+        background: rgba(89, 194, 181, 0.16);
+        color: rgba(185, 255, 246, 0.95);
+        font-family: "Azeret Mono", "SFMono-Regular", "Consolas", monospace;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+
+      .node-card__icon--sql {
+        min-width: 24px;
+        height: 24px;
+        padding: 0 6px;
+        font-size: 0.66rem;
+      }
+
+      .node-panel__title-icon--sql {
+        min-width: 28px;
+        height: 28px;
+        padding: 0 7px;
+        font-size: 0.68rem;
+      }
+
+      .node-card__title-copy {
+        display: grid;
+        gap: 2px;
+        min-width: 0;
+      }
+
+      .node-card__title-copy strong {
+        color: rgba(255, 255, 255, 0.98);
+        font-size: 0.96rem;
+        font-weight: 600;
+        line-height: 1.1;
+        letter-spacing: -0.02em;
+      }
+
+      .node-card__title-subtitle {
+        color: rgba(255, 255, 255, 0.54);
+        font-family: "Azeret Mono", "SFMono-Regular", "Consolas", monospace;
+        font-size: 0.68rem;
+        line-height: 1.1;
+        letter-spacing: -0.01em;
+      }
+
+      .node-card__header-meta {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        flex-shrink: 0;
+        color: rgba(255, 255, 255, 0.74);
+        font-size: 0.76rem;
+        font-weight: 600;
+      }
+
+      .node-card__header-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.1);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+      }
+
+      .node-card--load .node-card__body,
+      .node-card--sql .node-card__body,
+      .node-card--merge .node-card__body {
+        gap: 4px;
+        margin-top: 4px;
+        margin-bottom: 3px;
+      }
+
+      .node-card--load .node-card__row--summary,
+      .node-card--load .node-card__footer,
+      .node-card--sql .node-card__row--summary,
+      .node-card--sql .node-card__footer,
+      .node-card--merge .node-card__row--summary,
+      .node-card--merge .node-card__footer {
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.035);
+      }
+
+      .node-card--sql .node-card__row--summary,
+      .node-card--sql .node-card__footer {
+        border-color: rgba(89, 194, 181, 0.18);
+        background: rgba(89, 194, 181, 0.055);
+      }
+
+      .node-card--load .node-card__summary-label,
+      .node-card--load .node-card__footer-meta,
+      .node-card--sql .node-card__summary-label,
+      .node-card--sql .node-card__footer-meta,
+      .node-card--merge .node-card__summary-label,
+      .node-card--merge .node-card__footer-meta {
+        color: var(--text-muted);
+      }
+
+      .node-card--load .node-card__summary-target,
+      .node-card--load .node-card__footer strong,
+      .node-card--sql .node-card__summary-target,
+      .node-card--sql .node-card__footer strong,
+      .node-card--merge .node-card__summary-target,
+      .node-card--merge .node-card__footer strong {
+        color: rgba(255, 255, 255, 0.92);
+        font-weight: 300;
+      }
+
+      .node-card__handle--left {
+        left: -8px;
+        right: auto;
+      }
+
+      .flow-node__hint {
+        position: absolute;
+        top: 492px;
+        left: 470px;
+        z-index: 2;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 10px;
+        background: rgba(28, 28, 33, 0.94);
+        box-shadow:
+          0 14px 26px rgba(0, 0, 0, 0.24),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+        color: rgba(255, 255, 255, 0.68);
+        font-size: 0.74rem;
+      }
+
+      .flow-node__hint strong {
+        color: rgba(210, 255, 250, 0.94);
+        font-weight: 500;
+      }
+
+      .flow-node__badge {
+        position: absolute;
+        z-index: 2;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 12px;
+        background: rgba(17, 17, 21, 0.9);
+        box-shadow:
+          0 16px 28px rgba(0, 0, 0, 0.22),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+        color: rgba(255, 255, 255, 0.66);
+        font-size: 0.73rem;
+      }
+
+      .flow-node__badge strong {
+        color: rgba(255, 255, 255, 0.9);
+        font-weight: 500;
+      }
+
+      .flow-node__badge--input {
+        left: 264px;
+        top: 304px;
+      }
+
+      .flow-node__badge--output {
+        left: 760px;
+        top: 302px;
+      }
+
+      .node-panel {
+        position: relative;
+        z-index: 2;
+        min-height: 844px;
+        display: grid;
+        grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+        gap: 14px;
+        padding: 14px 14px 16px;
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 12px;
+        background: rgba(34, 34, 39, 0.98);
+        box-shadow: 0 18px 36px rgba(0, 0, 0, 0.24);
+      }
+
+      .node-panel__header,
+      .node-panel__title-group,
+      .node-panel__header-meta,
+      .node-panel__field-head,
+      .node-panel__footer-row,
+      .node-panel__section-head,
+      .node-panel__contract-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .node-panel__title-group {
+        justify-content: flex-start;
+        align-items: flex-start;
+      }
+
+      .node-panel__title-icon {
+        color: rgba(255, 255, 255, 0.56);
+        font-size: 0.88rem;
+        margin-top: 2px;
+      }
+
+      .node-panel__eyebrow {
+        color: rgba(255, 255, 255, 0.52);
+        font-size: 0.68rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      .node-panel__title {
+        margin: 0;
+        font-size: 1.32rem;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+      }
+
+      .node-panel__subtitle {
+        margin: 3px 0 0;
+        color: rgba(255, 255, 255, 0.56);
+        font-size: 0.84rem;
+      }
+
+      .node-panel__status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: rgba(255, 255, 255, 0.8);
+        font-size: 0.78rem;
+      }
+
+      .node-panel__status-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: rgba(89, 194, 181, 0.94);
+        box-shadow: 0 0 0 4px rgba(89, 194, 181, 0.12);
+      }
+
+      .node-panel__summary,
+      .node-panel__section,
+      .node-panel__contract,
+      .node-panel__notes {
+        padding: 0;
+        border: none;
+        border-radius: 0;
+        background: transparent;
+        display: grid;
+        gap: 10px;
+      }
+
+      .node-panel__section,
+      .node-panel__contract,
+      .node-panel__notes {
+        padding-top: 12px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .node-panel__summary-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .node-panel__summary-card {
+        padding: 10px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.038);
+        display: grid;
+        gap: 4px;
+      }
+
+      .node-panel__summary-label,
+      .node-panel__field-label,
+      .node-panel__section-kicker,
+      .node-panel__contract-label,
+      .node-panel__note-label {
+        color: rgba(255, 255, 255, 0.5);
+        font-size: 0.72rem;
+      }
+
+      .node-panel__summary-value,
+      .node-panel__contract-value {
+        color: rgba(255, 255, 255, 0.94);
+        font-size: 0.87rem;
+        font-weight: 500;
+      }
+
+      .node-panel__section-title {
+        margin: 0;
+        font-size: 0.88rem;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+      }
+
+      .node-panel__note-copy {
+        margin: 0;
+        color: rgba(255, 255, 255, 0.66);
+        font-size: 0.79rem;
+        line-height: 1.45;
+      }
+
+      .node-panel__fields {
+        display: grid;
+        gap: 8px;
+      }
+
+      .node-panel__field {
+        display: grid;
+        gap: 5px;
+      }
+
+      .node-panel__field-hint {
+        color: rgba(255, 255, 255, 0.42);
+        font-size: 0.72rem;
+      }
+
+      .node-panel__control,
+      .node-panel__pill-row {
+        min-height: 30px;
+        width: 100%;
+        padding: 0 10px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 7px;
+        background: rgba(255, 255, 255, 0.04);
+        color: rgba(255, 255, 255, 0.94);
+        font: inherit;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .node-panel__pill-row {
+        min-height: 48px;
+        padding-top: 7px;
+        padding-bottom: 7px;
+        align-items: flex-start;
+        flex-direction: column;
+        justify-content: center;
+      }
+
+      .node-panel__pill-label {
+        color: rgba(255, 255, 255, 0.5);
+        font-size: 0.72rem;
+      }
+
+      .node-panel__pill-value,
+      .node-panel__control-code,
+      .node-panel__contract-value,
+      .node-panel__code {
+        font-family: "Azeret Mono", "SFMono-Regular", "Consolas", monospace;
+        font-size: 0.75rem;
+      }
+
+      .node-panel__caret {
+        color: rgba(255, 255, 255, 0.5);
+        font-size: 0.78rem;
+      }
+
+      .node-panel__code-block {
+        display: grid;
+        gap: 8px;
+        padding: 10px;
+        border: 1px solid rgba(89, 194, 181, 0.15);
+        border-radius: 8px;
+        background:
+          linear-gradient(180deg, rgba(13, 19, 20, 0.95), rgba(9, 12, 13, 0.98));
+      }
+
+      .node-panel__code-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .node-panel__code-label {
+        color: rgba(210, 255, 250, 0.9);
+        font-size: 0.72rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .node-panel__code-chip {
+        display: inline-flex;
+        align-items: center;
+        min-height: 22px;
+        padding: 0 8px;
+        border-radius: 999px;
+        background: rgba(89, 194, 181, 0.12);
+        color: rgba(210, 255, 250, 0.86);
+        font-size: 0.68rem;
+      }
+
+      .node-panel__code {
+        margin: 0;
+        color: rgba(232, 247, 244, 0.9);
+        line-height: 1.55;
+        white-space: pre-wrap;
+      }
+
+      .node-panel__subsection {
+        display: grid;
+        gap: 10px;
+        padding-top: 12px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .node-panel__subsection-title {
+        margin: 0;
+        color: rgba(255, 255, 255, 0.72);
+        font-size: 0.82rem;
+        font-weight: 500;
+        line-height: 1.2;
+      }
+
+      .node-panel__checkbox {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .node-panel__checkbox input {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .node-panel__checkbox span:last-child {
+        color: rgba(255, 255, 255, 0.84);
+        font-size: 0.84rem;
+        font-weight: 500;
+      }
+
+      .node-panel__checkmark {
+        position: relative;
+        width: 18px;
+        height: 18px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 3px;
+        background: rgba(255, 255, 255, 0.86);
+      }
+
+      .node-panel__checkmark::after {
+        content: "";
+        position: absolute;
+        left: 5px;
+        top: 2px;
+        width: 4px;
+        height: 9px;
+        border-right: 1.75px solid #17171c;
+        border-bottom: 1.75px solid #17171c;
+        transform: rotate(40deg);
+      }
+
+      .node-panel__checkbox--off .node-panel__checkmark {
+        background: rgba(255, 255, 255, 0.02);
+      }
+
+      .node-panel__checkbox--off .node-panel__checkmark::after {
+        display: none;
+      }
+
+      .node-panel__timing-card {
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        padding: 0 10px;
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.02);
+      }
+
+      .node-panel__footer {
+        display: grid;
+        gap: 10px;
+        margin-top: auto;
+      }
+
+      .node-panel__footer-row {
+        padding-top: 10px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .node-panel__footer-label {
+        color: rgba(255, 255, 255, 0.52);
+        font-size: 0.75rem;
+      }
+
+      .node-panel__footer-value {
+        color: rgba(255, 255, 255, 0.88);
+        font-size: 0.82rem;
+      }
+
+      .node-panel__button {
+        min-height: 38px;
+        border: none;
+        border-radius: 8px;
+        background: rgba(89, 194, 181, 0.22);
+        color: rgba(255, 255, 255, 0.96);
+        font: inherit;
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="lab-page lab-page--sql">
+      <section class="lab-stage lab-stage--sql" aria-label="SQL transform node study">
+        <div class="flow-scene">
+          <div class="flow-caption">
+            <span class="flow-caption__eyebrow">Node Study 22</span>
+            <h1>SQL transform as the shape boundary between raw staging and durable merge</h1>
+            <p>
+              This study treats `sql_transform` as the place where landed raw tables stay intact
+              while merge-ready normalized tables get materialized for downstream policy nodes. The
+              example is the Treasury bootstrap case: wide tenor columns in, `curve_date` / `tenor`
+              / `yield_pct` out.
+            </p>
+          </div>
+          <svg class="flow-connection" viewBox="0 0 1180 844" preserveAspectRatio="none" aria-hidden="true">
+            <path d="M 352 430 C 392 430, 418 430, 454 412 S 520 382, 590 382" />
+            <path class="flow-connection__accent" d="M 768 382 C 836 382, 864 398, 906 418 S 978 430, 1042 430" />
+            <circle cx="352" cy="430" r="6"></circle>
+            <circle class="flow-connection__accent-dot" cx="590" cy="382" r="6"></circle>
+            <circle class="flow-connection__accent-dot" cx="768" cy="382" r="6"></circle>
+            <circle cx="1042" cy="430" r="6"></circle>
+          </svg>
+
+          <article class="node-card node-card--load flow-node flow-node--load" aria-label="Load to DuckDB node">
+            <header class="node-card__header">
+              <div class="node-card__heading">
+                <span class="node-card__icon node-card__icon--duckdb" aria-hidden="true">
+                  <svg class="duckdb-mark" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="16" cy="16" r="16" fill="#050505" />
+                    <circle cx="11.5" cy="16" r="6.6" fill="#FFEB00" />
+                    <path
+                      d="M20.8 13.9H23.6C25.0922 13.9 26.3 15.1078 26.3 16.6C26.3 18.0922 25.0922 19.3 23.6 19.3H20.8V13.9Z"
+                      fill="#FFEB00"
+                    />
+                  </svg>
+                </span>
+                <div class="node-card__title-copy">
+                  <strong>Load to DuckDB</strong>
+                  <span class="node-card__title-subtitle">load_to_duckdb</span>
+                </div>
+              </div>
+              <div class="node-card__header-meta">
+                <span class="node-card__header-dot" aria-hidden="true"></span>
+                <span>1 out</span>
+              </div>
+            </header>
+            <section class="node-card__body">
+              <div class="node-card__row node-card__row--summary">
+                <div class="node-card__summary-head">
+                  <span class="node-card__summary-label">Target</span>
+                  <strong class="node-card__summary-target">staging</strong>
+                </div>
+              </div>
+              <div class="node-card__row node-card__row--summary">
+                <div class="node-card__summary-head">
+                  <span class="node-card__summary-label">Shape</span>
+                  <strong class="node-card__summary-target">raw wide table</strong>
+                </div>
+              </div>
+            </section>
+            <footer class="node-card__footer">
+              <span class="node-card__footer-meta"><span class="node-card__footer-icon" aria-hidden="true">#</span><span>Bundle</span></span>
+              <strong>landed snapshot</strong>
+            </footer>
+            <span class="node-card__handle node-card__handle--left" aria-hidden="true"></span>
+            <span class="node-card__handle node-card__handle--right" aria-hidden="true"></span>
+          </article>
+
+          <div class="flow-node__badge flow-node__badge--input" aria-hidden="true">
+            <span>wide columns</span>
+            <strong>`date, 1_month, 2_year, 10_year...`</strong>
+          </div>
+
+          <article class="node-card node-card--sql flow-node flow-node--sql flow-node--selected" aria-label="SQL transform node">
+            <header class="node-card__header">
+              <div class="node-card__heading">
+                <span class="node-card__icon node-card__icon--sql" aria-hidden="true">SQL</span>
+                <div class="node-card__title-copy">
+                  <strong>SQL Transform</strong>
+                  <span class="node-card__title-subtitle">sql_transform</span>
+                </div>
+              </div>
+              <div class="node-card__header-meta">
+                <span class="node-card__header-dot" aria-hidden="true"></span>
+                <span>1 in · 1 out</span>
+              </div>
+            </header>
+            <section class="node-card__body">
+              <div class="node-card__row node-card__row--summary">
+                <div class="node-card__summary-head">
+                  <span class="node-card__summary-label">Engine</span>
+                  <strong class="node-card__summary-target">workflow DuckDB</strong>
+                </div>
+              </div>
+              <div class="node-card__row node-card__row--summary">
+                <div class="node-card__summary-head">
+                  <span class="node-card__summary-label">Mode</span>
+                  <strong class="node-card__summary-target">materialize normalized table</strong>
+                </div>
+              </div>
+              <div class="node-card__row node-card__row--summary">
+                <div class="node-card__summary-head">
+                  <span class="node-card__summary-label">Output</span>
+                  <strong class="node-card__summary-target">curve_date, tenor, yield_pct</strong>
+                </div>
+              </div>
+            </section>
+            <footer class="node-card__footer">
+              <span class="node-card__footer-meta"><span class="node-card__footer-icon" aria-hidden="true">@</span><span>Transform</span></span>
+              <strong>unpivot_treasury_curve</strong>
+            </footer>
+            <span class="node-card__handle node-card__handle--left" aria-hidden="true"></span>
+            <span class="node-card__handle node-card__handle--right" aria-hidden="true"></span>
+          </article>
+
+          <div class="flow-node__hint" aria-hidden="true"><span>emits</span><strong>normalized `table_ref[]` for merge policy</strong></div>
+
+          <div class="flow-node__badge flow-node__badge--output" aria-hidden="true">
+            <span>merge keys now exist</span>
+            <strong>`curve_date, tenor`</strong>
+          </div>
+
+          <article class="node-card node-card--merge flow-node flow-node--merge" aria-label="Table merge node">
+            <header class="node-card__header">
+              <div class="node-card__heading">
+                <span class="node-card__icon" aria-hidden="true">G</span>
+                <div class="node-card__title-copy">
+                  <strong>Table Merge</strong>
+                  <span class="node-card__title-subtitle">table_merge</span>
+                </div>
+              </div>
+              <div class="node-card__header-meta">
+                <span class="node-card__header-dot" aria-hidden="true"></span>
+                <span>1 in</span>
+              </div>
+            </header>
+            <section class="node-card__body">
+              <div class="node-card__row node-card__row--summary">
+                <div class="node-card__summary-head">
+                  <span class="node-card__summary-label">Policy</span>
+                  <strong class="node-card__summary-target">upsert</strong>
+                </div>
+              </div>
+              <div class="node-card__row node-card__row--summary">
+                <div class="node-card__summary-head">
+                  <span class="node-card__summary-label">Key</span>
+                  <strong class="node-card__summary-target">curve_date, tenor</strong>
+                </div>
+              </div>
+            </section>
+            <footer class="node-card__footer">
+              <span class="node-card__footer-meta"><span class="node-card__footer-icon" aria-hidden="true">#</span><span>Target</span></span>
+              <strong>tables durable</strong>
+            </footer>
+            <span class="node-card__handle node-card__handle--left" aria-hidden="true"></span>
+            <span class="node-card__handle node-card__handle--right" aria-hidden="true"></span>
+          </article>
+        </div>
+
+        <aside class="node-panel" aria-label="SQL transform manager">
+          <header class="node-panel__header">
+            <div class="node-panel__title-group">
+              <span class="node-panel__title-icon node-panel__title-icon--sql" aria-hidden="true">SQL</span>
+              <div>
+                <div class="node-panel__eyebrow">Node config</div>
+                <h2 class="node-panel__title">SQL Transform</h2>
+                <p class="node-panel__subtitle">Reshape landed staging tables into merge-ready workflow-local tables without mutating the raw landing layer.</p>
+              </div>
+            </div>
+            <div class="node-panel__header-meta"><span class="node-panel__status"><span class="node-panel__status-dot" aria-hidden="true"></span>Ready</span></div>
+          </header>
+          <section class="node-panel__summary">
+            <div class="node-panel__section-head">
+              <div>
+                <div class="node-panel__section-kicker">Transform posture</div>
+                <h3 class="node-panel__section-title">Normalize before durable policy</h3>
+              </div>
+            </div>
+            <div class="node-panel__summary-grid">
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Engine</span><strong class="node-panel__summary-value">workflow DuckDB</strong></div>
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Input contract</span><strong class="node-panel__summary-value">`table_ref[]` from staging</strong></div>
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Materialization</span><strong class="node-panel__summary-value">`staging_curated` tables</strong></div>
+              <div class="node-panel__summary-card"><span class="node-panel__summary-label">Output contract</span><strong class="node-panel__summary-value">merge-ready `table_ref[]`</strong></div>
+            </div>
+          </section>
+          <section class="node-panel__section">
+            <div class="node-panel__section-head">
+              <div>
+                <div class="node-panel__section-kicker">Authoring model</div>
+                <h3 class="node-panel__section-title">How raw staging is reshaped</h3>
+              </div>
+            </div>
+            <div class="node-panel__fields">
+              <div class="node-panel__field">
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Execution engine</span><span class="node-panel__field-hint">same workflow-local runtime</span></div>
+                <div class="node-panel__control"><span>DuckDB in workflow context</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
+              </div>
+              <div class="node-panel__field">
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Source table set</span><span class="node-panel__field-hint">selected upstream refs</span></div>
+                <div class="node-panel__control"><span>staging.rates__us_treasury__snapshot</span></div>
+              </div>
+              <div class="node-panel__field">
+                <div class="node-panel__field-head"><span class="node-panel__field-label">SQL authoring mode</span><span class="node-panel__field-hint">first pass</span></div>
+                <div class="node-panel__control"><span>Inline SQL with named transform preset</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
+              </div>
+              <div class="node-panel__field">
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Materialization target</span><span class="node-panel__field-hint">preserve raw landing</span></div>
+                <div class="node-panel__control"><span>staging_curated.rates__us_treasury__snapshot_normalized</span></div>
+              </div>
+              <div class="node-panel__field">
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Output alias policy</span><span class="node-panel__field-hint">debuggable lineage</span></div>
+                <div class="node-panel__control"><span>Preserve source name + `__normalized` suffix</span><span class="node-panel__caret" aria-hidden="true">v</span></div>
+              </div>
+              <div class="node-panel__field">
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Bound metadata</span><span class="node-panel__field-hint">optional variables</span></div>
+                <div class="node-panel__pill-row"><span class="node-panel__pill-label">Available to SQL</span><strong class="node-panel__pill-value">current_commit, previous_commit, batch_id, source_repo, source_table</strong></div>
+              </div>
+              <div class="node-panel__field">
+                <div class="node-panel__field-head"><span class="node-panel__field-label">Representative transform</span><span class="node-panel__field-hint">rates bootstrap</span></div>
+                <div class="node-panel__code-block">
+                  <div class="node-panel__code-head">
+                    <span class="node-panel__code-label">SQL sketch</span>
+                    <span class="node-panel__code-chip">unpivot_treasury_curve</span>
+                  </div>
+                  <pre class="node-panel__code">select
+  "date" as curve_date,
+  tenor,
+  yield_pct
+from staging.rates__us_treasury__snapshot
+unpivot yield_pct for tenor in (
+  "1_month", "2_month", "3_month", "6_month",
+  "1_year", "2_year", "3_year", "5_year",
+  "7_year", "10_year", "20_year", "30_year"
+);</pre>
+                </div>
+              </div>
+            </div>
+          </section>
+          <section class="node-panel__contract">
+            <div class="node-panel__section-head">
+              <div>
+                <div class="node-panel__section-kicker">Input contract</div>
+                <h3 class="node-panel__section-title">What staging hands to SQL</h3>
+              </div>
+            </div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Resolved source tables</span><strong class="node-panel__contract-value">`table_ref[]`</strong></div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Schema definitions</span><strong class="node-panel__contract-value">`schema_definition[]`</strong></div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Lineage context</span><strong class="node-panel__contract-value">`metadata.load_manifest_ref`, `metadata.current_commit`</strong></div>
+          </section>
+          <section class="node-panel__contract">
+            <div class="node-panel__section-head">
+              <div>
+                <div class="node-panel__section-kicker">Output contract</div>
+                <h3 class="node-panel__section-title">What merge can now trust</h3>
+              </div>
+            </div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Normalized table refs</span><strong class="node-panel__contract-value">`table_ref[]`</strong></div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Published schema</span><strong class="node-panel__contract-value">`curve_date`, `tenor`, `yield_pct`, lineage fields</strong></div>
+            <div class="node-panel__contract-row"><span class="node-panel__contract-label">Transform summary</span><strong class="node-panel__contract-value">`metadata.transform_name`, `metadata.transform_sql_hash`, `metadata.source_tables[]`</strong></div>
+          </section>
+          <section class="node-panel__notes">
+            <div><span class="node-panel__note-label">Boundary</span><p class="node-panel__note-copy">Shape changes belong here. `load_to_duckdb` should stay focused on reliable landing, while `table_merge` should stay focused on business keys and durable write policy.</p></div>
+            <div><span class="node-panel__note-label">Why not overwrite staging</span><p class="node-panel__note-copy">Keeping the raw landed table intact makes debugging easier, especially when a transform or merge rule needs inspection after a failed run.</p></div>
+            <div><span class="node-panel__note-label">Rates use case</span><p class="node-panel__note-copy">This node is the missing step that turns the Treasury source from a wide curve table into the long-form rows that `table_merge` actually expects.</p></div>
+          </section>
+          <section class="node-panel__subsection" aria-label="Execution timing">
+            <p class="node-panel__subsection-title">Execution timing</p>
+            <div class="node-panel__timing-card"><label class="node-panel__checkbox node-panel__checkbox--off"><input type="checkbox" /><span class="node-panel__checkmark" aria-hidden="true"></span><span>Wait before execution</span></label></div>
+            <div class="node-panel__timing-card"><label class="node-panel__checkbox node-panel__checkbox--off"><input type="checkbox" /><span class="node-panel__checkmark" aria-hidden="true"></span><span>Wait after execution</span></label></div>
+          </section>
+          <footer class="node-panel__footer">
+            <div class="node-panel__footer-row"><span class="node-panel__footer-label">Best sandwich pair</span><span class="node-panel__footer-value">`load_to_duckdb` -> `sql_transform` -> `table_merge`</span></div>
+            <button class="node-panel__button" type="button">Save transform draft</button>
+          </footer>
+        </aside>
+      </section>
+    </main>
+  </body>
+</html>

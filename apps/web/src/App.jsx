@@ -130,7 +130,7 @@ const NODE_SHELF_GROUPS = [
       { typeId: 'api_request', label: 'API Request', implemented: false },
       { typeId: 'python_script', label: 'Python Script', implemented: false },
       { typeId: 'transform', label: 'Transform', implemented: false },
-      { typeId: 'sql_transform', label: 'SQL Transform', implemented: false },
+      { typeId: 'sql_transform', label: 'SQL Transform', implemented: true },
       { typeId: 'rust_native', label: 'Rust Native', implemented: false },
       { typeId: 'engine_workload', label: 'Engine Workload', implemented: false }
     ]

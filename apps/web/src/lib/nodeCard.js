@@ -444,6 +444,55 @@ const BUILTIN_NODE_CARD_FALLBACKS = {
       density: 'comfortable'
     }
   },
+  sql_transform: {
+    variant: 'compute',
+    icon_key: 'logic',
+    top_chip: {
+      visible: false,
+      text: null
+    },
+    header: {
+      title_source: 'instance_label_or_display_name',
+      show_overflow_menu: true
+    },
+    rows: [
+      {
+        row_id: 'materialization_mode',
+        kind: 'kv',
+        label: 'Mode',
+        value: { source: 'config', path: 'materialization_mode' },
+        formatter: 'text',
+        icon_key: 'logic',
+        truncate: false
+      },
+      {
+        row_id: 'target_schema',
+        kind: 'kv',
+        label: 'Target',
+        value: { source: 'config', path: 'target_schema' },
+        formatter: 'text',
+        icon_key: 'table_output',
+        truncate: false
+      }
+    ],
+    footer: {
+      kind: 'metric',
+      label: 'Output',
+      value: { source: 'config', path: 'output_table_name' },
+      formatter: 'text',
+      icon_key: 'status'
+    },
+    handles: {
+      input_layout: 'single_left',
+      output_layout: 'single_right',
+      show_labels: 'never',
+      align_to_rows: true
+    },
+    size: {
+      width: 336,
+      density: 'comfortable'
+    }
+  },
   table_input: {
     variant: 'input',
     icon_key: 'table_output',
@@ -513,6 +562,7 @@ const ICON_LABELS = {
   send_email: '@',
   sparkles: 'O',
   status: 'S',
+  sql_transform: 'SQL',
   table_merge: 'G',
   table_input: '[]',
   table_output: '[]',

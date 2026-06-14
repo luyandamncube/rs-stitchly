@@ -1323,6 +1323,7 @@ async fn create_workspace_run(
     Path(workspace_id): Path<String>,
     Json(mut request): Json<CreateRunRequest>,
 ) -> Result<(StatusCode, Json<api_contract::CreateRunResponse>), ApiError> {
+    request.workflow = normalize_known_workflow_configs(&request.workflow);
     let session = require_session(&state, &headers)?;
     state
         .platform
@@ -1667,8 +1668,9 @@ async fn get_workspace_run_logs(
 )]
 async fn validate_workflow(
     State(state): State<AppState>,
-    Json(request): Json<ValidateWorkflowRequest>,
+    Json(mut request): Json<ValidateWorkflowRequest>,
 ) -> Json<ValidateWorkflowResponse> {
+    request.workflow = normalize_known_workflow_configs(&request.workflow);
     Json(state.runtime.validate_workflow(&request.workflow))
 }
 
@@ -1685,8 +1687,9 @@ async fn validate_workflow(
 )]
 async fn create_run(
     State(state): State<AppState>,
-    Json(request): Json<CreateRunRequest>,
+    Json(mut request): Json<CreateRunRequest>,
 ) -> Result<(StatusCode, Json<api_contract::CreateRunResponse>), ApiError> {
+    request.workflow = normalize_known_workflow_configs(&request.workflow);
     let response = state
         .runtime
         .create_run(request)
@@ -1755,6 +1758,191 @@ async fn stream_run_events(
         .ok_or_else(|| ApiError::not_found(format!("Run `{run_id}` was not found.")))?;
 
     Ok(Sse::new(event_stream(subscription)).keep_alive(KeepAlive::default()))
+}
+
+fn normalize_known_workflow_configs(workflow: &WorkflowDefinition) -> WorkflowDefinition {
+    let mut normalized = workflow.clone();
+
+    for index in 0..normalized.nodes.len() {
+        if normalized.nodes[index].type_id != "table_merge" {
+            continue;
+        }
+
+        let Some(repository) =
+            resolve_table_merge_source_repository(&normalized, &normalized.nodes[index].node_id)
+        else {
+            continue;
+        };
+        if repository != "post-no-preference/rates" {
+            continue;
+        }
+
+        let Some(config) = normalized.nodes[index].config.as_object_mut() else {
+            continue;
+        };
+        let merge_key_columns = extract_merge_key_columns(config);
+        if merge_key_columns.len() == 1 && merge_key_columns[0].eq_ignore_ascii_case("date") {
+            config.insert(
+                "merge_key_columns".to_string(),
+                serde_json::json!(["curve_date", "tenor"]),
+            );
+            config.insert(
+                "merge_key_columns_text".to_string(),
+                serde_json::json!("curve_date, tenor"),
+            );
+        }
+    }
+
+    normalized
+}
+
+fn extract_merge_key_columns(config: &serde_json::Map<String, Value>) -> Vec<String> {
+    if let Some(Value::Array(values)) = config.get("merge_key_columns") {
+        let normalized = values
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+        if !normalized.is_empty() {
+            return normalized;
+        }
+    }
+
+    config
+        .get("merge_key_columns_text")
+        .and_then(Value::as_str)
+        .map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|entry| !entry.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn resolve_table_merge_source_repository(
+    workflow: &WorkflowDefinition,
+    table_merge_node_id: &str,
+) -> Option<String> {
+    let source_node = find_source_node(workflow, table_merge_node_id, "table")?;
+    match source_node.type_id.as_str() {
+        "load_to_duckdb" => {
+            resolve_load_to_duckdb_source_repository(workflow, &source_node.node_id)
+        }
+        "sql_transform" => resolve_sql_transform_source_repository(workflow, &source_node.node_id),
+        _ => None,
+    }
+}
+
+fn resolve_sql_transform_source_repository(
+    workflow: &WorkflowDefinition,
+    sql_transform_node_id: &str,
+) -> Option<String> {
+    let source_node = find_source_node(workflow, sql_transform_node_id, "table")?;
+    match source_node.type_id.as_str() {
+        "load_to_duckdb" => {
+            resolve_load_to_duckdb_source_repository(workflow, &source_node.node_id)
+        }
+        "sql_transform" => resolve_sql_transform_source_repository(workflow, &source_node.node_id),
+        _ => None,
+    }
+}
+
+fn resolve_load_to_duckdb_source_repository(
+    workflow: &WorkflowDefinition,
+    load_to_duckdb_node_id: &str,
+) -> Option<String> {
+    let source_node = find_source_node(workflow, load_to_duckdb_node_id, "bundle")?;
+
+    match source_node.type_id.as_str() {
+        "dolt_dump" => resolve_dolt_dump_source_repository(workflow, &source_node.node_id),
+        "dolt_diff_export" => {
+            resolve_dolt_diff_export_source_repository(workflow, &source_node.node_id)
+        }
+        _ => None,
+    }
+}
+
+fn resolve_dolt_dump_source_repository(
+    workflow: &WorkflowDefinition,
+    dolt_dump_node_id: &str,
+) -> Option<String> {
+    let source_node = find_source_node(workflow, dolt_dump_node_id, "repo")?;
+
+    match source_node.type_id.as_str() {
+        "dolt_repo_source" => repository_from_repo_source(source_node),
+        "dolt_repo_sync" => {
+            resolve_dolt_repo_sync_source_repository(workflow, &source_node.node_id)
+        }
+        "dolt_change_manifest" => {
+            resolve_dolt_change_manifest_source_repository(workflow, &source_node.node_id)
+        }
+        _ => None,
+    }
+}
+
+fn resolve_dolt_diff_export_source_repository(
+    workflow: &WorkflowDefinition,
+    dolt_diff_export_node_id: &str,
+) -> Option<String> {
+    let manifest_node = find_source_node(workflow, dolt_diff_export_node_id, "manifest")?;
+    if manifest_node.type_id != "dolt_change_manifest" {
+        return None;
+    }
+
+    resolve_dolt_change_manifest_source_repository(workflow, &manifest_node.node_id)
+}
+
+fn resolve_dolt_change_manifest_source_repository(
+    workflow: &WorkflowDefinition,
+    dolt_change_manifest_node_id: &str,
+) -> Option<String> {
+    let sync_node = find_source_node(workflow, dolt_change_manifest_node_id, "repo")?;
+    if sync_node.type_id != "dolt_repo_sync" {
+        return None;
+    }
+
+    resolve_dolt_repo_sync_source_repository(workflow, &sync_node.node_id)
+}
+
+fn resolve_dolt_repo_sync_source_repository(
+    workflow: &WorkflowDefinition,
+    dolt_repo_sync_node_id: &str,
+) -> Option<String> {
+    let repo_node = find_source_node(workflow, dolt_repo_sync_node_id, "repo")?;
+    if repo_node.type_id != "dolt_repo_source" {
+        return None;
+    }
+
+    repository_from_repo_source(repo_node)
+}
+
+fn repository_from_repo_source(node: &WorkflowNode) -> Option<String> {
+    node.config
+        .get("repository")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn find_source_node<'a>(
+    workflow: &'a WorkflowDefinition,
+    target_node_id: &str,
+    target_port_id: &str,
+) -> Option<&'a WorkflowNode> {
+    let edge = workflow.edges.iter().find(|candidate| {
+        candidate.target_node_id == target_node_id && candidate.target_port_id == target_port_id
+    })?;
+
+    workflow
+        .nodes
+        .iter()
+        .find(|node| node.node_id == edge.source_node_id)
 }
 
 #[utoipa::path(
@@ -3349,7 +3537,9 @@ mod tests {
     use tokio::time::{sleep, Duration};
     use tower::ServiceExt;
     use uuid::Uuid;
-    use workflow_schema::{NodePosition, WorkflowDefinition, WorkflowEdge, WorkflowNode};
+    use workflow_schema::{
+        NodePosition, WorkflowDefinition, WorkflowEdge, WorkflowNode, CURRENT_SCHEMA_VERSION,
+    };
 
     use super::{app, hydrate_send_email_runtime_delivery, AppState};
     use crate::platform::{GoogleConnectionTokens, GoogleIdentityProfile, PlatformStore};
@@ -3375,6 +3565,121 @@ mod tests {
 
         let response = router.oneshot(request).await.expect("response");
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn normalize_known_workflow_configs_migrates_legacy_rates_merge_key() {
+        let workflow = WorkflowDefinition {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            workflow_id: "wf_rates_legacy_merge_key".to_string(),
+            version: 1,
+            name: "Rates Legacy Merge Key".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "dolt_repo_source".to_string(),
+                    type_id: "dolt_repo_source".to_string(),
+                    definition_version: 1,
+                    label: None,
+                    config: json!({
+                        "repository": "post-no-preference/rates",
+                        "branch": "master"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "dolt_dump".to_string(),
+                    type_id: "dolt_dump".to_string(),
+                    definition_version: 1,
+                    label: None,
+                    config: json!({}),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "load_to_duckdb".to_string(),
+                    type_id: "load_to_duckdb".to_string(),
+                    definition_version: 1,
+                    label: None,
+                    config: json!({
+                        "target_schema": "staging"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "sql_transform".to_string(),
+                    type_id: "sql_transform".to_string(),
+                    definition_version: 1,
+                    label: None,
+                    config: json!({
+                        "target_schema": "staging_curated",
+                        "output_table_name": "rates__us_treasury__snapshot_normalized",
+                        "materialization_mode": "view",
+                        "sql_text": "select * from {{source}}"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "table_merge".to_string(),
+                    type_id: "table_merge".to_string(),
+                    definition_version: 1,
+                    label: None,
+                    config: json!({
+                        "target_schema": "tables",
+                        "write_policy": "upsert",
+                        "merge_key_columns": ["date"],
+                        "merge_key_columns_text": "date"
+                    }),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![
+                WorkflowEdge {
+                    edge_id: "edge_repo_dump".to_string(),
+                    source_node_id: "dolt_repo_source".to_string(),
+                    source_port_id: "repo".to_string(),
+                    target_node_id: "dolt_dump".to_string(),
+                    target_port_id: "repo".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_dump_load".to_string(),
+                    source_node_id: "dolt_dump".to_string(),
+                    source_port_id: "bundle".to_string(),
+                    target_node_id: "load_to_duckdb".to_string(),
+                    target_port_id: "bundle".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_load_merge".to_string(),
+                    source_node_id: "load_to_duckdb".to_string(),
+                    source_port_id: "table".to_string(),
+                    target_node_id: "sql_transform".to_string(),
+                    target_port_id: "table".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_transform_merge".to_string(),
+                    source_node_id: "sql_transform".to_string(),
+                    source_port_id: "table".to_string(),
+                    target_node_id: "table_merge".to_string(),
+                    target_port_id: "table".to_string(),
+                },
+            ],
+            metadata: Default::default(),
+        };
+
+        let normalized = super::normalize_known_workflow_configs(&workflow);
+
+        let table_merge = normalized
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "table_merge")
+            .expect("table_merge node");
+        assert_eq!(
+            table_merge.config["merge_key_columns"],
+            json!(["curve_date", "tenor"])
+        );
+        assert_eq!(
+            table_merge.config["merge_key_columns_text"],
+            json!("curve_date, tenor")
+        );
     }
 
     #[tokio::test]

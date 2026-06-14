@@ -2571,6 +2571,70 @@ fn validate_node_config(node: &WorkflowNode) -> Option<ValidationIssue> {
 
             None
         }
+        "sql_transform" => {
+            let target_schema = node.config.get("target_schema").and_then(Value::as_str);
+            if target_schema.map_or(true, |value| value.trim().is_empty()) {
+                return Some(issue(
+                    "invalid_sql_transform_target_schema",
+                    format!(
+                        "Node `{}` requires a non-empty string `target_schema` config field.",
+                        node.node_id
+                    ),
+                    Some(format!(
+                        "workflow.nodes.{}.config.target_schema",
+                        node.node_id
+                    )),
+                ));
+            }
+
+            let output_table_name = node.config.get("output_table_name").and_then(Value::as_str);
+            if output_table_name.map_or(true, |value| value.trim().is_empty()) {
+                return Some(issue(
+                    "invalid_sql_transform_output_table_name",
+                    format!(
+                        "Node `{}` requires a non-empty string `output_table_name` config field.",
+                        node.node_id
+                    ),
+                    Some(format!(
+                        "workflow.nodes.{}.config.output_table_name",
+                        node.node_id
+                    )),
+                ));
+            }
+
+            let sql_text = node.config.get("sql_text").and_then(Value::as_str);
+            if sql_text.map_or(true, |value| value.trim().is_empty()) {
+                return Some(issue(
+                    "invalid_sql_transform_sql_text",
+                    format!(
+                        "Node `{}` requires a non-empty string `sql_text` config field.",
+                        node.node_id
+                    ),
+                    Some(format!("workflow.nodes.{}.config.sql_text", node.node_id)),
+                ));
+            }
+
+            if let Some(materialization_mode) = node.config.get("materialization_mode") {
+                match materialization_mode.as_str() {
+                    Some("view") => {}
+                    _ => {
+                        return Some(issue(
+                            "invalid_sql_transform_materialization_mode",
+                            format!(
+                                "Node `{}` has unsupported `materialization_mode` value.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.materialization_mode",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            None
+        }
         "table_merge" => {
             let target_schema = node.config.get("target_schema").and_then(Value::as_str);
             if target_schema.map_or(true, |value| value.trim().is_empty()) {
@@ -4360,6 +4424,111 @@ mod tests {
                 WorkflowEdge {
                     edge_id: "edge_load_to_duckdb_to_table_merge".to_string(),
                     source_node_id: "load_to_duckdb".to_string(),
+                    source_port_id: "table".to_string(),
+                    target_node_id: "table_merge".to_string(),
+                    target_port_id: "table".to_string(),
+                },
+            ],
+            metadata: Default::default(),
+        };
+
+        let validation = runtime.validate_workflow(&workflow);
+        assert!(validation.valid, "expected valid flow, got: {validation:?}");
+    }
+
+    #[test]
+    fn load_to_duckdb_can_connect_to_sql_transform_to_table_merge() {
+        let runtime = RuntimeService::default();
+        let workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_load_to_duckdb_sql_transform_table_merge".to_string(),
+            version: 1,
+            name: "Load To DuckDB SQL Transform Table Merge".to_string(),
+            description: None,
+            nodes: vec![
+                WorkflowNode {
+                    node_id: "dolt_repo_source".to_string(),
+                    type_id: "dolt_repo_source".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Repo Source".to_string()),
+                    config: json!({
+                        "connection_ref": "dolthub_public",
+                        "repository": "post-no-preference/rates",
+                        "branch": "master"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "dolt_dump".to_string(),
+                    type_id: "dolt_dump".to_string(),
+                    definition_version: 1,
+                    label: Some("Dolt Dump".to_string()),
+                    config: json!({}),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "load_to_duckdb".to_string(),
+                    type_id: "load_to_duckdb".to_string(),
+                    definition_version: 1,
+                    label: Some("Load to DuckDB".to_string()),
+                    config: json!({
+                        "target_schema": "staging"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "sql_transform".to_string(),
+                    type_id: "sql_transform".to_string(),
+                    definition_version: 1,
+                    label: Some("SQL Transform".to_string()),
+                    config: json!({
+                        "target_schema": "staging_curated",
+                        "output_table_name": "rates__us_treasury__snapshot_normalized",
+                        "materialization_mode": "view",
+                        "sql_text": "select * from {{source}}"
+                    }),
+                    position: NodePosition::default(),
+                },
+                WorkflowNode {
+                    node_id: "table_merge".to_string(),
+                    type_id: "table_merge".to_string(),
+                    definition_version: 1,
+                    label: Some("Table Merge".to_string()),
+                    config: json!({
+                        "target_schema": "tables",
+                        "write_policy": "upsert",
+                        "merge_key_columns": ["curve_date", "tenor"],
+                        "delete_handling": "apply_delete_markers",
+                        "schema_drift_behavior": "fail_and_require_review"
+                    }),
+                    position: NodePosition::default(),
+                },
+            ],
+            edges: vec![
+                WorkflowEdge {
+                    edge_id: "edge_repo_dump".to_string(),
+                    source_node_id: "dolt_repo_source".to_string(),
+                    source_port_id: "repo_out".to_string(),
+                    target_node_id: "dolt_dump".to_string(),
+                    target_port_id: "repo".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_dump_load".to_string(),
+                    source_node_id: "dolt_dump".to_string(),
+                    source_port_id: "bundle".to_string(),
+                    target_node_id: "load_to_duckdb".to_string(),
+                    target_port_id: "bundle".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_load_transform".to_string(),
+                    source_node_id: "load_to_duckdb".to_string(),
+                    source_port_id: "table".to_string(),
+                    target_node_id: "sql_transform".to_string(),
+                    target_port_id: "table".to_string(),
+                },
+                WorkflowEdge {
+                    edge_id: "edge_transform_merge".to_string(),
+                    source_node_id: "sql_transform".to_string(),
                     source_port_id: "table".to_string(),
                     target_node_id: "table_merge".to_string(),
                     target_port_id: "table".to_string(),

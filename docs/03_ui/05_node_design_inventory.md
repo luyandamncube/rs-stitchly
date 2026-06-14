@@ -63,7 +63,7 @@ These archetypes are the reusable visual patterns we should design once and then
 | `NODE_CMP_API_REQUEST` | `api_request` | Compute | Proposed | Now | `ARC_COMPUTE_REQUEST` | `v1` sample exists | Missing from the declared taxonomy but highly useful and already a natural fit for the current visual direction |
 | `NODE_CMP_PYTHON` | `python_script` | Compute | Declared | Now | `ARC_COMPUTE_CODE` | Not started | Core MVP node for user-defined logic |
 | `NODE_CMP_TRANSFORM` | `transform` | Compute | Declared | Now | `ARC_COMPUTE_CODE` | Not started | Good generic transform surface for lightweight built-ins |
-| `NODE_CMP_SQL` | `sql_transform` | Compute | Declared | Now | `ARC_COMPUTE_CODE` | Not started | Important for warehouse-oriented workflows and engine pushdown |
+| `NODE_CMP_SQL` | `sql_transform` | Compute | Declared | Now | `ARC_COMPUTE_CODE` | `v1` sample exists | Important for warehouse-oriented workflows and engine pushdown |
 | `NODE_CMP_RUST_NATIVE` | `rust_native` | Compute | Declared | Soon | `ARC_COMPUTE_CODE` | Not started | Useful for first-class built-in operators once the generic compute archetype is settled |
 | `NODE_CMP_ENGINE_WORKLOAD` | `engine_workload` | Compute | Declared | Soon | `ARC_COMPUTE_CODE` | Not started | Needed for adapter-managed engine jobs, but visually can likely follow SQL/code compute with stronger runtime cues |
 | `NODE_MOV_EXTRACT` | `extract` | Data Movement | Declared | Soon | `ARC_DATA_MOVEMENT` | Not started | Useful for ingestion-oriented workflows from external systems |

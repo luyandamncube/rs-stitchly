@@ -862,6 +862,145 @@
       }
     },
     {
+      "type_id": "sql_transform",
+      "version": 1,
+      "display_name": "SQL Transform",
+      "category": "compute",
+      "description": "Creates a workflow-local DuckDB view that reshapes staged tables into merge-ready outputs.",
+      "inputs": [
+        {
+          "port_id": "table",
+          "display_name": "Table",
+          "direction": "input",
+          "data_type": "table_ref",
+          "required": true,
+          "multiple": false,
+          "description": "Workflow-local staging table reference that will be queried by inline SQL."
+        }
+      ],
+      "outputs": [
+        {
+          "port_id": "table",
+          "display_name": "Table",
+          "direction": "output",
+          "data_type": "table_ref",
+          "required": false,
+          "multiple": false,
+          "description": "Workflow-local transformed table reference backed by a DuckDB view."
+        }
+      ],
+      "config_schema": {
+        "type": "object",
+        "required": [
+          "target_schema",
+          "output_table_name",
+          "sql_text"
+        ],
+        "properties": {
+          "target_schema": {
+            "type": "string",
+            "default": "staging_curated"
+          },
+          "output_table_name": {
+            "type": "string",
+            "default": "normalized_view"
+          },
+          "source_table_name": {
+            "type": "string",
+            "default": ""
+          },
+          "materialization_mode": {
+            "type": "string",
+            "enum": [
+              "view"
+            ],
+            "default": "view"
+          },
+          "sql_text": {
+            "type": "string",
+            "default": "select *\nfrom {{source}}"
+          }
+        }
+      },
+      "runtime": {
+        "executor_kind": "rust_native",
+        "isolation_mode": "in_process"
+      },
+      "capabilities": {
+        "reads_external_state": false,
+        "writes_external_state": false,
+        "produces_durable_artifacts": false,
+        "supports_preview": true,
+        "requires_connection": false,
+        "may_emit_structured_logs": true
+      },
+      "ui": {
+        "icon": "logic",
+        "color_token": "var(--node-transform)",
+        "default_width": 336,
+        "default_height": 176,
+        "help_text": "Use inline DuckDB SQL to reshape staging tables into merge-ready workflow views.",
+        "node_card": {
+          "variant": "compute",
+          "icon_key": "logic",
+          "top_chip": {
+            "visible": false,
+            "text": null
+          },
+          "header": {
+            "title_source": "instance_label_or_display_name",
+            "show_overflow_menu": true
+          },
+          "rows": [
+            {
+              "row_id": "materialization_mode",
+              "kind": "kv",
+              "label": "Mode",
+              "value": {
+                "source": "config",
+                "path": "materialization_mode"
+              },
+              "formatter": "text",
+              "icon_key": "logic",
+              "truncate": false
+            },
+            {
+              "row_id": "target_schema",
+              "kind": "kv",
+              "label": "Target",
+              "value": {
+                "source": "config",
+                "path": "target_schema"
+              },
+              "formatter": "text",
+              "icon_key": "table_output",
+              "truncate": false
+            }
+          ],
+          "footer": {
+            "kind": "metric",
+            "label": "Output",
+            "value": {
+              "source": "config",
+              "path": "output_table_name"
+            },
+            "formatter": "text",
+            "icon_key": "status"
+          },
+          "handles": {
+            "input_layout": "single_left",
+            "output_layout": "single_right",
+            "show_labels": "never",
+            "align_to_rows": true
+          },
+          "size": {
+            "width": 336,
+            "density": "comfortable"
+          }
+        }
+      }
+    },
+    {
       "type_id": "text_transform",
       "version": 1,
       "display_name": "Text Transform",

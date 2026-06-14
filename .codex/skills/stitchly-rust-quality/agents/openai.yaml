@@ -1,0 +1,4 @@
+interface:
+  display_name: "Stitchly Rust Quality"
+  short_description: "Route Rust quality checks."
+  default_prompt: "Use this skill when writing, reviewing, or refactoring Rust in Stitchly. Inspect affected crate ranges and apply repo-specific async, error handling, API contract, adapter, testing, and performance checks before validation."

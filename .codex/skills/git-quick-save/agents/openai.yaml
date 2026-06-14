@@ -1,0 +1,4 @@
+interface:
+  display_name: "Git Quick Save"
+  short_description: "Safely commit and push changes."
+  default_prompt: "Use this skill when the user asks to quickly save, dump, commit, or push current repository changes. Inspect status and diff, use an explicit commit message when provided or generate one from a cohesive diff, stage only safe intended files, commit, and push."

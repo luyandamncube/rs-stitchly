@@ -1,0 +1,4 @@
+interface:
+  display_name: "Stitchly Run Runtime"
+  short_description: "Route Stitchly run/runtime work."
+  default_prompt: "Use this skill for Stitchly run and runtime work. Load only the run lifecycle docs and affected runtime, API, UI, fixture, or test ranges needed for the task."

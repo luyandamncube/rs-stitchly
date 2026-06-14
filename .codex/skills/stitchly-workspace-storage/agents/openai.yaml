@@ -1,0 +1,4 @@
+interface:
+  display_name: "Stitchly Workspace Storage"
+  short_description: "Route workspace/storage work."
+  default_prompt: "Use this skill for Stitchly workspace and storage work. Load only the relevant auth, workspace, storage-root, DuckDB, API, frontend, and backend ranges needed for the task."

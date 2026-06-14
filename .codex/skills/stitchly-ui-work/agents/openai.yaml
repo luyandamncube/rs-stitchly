@@ -1,0 +1,4 @@
+interface:
+  display_name: "Stitchly UI Work"
+  short_description: "Route Stitchly frontend UI work."
+  default_prompt: "Use this skill for Stitchly frontend UI work. Inspect only the relevant UI docs, design-lab sample, component range, CSS class range, and frontend test for the requested surface."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Stitchly Node Contract"
+  short_description: "Route Stitchly node contract work."
+  default_prompt: "Use this skill for Stitchly node contract work. Inspect only the relevant node definition, adapter, UI, fixture, and contract docs for the node or behavior being changed."

@@ -259,7 +259,7 @@ const WORKSPACE_CATALOG_QUERY_RESPONSE = {
 describe('App platform shell', () => {
   beforeEach(() => {
     window.localStorage.clear();
-    window.history.replaceState({}, '', '/login');
+    window.history.replaceState({}, '', '/');
     delete window.google;
     api.cancelWorkspaceRun.mockReset();
     api.connectWorkspaceGmail.mockReset();
@@ -610,8 +610,12 @@ describe('App platform shell', () => {
     expect(screen.getByLabelText('Data sources window')).toBeInTheDocument();
     expect(screen.getByText('Catalog Tree')).toBeInTheDocument();
     const tree = screen.getByRole('tree', { name: 'Catalog hierarchy' });
-    expect(await within(tree).findByText('default-workspace')).toBeInTheDocument();
-    expect(within(tree).getByText('warehouse-workspace')).toBeInTheDocument();
+    expect(
+      await within(tree).findByText('default-workspace · ScJUvQ7dgxHqu7tXtsekiL · workflow.duckdb')
+    ).toBeInTheDocument();
+    expect(
+      within(tree).getByText('warehouse-workspace · wf_warehouse_ops · workflow.duckdb')
+    ).toBeInTheDocument();
     expect(within(tree).getByText('runs')).toBeInTheDocument();
     expect(within(tree).getByText('workflow_runs')).toBeInTheDocument();
     expect(screen.getByText('SQL Editor')).toBeInTheDocument();
@@ -1656,6 +1660,42 @@ describe('App platform shell', () => {
     expect(await screen.findByText('No workflows yet')).toBeInTheDocument();
     expect(api.getWorkflows).toHaveBeenCalledWith('ws_default');
     expect(window.location.pathname).toBe('/w/default-workspace/workflows');
+  });
+
+  it('redirects the root route to login for unauthenticated users', async () => {
+    api.getSession.mockResolvedValue(UNAUTHENTICATED_SESSION);
+    window.history.replaceState({}, '', '/');
+
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: /log in/i })).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/login');
+  });
+
+  it('redirects the root route to the active workspace canvas', async () => {
+    api.getSession.mockResolvedValue(AUTHENTICATED_SESSION);
+    window.history.replaceState({}, '', '/');
+
+    render(<App />);
+
+    expect(await screen.findByTestId('canvas-workspace')).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/w/default-workspace/canvas');
+  });
+
+  it('redirects the root route to workspace creation when no workspace exists', async () => {
+    api.getSession.mockResolvedValue({
+      ...AUTHENTICATED_SESSION,
+      active_workspace_id: null,
+      workspaces: []
+    });
+    window.history.replaceState({}, '', '/');
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole('heading', { name: /create a workspace/i })
+    ).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/workspaces/new');
   });
 
   it('fails hard for unsupported workspace screens instead of redirecting', async () => {

@@ -1202,6 +1202,7 @@ describe('App platform shell', () => {
 
     expect(await screen.findByLabelText('Workspace directory')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'New workspace' })).toBeInTheDocument();
+    expect(screen.getByText('ws_default')).toBeInTheDocument();
     expect(await screen.findByText('Default Workspace · Current')).toBeInTheDocument();
     expect(await screen.findByText('Ops Space')).toBeInTheDocument();
     expect(await screen.findByText('Text Preview')).toBeInTheDocument();

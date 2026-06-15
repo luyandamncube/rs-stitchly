@@ -1288,6 +1288,15 @@ textarea {
   line-height: 1.4;
 }
 
+.canvas-workspace-panel__workspace-id {
+  color: rgba(255, 255, 255, 0.7);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
 .canvas-workspace-panel__header-meta,
 .canvas-workflow-panel__header-meta {
   justify-content: flex-end;

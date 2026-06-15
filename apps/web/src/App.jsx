@@ -1937,7 +1937,9 @@ function CanvasWorkspaceDirectoryPanel({
           </span>
           <div className="canvas-workspace-panel__title-copy">
             <strong>Workspaces</strong>
-            <span>Directory view</span>
+            <code className="canvas-workspace-panel__workspace-id">
+              {activeWorkspace.workspace_id}
+            </code>
           </div>
         </div>
 

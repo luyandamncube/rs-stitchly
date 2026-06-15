@@ -2,7 +2,6 @@ use std::{
     collections::BTreeSet,
     env, fs,
     path::{Path, PathBuf},
-    process::Command,
     sync::{Arc, Mutex},
 };
 
@@ -24,7 +23,7 @@ use argon2::{
     Argon2,
 };
 use chrono::{Duration, Utc};
-use duckdb::{Connection as DuckDbConnection, OptionalExt};
+use duckdb::{config, types::ValueRef, Config, Connection as DuckDbConnection, OptionalExt};
 use rand_core::OsRng;
 use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;

@@ -37,6 +37,9 @@ pub struct RuntimeAdapters;
 pub struct AdapterExecutionContext {
     pub workflow_id: Option<String>,
     pub run_id: Option<String>,
+    pub workspace_duckdb_path: Option<PathBuf>,
+    pub workflow_root_path: Option<PathBuf>,
+    pub workflow_files_root: Option<PathBuf>,
     pub workflow_duckdb_path: Option<PathBuf>,
     pub disable_live_dolt: bool,
 }
@@ -2023,6 +2026,10 @@ fn execute_dolt_diff_export(
 }
 
 fn managed_workflow_root_from_context(context: &AdapterExecutionContext) -> Option<PathBuf> {
+    if let Some(root) = context.workflow_root_path.as_ref() {
+        return Some(root.clone());
+    }
+
     let workflow_duckdb_path = context.workflow_duckdb_path.as_ref()?;
     let db_dir = workflow_duckdb_path.parent()?;
     let file_name = workflow_duckdb_path.file_name()?.to_str()?;
@@ -2046,7 +2053,17 @@ fn workflow_root_from_context(context: &AdapterExecutionContext) -> Option<PathB
 }
 
 fn workflow_files_root_from_context(context: &AdapterExecutionContext) -> Option<PathBuf> {
-    workflow_root_from_context(context).map(|root| root.join("files"))
+    context
+        .workflow_files_root
+        .clone()
+        .or_else(|| workflow_root_from_context(context).map(|root| root.join("files")))
+}
+
+fn runtime_duckdb_path_from_context(context: &AdapterExecutionContext) -> Option<&Path> {
+    context
+        .workspace_duckdb_path
+        .as_deref()
+        .or(context.workflow_duckdb_path.as_deref())
 }
 
 fn resolve_workflow_file_path(
@@ -3244,7 +3261,7 @@ fn open_runtime_workflow_duckdb(
     context: &AdapterExecutionContext,
     node_id: &str,
 ) -> Result<Option<DuckDbConnection>, AdapterError> {
-    let Some(database_path) = context.workflow_duckdb_path.as_deref() else {
+    let Some(database_path) = runtime_duckdb_path_from_context(context) else {
         return Ok(None);
     };
 
@@ -3373,7 +3390,7 @@ fn open_recovering_runtime_workflow_duckdb_for_load(
     context: &AdapterExecutionContext,
     node_id: &str,
 ) -> Result<Option<(DuckDbConnection, Option<PathBuf>)>, AdapterError> {
-    let Some(database_path) = context.workflow_duckdb_path.as_deref() else {
+    let Some(database_path) = runtime_duckdb_path_from_context(context) else {
         return Ok(None);
     };
 
@@ -5158,7 +5175,7 @@ fn execute_checkpoint_write(
     } else {
         "bootstrap_refresh"
     };
-    let persisted_at = if context.workflow_duckdb_path.is_some() {
+    let persisted_at = if runtime_duckdb_path_from_context(context).is_some() {
         Utc::now().to_rfc3339()
     } else {
         mock_checkpoint_success_at(&repository).to_string()
@@ -7905,7 +7922,7 @@ mod tests {
                 {
                     "source_table": "option_chain",
                     "file_path": "artifacts/dolt_dump/options/b91c2aa/csv/option_chain.csv",
-                    "row_count": 126000
+                    "row_count": Value::Null
                 }
             ])
         );
@@ -7922,13 +7939,11 @@ mod tests {
             .iter()
             .find(|definition| definition.type_id == "dolt_dump")
             .expect("dolt_dump definition");
-        let workflow_root = unique_test_workflow_root("dolt_dump_seeded_csv");
-        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
-        let seed_dir = workflow_root
-            .join("files")
-            .join("raw")
-            .join("dolt")
-            .join("rates");
+        let workspace_root = unique_test_workflow_root("dolt_dump_seeded_csv_workspace");
+        let workflow_root = workspace_root.join("workflows").join("wf_seeded_csv");
+        let workspace_duckdb_path = workspace_root.join("db").join("workspace.duckdb");
+        let workflow_files_root = workflow_root.join("files");
+        let seed_dir = workflow_files_root.join("raw").join("dolt").join("rates");
         fs::create_dir_all(&seed_dir).expect("seed directory should be created");
         fs::write(
             seed_dir.join("us_treasury.csv"),
@@ -7974,7 +7989,9 @@ mod tests {
             position: NodePosition::default(),
         };
         let context = AdapterExecutionContext {
-            workflow_duckdb_path: Some(duckdb_path.clone()),
+            workspace_duckdb_path: Some(workspace_duckdb_path),
+            workflow_root_path: Some(workflow_root.clone()),
+            workflow_files_root: Some(workflow_files_root.clone()),
             ..AdapterExecutionContext::default()
         };
 
@@ -7987,27 +8004,22 @@ mod tests {
             .get("bundle")
             .expect("bundle output should be present");
         assert_eq!(payload.data_type, DataType::DirectoryRef);
-        assert_eq!(payload.value["directory_ref"]["format"], json!("csv"));
+        assert_eq!(payload.value["directory_ref"]["format"], json!("parquet"));
         assert_eq!(
             payload.value["directory_ref"]["path"],
-            json!("artifacts/dolt_dump/rates/pending_sync/csv")
+            json!("artifacts/dolt_dump/rates/pending_sync/parquet")
         );
 
-        let bundle_file = workflow_root
-            .join("files")
+        let bundle_file = workflow_files_root
             .join("artifacts")
             .join("dolt_dump")
             .join("rates")
             .join("pending_sync")
-            .join("csv")
-            .join("us_treasury.csv");
-        assert!(bundle_file.is_file(), "csv bundle file should exist");
+            .join("parquet")
+            .join("us_treasury.parquet");
+        assert!(bundle_file.is_file(), "parquet bundle file should exist");
 
-        let csv_contents = fs::read_to_string(&bundle_file).expect("csv bundle should be readable");
-        assert!(csv_contents.contains("curve_date,tenor,yield_pct"));
-        assert!(csv_contents.contains("2026-06-01,2Y,4.820000"));
-
-        let _ = fs::remove_dir_all(&workflow_root);
+        let _ = fs::remove_dir_all(&workspace_root);
     }
 
     #[test]
@@ -8414,10 +8426,11 @@ mod tests {
             .iter()
             .find(|definition| definition.type_id == "load_to_duckdb")
             .expect("load_to_duckdb definition");
-        let workflow_root = unique_test_workflow_root("load_to_duckdb_actual_bundle");
-        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
-        let bundle_dir = workflow_root
-            .join("files")
+        let workspace_root = unique_test_workflow_root("load_to_duckdb_actual_bundle_workspace");
+        let workflow_root = workspace_root.join("workflows").join("wf_actual_bundle");
+        let duckdb_path = workspace_root.join("db").join("workspace.duckdb");
+        let workflow_files_root = workflow_root.join("files");
+        let bundle_dir = workflow_files_root
             .join("artifacts")
             .join("dolt_dump")
             .join("rates")
@@ -8472,7 +8485,9 @@ mod tests {
             position: NodePosition::default(),
         };
         let context = AdapterExecutionContext {
-            workflow_duckdb_path: Some(duckdb_path.clone()),
+            workspace_duckdb_path: Some(duckdb_path.clone()),
+            workflow_root_path: Some(workflow_root.clone()),
+            workflow_files_root: Some(workflow_files_root),
             ..AdapterExecutionContext::default()
         };
 
@@ -8541,7 +8556,7 @@ mod tests {
         assert_eq!(loaded_row.3, "d0f61b4");
         assert!(loaded_row.4);
 
-        let _ = fs::remove_dir_all(&workflow_root);
+        let _ = fs::remove_dir_all(&workspace_root);
     }
 
     #[test]

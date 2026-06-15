@@ -1135,7 +1135,7 @@ describe('createCanvasElements', () => {
       nodeDefinitionFixture.node_definitions
     )
 
-    expect(nextWorkflow.edges).toHaveLength(workflow.edges.length)
+    expect(nextWorkflow.edges).toHaveLength(workflow.edges.length + 1)
     expect(
       nextWorkflow.nodes.find((node) => node.node_id === 'table_output_copy')?.config.input_shape
     ).toBe('source_table')

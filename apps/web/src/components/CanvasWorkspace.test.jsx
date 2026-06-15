@@ -1306,7 +1306,9 @@ describe('CanvasWorkspace', () => {
     expect(screen.getByLabelText('Schema drift behavior')).toHaveTextContent(
       'Fail and require review'
     );
-    expect(screen.getByLabelText('Current merge state')).toHaveTextContent('3 tables');
+    expect(screen.getByLabelText('Current merge state')).toHaveTextContent(
+      'earnings_calendar +2 more'
+    );
   });
 
   it('shows the checkpoint write management panel with checkpoint persistence controls', async () => {

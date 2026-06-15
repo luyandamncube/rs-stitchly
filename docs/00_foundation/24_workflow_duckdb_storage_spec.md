@@ -1,20 +1,20 @@
-# 24 Workflow DuckDB Storage Spec
+# 24 Workspace DuckDB Storage Spec
 
 ## Purpose
 
-Define the first concrete storage model for workflow-local table management.
+Define the first concrete storage model for workspace-scoped table management.
 
 This doc builds on:
 
 - `23_storage_root_and_identity_architecture.md`
 
-It chooses the first workflow-local table store and explains:
+It chooses the first workspace data-plane table store and explains:
 
-- where each workflow database should live
-- what should be created when a workflow is created
-- which data belongs in the workflow DuckDB file
+- where each workspace database should live
+- what should be created when a workspace is created or opened
+- which data belongs in the workspace DuckDB file
 - which data must remain in the control-plane database
-- which schemas the workflow DuckDB file should contain in v1
+- which schemas the workspace DuckDB file should contain in v1
 
 ## Why This Exists
 
@@ -24,17 +24,17 @@ We already have:
 - backend-owned users, sessions, workspaces, workflows, and runs
 - durable run summaries and event/log history in the control plane
 
-What is still missing is the workflow-local data plane for:
+What is still missing is the workspace data plane for:
 
 - table-shaped inputs
 - staging tables
-- workflow-owned durable tables
+- durable tables shared by workflows in the workspace
 - output tables
 - local analytical query workloads
 
 We want a first implementation that is:
 
-- simple to create per workflow
+- simple to create per workspace
 - easy to move across machines later
 - strong for local analytical workloads
 - compatible with the future mounted-cloud-volume direction
@@ -44,19 +44,20 @@ We want a first implementation that is:
 
 Use:
 
-- one DuckDB file per workflow
+- one DuckDB file per workspace
 
 Rationale:
 
-- one workflow maps cleanly to one local analytical artifact
+- workflows in the same workspace can build on shared datasets
+- the workspace is the natural boundary for shared analytical objects
 - local analytical performance is strong
-- the runtime can reason about one file path instead of managing a directory of table files
-- the file is portable for later backup, transplant, or export workflows
+- the runtime can reason about one workspace database path instead of one database per workflow
+- the file is portable for later backup, transplant, or export workflows at the workspace boundary
 - Parquet export can still be added later without making Parquet the first canonical workflow-local store
 
 ## Relationship To The Existing Control Plane
 
-The workflow DuckDB file is not the control plane.
+The workspace DuckDB file is not the control plane.
 
 The control plane must remain the canonical source for:
 
@@ -70,24 +71,26 @@ The control plane must remain the canonical source for:
 - canonical run events
 - canonical run logs
 
-The workflow DuckDB file should be used for workflow-local data workloads only.
+The workspace DuckDB file should be used for workspace-scoped data workloads only.
 
 That means:
 
 - `workflow.json` stays the canonical workflow definition
 - the Rust backend still owns workflow CRUD and run lifecycle
-- DuckDB stores workflow-local tables and workflow-shaped analytical state
+- DuckDB stores shared workspace tables and workflow-shaped analytical state
 
 ## Root Path Model
 
-Within the rooted storage layout from `23_storage_root_and_identity_architecture.md`, each workflow should look like this:
+Within the rooted storage layout from `23_storage_root_and_identity_architecture.md`, each workspace should look like this:
 
 ```text
-<workflow_id>/
-  workflow.json
+<workspace_id>/
   db/
-    workflow.duckdb
-  files/
+    workspace.duckdb
+  workflows/
+    <workflow_id>/
+      workflow.json
+      files/
 ```
 
 When expanded under the rooted ownership model:
@@ -101,39 +104,38 @@ When expanded under the rooted ownership model:
     <user_id>/
       workspaces/
         <workspace_id>/
+          db/
+            workspace.duckdb
           workflows/
             <workflow_id>/
               workflow.json
-              db/
-                workflow.duckdb
               files/
                 uploads/
                 outputs/
                 artifacts/
 ```
 
-## What Happens On Workflow Creation
+## What Happens On Workspace Creation Or Open
 
-When a new workflow is created, Stitchly should create:
+When a new workspace is created or an existing workspace is opened, Stitchly should create:
 
-1. the workflow directory
-2. `workflow.json`
-3. `db/`
-4. `db/workflow.duckdb`
-5. `files/`
-6. the standard DuckDB schemas
+1. the workspace directory
+2. `db/`
+3. `db/workspace.duckdb`
+4. `workflows/`
+5. the standard DuckDB schemas
 
 This should happen for:
 
-- blank workflows
-- starter workflows
-- any future templated workflows
+- newly created workspaces
+- existing workspaces missing the workspace DuckDB file
+- future imported or restored workspaces
 
-The control-plane `workflows` row should also persist the workflow storage owner user id, so the backend can resolve the rooted workflow path later even when the current session user is not the original workflow creator.
+Workflow creation should still create the workflow directory, `workflow.json`, and workflow-local `files/` directories. New workflows should not create workflow-local `db/workflow.duckdb` files. Legacy workflow-local DuckDB files should be cleaned up during storage bootstrap: delete system-only mirror files, quarantine corrupt files, and quarantine files that contain non-system tables.
 
 ## Required V1 DuckDB Schemas
 
-Each new workflow database should be initialized with these schemas:
+Each new workspace database should be initialized with these schemas:
 
 - `runs`
 - `staging`
@@ -146,7 +148,7 @@ Each new workflow database should be initialized with these schemas:
 
 Purpose:
 
-- workflow-local run tables
+- workspace-scoped run tables
 - node-level result tables
 - optional materialized run outputs for later inspection
 
@@ -215,7 +217,7 @@ This schema is where output nodes can materialize result tables or views.
 
 ## Recommended V1 Bootstrap SQL
 
-The workflow DB bootstrap should at least run:
+The workspace DB bootstrap should at least run:
 
 ```sql
 create schema if not exists runs;
@@ -226,13 +228,14 @@ create schema if not exists outputs;
 
 ## Implemented V1 Mirror Tables
 
-Phase 4 adds the first concrete workflow-local run mirror tables.
+Phase 4 added the first concrete run mirror tables; they now live in the workspace DuckDB.
 
 Current implementation note:
-- workflow-local run mirroring is feature-flagged behind `STITCHLY_ENABLE_WORKFLOW_RUN_DUCKDB_SYNC`
+- workspace DuckDB run mirroring is feature-flagged behind `STITCHLY_ENABLE_WORKSPACE_RUN_DUCKDB_SYNC`
 - the default is `disabled`
 - canonical run history remains the control-plane store in SQLite
-- set `STITCHLY_ENABLE_WORKFLOW_RUN_DUCKDB_SYNC=1` to enable local DuckDB mirroring during debugging or focused development
+- set `STITCHLY_ENABLE_WORKSPACE_RUN_DUCKDB_SYNC=1` to enable workspace DuckDB mirroring during debugging or focused development
+- `STITCHLY_ENABLE_WORKFLOW_RUN_DUCKDB_SYNC` remains a compatibility fallback
 
 ### `runs.workflow_runs`
 
@@ -240,7 +243,7 @@ Purpose:
 
 - one row per workflow run
 - quick analytical facts about run duration, status, and error counts
-- a workflow-local snapshot mirror without replacing the canonical control-plane run tables
+- a workspace-scoped snapshot mirror without replacing the canonical control-plane run tables
 
 Columns:
 
@@ -268,7 +271,7 @@ Columns:
 Purpose:
 
 - one row per node execution inside a run
-- workflow-local inspection of node status, attempts, log counts, and latest output
+- workspace-scoped inspection of node status, attempts, log counts, and latest output
 
 Columns:
 
@@ -291,7 +294,7 @@ Columns:
 
 Purpose:
 
-- first workflow-local materialization of node output artifacts
+- first workspace-scoped materialization of node output artifacts
 - mirrors `last_output` from the node snapshot as the first output record shape
 
 Columns:
@@ -410,7 +413,7 @@ Use `files/` for:
 
 ## Runtime Usage Direction
 
-The runtime should treat `db/workflow.duckdb` as the workflow-local analytical store.
+The runtime should treat `db/workspace.duckdb` as the workspace analytical store.
 
 Likely early node behavior:
 
@@ -418,12 +421,12 @@ Likely early node behavior:
 - transform nodes may read from `staging` or `tables` and write into `tables`
 - output nodes may materialize into `outputs`
 - run-oriented materializations may write into `runs`
+- workflows may read tables created by other workflows in the same workspace
 
-The runtime should resolve the workflow-local DB path from:
+The runtime should resolve the workspace DB path from:
 
 - `user_id`
 - `workspace_id`
-- `workflow_id`
 
 It should not derive the path from mutable names.
 
@@ -438,12 +441,13 @@ The logical path should stay the same.
 
 That means the future move to a DigitalOcean-hosted setup can preserve:
 
+- workspace directory ownership
+- `db/workspace.duckdb`
 - workflow directory ownership
 - `workflow.json`
-- `db/workflow.duckdb`
 - `files/`
 
-without forcing a redesign of workflow-local storage semantics.
+without forcing a redesign of workspace-scoped storage semantics.
 
 ## Known Limits And Deferred Work
 
@@ -453,20 +457,21 @@ This v1 choice intentionally accepts some limits:
 - canonical run/event/log persistence remains elsewhere
 - table export strategy is deferred
 - Parquet interoperability is deferred
-- retention and cleanup rules for workflow-local tables are deferred
+- retention and cleanup rules for workspace tables are deferred
+- legacy workflow-local `db/workflow.duckdb` cleanup is conservative and does not silently merge old user tables into the workspace database; quarantined legacy files can be imported later through an explicit maintenance helper
 
 These should be documented later when we introduce:
 
 - table import/export nodes
 - larger ETL workloads
 - retention policies
-- workflow-local backup or sync behavior
+- workspace backup or sync behavior
 
 ## Recommended Implementation Order
 
 Before implementation:
 
-1. accept this workflow-local DuckDB direction
+1. accept this workspace DuckDB direction
 2. confirm the initial schema set:
    - `runs`
    - `staging`
@@ -475,22 +480,27 @@ Before implementation:
 
 Then implement in this order:
 
-1. storage helper that resolves the workflow root path
-2. workflow creation bootstrap that creates:
+1. storage helper that resolves the workspace DuckDB path
+2. workspace creation/open bootstrap that creates:
+   - workspace directory
+   - `db/workspace.duckdb`
+   - `workflows/`
+3. DuckDB bootstrap that creates the standard schemas
+4. workflow creation bootstrap that creates:
    - workflow directory
    - `workflow.json`
-   - `db/workflow.duckdb`
    - `files/`
-3. DuckDB bootstrap that creates the standard schemas
-4. tests proving every new workflow gets the expected directory and DB shape
-5. only then start wiring table-management behavior into runtime nodes
+5. tests proving every new workspace gets the expected directory and DB shape
+6. migrate runtime and catalog APIs to the workspace DB while retaining compatibility wrappers during the transition
+7. move persisted run mirrors to the workspace DuckDB path
+8. clean up legacy workflow-local DuckDB files after the workspace database is canonical
 
 ## Review Keys
 
 Use these keys for approval or requested changes:
 
-- `WDB_01`: one DuckDB file per workflow
-- `WDB_02`: canonical layout is `<workflow_id>/workflow.json`, `db/workflow.duckdb`, `files/`
+- `WDB_01`: one DuckDB file per workspace
+- `WDB_02`: canonical layout is `<workspace_id>/db/workspace.duckdb` plus per-workflow `workflow.json` and `files/`
 - `WDB_03`: control plane stays canonical for workflow metadata and run history
-- `WDB_04`: initialize `runs`, `staging`, `tables`, and `outputs` for every workflow
+- `WDB_04`: initialize `runs`, `staging`, `tables`, and `outputs` for every workspace database
 - `WDB_05`: `workflow.json` stays the canonical workflow graph artifact

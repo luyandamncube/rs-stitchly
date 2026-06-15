@@ -34,6 +34,9 @@ pub struct RuntimeService {
     connections: Arc<Vec<ConnectionSummary>>,
 }
 
+pub const INTERNAL_PARAM_WORKSPACE_DUCKDB_PATH: &str = "__workspace_duckdb_path";
+pub const INTERNAL_PARAM_WORKFLOW_ROOT_PATH: &str = "__workflow_root_path";
+pub const INTERNAL_PARAM_WORKFLOW_FILES_ROOT: &str = "__workflow_files_root";
 pub const INTERNAL_PARAM_WORKFLOW_DUCKDB_PATH: &str = "__workflow_duckdb_path";
 pub const INTERNAL_PARAM_DISABLE_LIVE_DOLT: &str = "__disable_live_dolt";
 
@@ -526,8 +529,21 @@ impl RuntimeService {
         }
         self.mark_running(&record, &run_id).await;
 
-        let workflow_duckdb_path = run_params
-            .get(INTERNAL_PARAM_WORKFLOW_DUCKDB_PATH)
+        let workspace_duckdb_path = run_params
+            .get(INTERNAL_PARAM_WORKSPACE_DUCKDB_PATH)
+            .or_else(|| run_params.get(INTERNAL_PARAM_WORKFLOW_DUCKDB_PATH))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+        let workflow_root_path = run_params
+            .get(INTERNAL_PARAM_WORKFLOW_ROOT_PATH)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+        let workflow_files_root = run_params
+            .get(INTERNAL_PARAM_WORKFLOW_FILES_ROOT)
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -539,8 +555,11 @@ impl RuntimeService {
         let execution_context = AdapterExecutionContext {
             workflow_id: Some(workflow.workflow_id.clone()),
             run_id: Some(run_id.clone()),
-            workflow_duckdb_path,
+            workspace_duckdb_path,
+            workflow_root_path,
+            workflow_files_root,
             disable_live_dolt,
+            ..AdapterExecutionContext::default()
         };
 
         let mut outputs = BTreeMap::<(String, String), workflow_schema::TypedValue>::new();

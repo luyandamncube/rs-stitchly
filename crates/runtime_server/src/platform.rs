@@ -34,6 +34,8 @@ const DEMO_EMAIL: &str = "builder@stitchly.dev";
 const DEMO_PASSWORD: &str = "stitchly";
 const DEMO_DISPLAY_NAME: &str = "Builder";
 const SESSION_TTL_DAYS: i64 = 30;
+const WORKSPACE_DUCKDB_FILE_NAME: &str = "workspace.duckdb";
+const WORKFLOW_DUCKDB_FILE_NAME: &str = "workflow.duckdb";
 const WORKFLOW_DUCKDB_MIRROR_TABLE_SQL: &str = "
         create table if not exists runs.workflow_runs (
             run_id varchar not null,
@@ -199,6 +201,25 @@ struct CatalogTableDeletePlan {
     workflow_updates: Vec<CatalogTableWorkflowUpdate>,
 }
 
+#[derive(Clone, Debug)]
+struct StoredWorkspaceCatalog {
+    workspace_id: String,
+    workspace_name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LegacyWorkflowDuckDbImportReport {
+    pub imported_tables: Vec<String>,
+    pub skipped_tables: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LegacyWorkflowDuckDbTableRef {
+    schema_name: String,
+    table_name: String,
+    table_type: String,
+}
+
 #[derive(Clone)]
 pub struct PlatformStore {
     connection: Arc<Mutex<Connection>>,
@@ -273,6 +294,8 @@ impl PlatformStore {
             storage_root: Arc::new(storage_root),
         };
         store.initialize()?;
+        store.bootstrap_existing_workspace_storage()?;
+        store.cleanup_existing_legacy_workflow_duckdbs()?;
         Ok(store)
     }
 
@@ -555,6 +578,7 @@ impl PlatformStore {
         }
 
         tx.commit()?;
+        self.bootstrap_workspace_storage(user_id, workspace_id.as_str())?;
 
         let role = connection.query_row(
             "select w.workspace_id, w.slug, w.name, m.role
@@ -645,6 +669,10 @@ impl PlatformStore {
         };
 
         let mut storage_owner_user_ids = BTreeSet::new();
+        storage_owner_user_ids.insert(lookup_workspace_storage_owner_user_id(
+            &connection,
+            workspace_id,
+        )?);
         for workflow_id in workflow_ids {
             let storage_owner_user_id =
                 lookup_workflow_storage_owner_user_id(&connection, workspace_id, &workflow_id)?;
@@ -1048,58 +1076,99 @@ impl PlatformStore {
     ) -> anyhow::Result<WorkspaceCatalogResponse> {
         let connection = self.connection();
         ensure_workspace_access(&connection, user_id, workspace_id)?;
+        let workspace = load_workspace_catalog(&connection, workspace_id)?;
+        let storage_owner_user_id =
+            lookup_workspace_storage_owner_user_id(&connection, workspace_id)?;
+        let duckdb_path =
+            self.workspace_duckdb_storage_path(storage_owner_user_id.as_str(), workspace_id);
+        let duckdb = open_catalog_duckdb(&duckdb_path)?;
+        let schemas = load_workspace_catalog_summaries(&duckdb)?;
 
-        let workflows = list_catalog_workflows(&connection, workspace_id)?;
-        let mut catalogs = Vec::with_capacity(workflows.len());
-
-        for workflow in workflows {
-            let storage_owner_user_id =
-                resolve_catalog_workflow_owner_user_id(&connection, workspace_id, &workflow)?;
-            let duckdb_path = self
-                .workflow_root_path(
-                    storage_owner_user_id.as_str(),
-                    workspace_id,
-                    workflow.workflow_id.as_str(),
-                )
-                .join("db")
-                .join("workflow.duckdb");
-            let duckdb = open_catalog_duckdb(&duckdb_path)?;
-            let schemas = load_workspace_catalog_summaries(&duckdb)?;
-
-            catalogs.push(WorkspaceCatalogDatabaseSummary {
-                workflow_id: workflow.workflow_id,
-                workflow_name: workflow.workflow_name,
-                database_name: "workflow.duckdb".to_string(),
-                schemas,
-            });
-        }
+        let catalogs = vec![WorkspaceCatalogDatabaseSummary {
+            workflow_id: workspace.workspace_id,
+            workflow_name: workspace.workspace_name,
+            database_name: WORKSPACE_DUCKDB_FILE_NAME.to_string(),
+            schemas,
+        }];
 
         Ok(WorkspaceCatalogResponse { catalogs })
+    }
+
+    pub fn import_legacy_workflow_duckdb_tables(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        legacy_duckdb_path: &Path,
+    ) -> anyhow::Result<LegacyWorkflowDuckDbImportReport> {
+        if !legacy_duckdb_path.exists() {
+            return Err(anyhow!(
+                "legacy workflow DuckDB `{}` does not exist",
+                legacy_duckdb_path.display()
+            ));
+        }
+
+        let connection = self.connection();
+        ensure_workspace_access(&connection, user_id, workspace_id)?;
+        let storage_owner_user_id =
+            lookup_workspace_storage_owner_user_id(&connection, workspace_id)?;
+        let duckdb_path =
+            self.workspace_duckdb_storage_path(storage_owner_user_id.as_str(), workspace_id);
+        let duckdb = open_catalog_duckdb(&duckdb_path)?;
+        let legacy_tables = list_legacy_workflow_duckdb_user_tables(legacy_duckdb_path)?;
+        let existing_workspace_tables =
+            existing_workspace_catalog_tables_for_legacy_import(&duckdb, legacy_tables.as_slice())?;
+        let legacy_duckdb_path = legacy_duckdb_path.to_str().ok_or_else(|| {
+            anyhow!(
+                "legacy workflow DuckDB path `{}` is not valid UTF-8",
+                legacy_duckdb_path.display()
+            )
+        })?;
+
+        duckdb
+            .execute_batch(
+                format!(
+                    "attach {} as {} (read_only)",
+                    quote_duckdb_string_literal(legacy_duckdb_path),
+                    quote_duckdb_identifier("legacy_workflow")
+                )
+                .as_str(),
+            )
+            .with_context(|| {
+                format!("failed to attach legacy workflow DuckDB at `{legacy_duckdb_path}`")
+            })?;
+
+        let import_result = import_attached_legacy_workflow_duckdb_tables(
+            &duckdb,
+            legacy_tables.as_slice(),
+            &existing_workspace_tables,
+        );
+        let detach_result = duckdb
+            .execute_batch("detach legacy_workflow")
+            .context("failed to detach legacy workflow DuckDB");
+
+        match (import_result, detach_result) {
+            (Ok(report), Ok(())) => Ok(report),
+            (Err(error), Ok(())) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
+            (Err(import_error), Err(detach_error)) => Err(import_error.context(format!(
+                "also failed to detach legacy workflow DuckDB: {detach_error:#}"
+            ))),
+        }
     }
 
     pub fn get_workspace_catalog_schema(
         &self,
         user_id: &str,
         workspace_id: &str,
-        workflow_id: &str,
         schema_name: &str,
     ) -> anyhow::Result<Option<WorkspaceCatalogSchemaResponse>> {
         let connection = self.connection();
         ensure_workspace_access(&connection, user_id, workspace_id)?;
-
-        let Some(workflow) = find_catalog_workflow(&connection, workspace_id, workflow_id)? else {
-            return Ok(None);
-        };
+        let workspace = load_workspace_catalog(&connection, workspace_id)?;
         let storage_owner_user_id =
-            resolve_catalog_workflow_owner_user_id(&connection, workspace_id, &workflow)?;
-        let duckdb_path = self
-            .workflow_root_path(
-                storage_owner_user_id.as_str(),
-                workspace_id,
-                workflow.workflow_id.as_str(),
-            )
-            .join("db")
-            .join("workflow.duckdb");
+            lookup_workspace_storage_owner_user_id(&connection, workspace_id)?;
+        let duckdb_path =
+            self.workspace_duckdb_storage_path(storage_owner_user_id.as_str(), workspace_id);
         let duckdb = open_catalog_duckdb(&duckdb_path)?;
         if !workspace_catalog_schema_exists(&duckdb, schema_name)? {
             return Ok(None);
@@ -1107,9 +1176,9 @@ impl PlatformStore {
 
         let tables = load_workspace_catalog_table_summaries(&duckdb, schema_name)?;
         Ok(Some(WorkspaceCatalogSchemaResponse {
-            workflow_id: workflow.workflow_id,
-            workflow_name: workflow.workflow_name,
-            database_name: "workflow.duckdb".to_string(),
+            workflow_id: workspace.workspace_id,
+            workflow_name: workspace.workspace_name,
+            database_name: WORKSPACE_DUCKDB_FILE_NAME.to_string(),
             schema_name: schema_name.to_string(),
             tables,
         }))
@@ -1119,26 +1188,16 @@ impl PlatformStore {
         &self,
         user_id: &str,
         workspace_id: &str,
-        workflow_id: &str,
         schema_name: &str,
         table_name: &str,
     ) -> anyhow::Result<Option<WorkspaceCatalogTableResponse>> {
         let connection = self.connection();
         ensure_workspace_access(&connection, user_id, workspace_id)?;
-
-        let Some(workflow) = find_catalog_workflow(&connection, workspace_id, workflow_id)? else {
-            return Ok(None);
-        };
+        let workspace = load_workspace_catalog(&connection, workspace_id)?;
         let storage_owner_user_id =
-            resolve_catalog_workflow_owner_user_id(&connection, workspace_id, &workflow)?;
-        let duckdb_path = self
-            .workflow_root_path(
-                storage_owner_user_id.as_str(),
-                workspace_id,
-                workflow.workflow_id.as_str(),
-            )
-            .join("db")
-            .join("workflow.duckdb");
+            lookup_workspace_storage_owner_user_id(&connection, workspace_id)?;
+        let duckdb_path =
+            self.workspace_duckdb_storage_path(storage_owner_user_id.as_str(), workspace_id);
         let duckdb = open_catalog_duckdb(&duckdb_path)?;
         if !workspace_catalog_table_exists(&duckdb, schema_name, table_name)? {
             return Ok(None);
@@ -1151,9 +1210,9 @@ impl PlatformStore {
         let protected_reason = protected_workspace_catalog_table_reason(schema_name, table_name);
 
         Ok(Some(WorkspaceCatalogTableResponse {
-            workflow_id: workflow.workflow_id,
-            workflow_name: workflow.workflow_name,
-            database_name: "workflow.duckdb".to_string(),
+            workflow_id: workspace.workspace_id,
+            workflow_name: workspace.workspace_name,
+            database_name: WORKSPACE_DUCKDB_FILE_NAME.to_string(),
             schema_name: schema_name.to_string(),
             table_name: table_name.to_string(),
             is_deletable: protected_reason.is_none(),
@@ -1167,26 +1226,16 @@ impl PlatformStore {
         &self,
         user_id: &str,
         workspace_id: &str,
-        workflow_id: &str,
         schema_name: &str,
         table_name: &str,
     ) -> anyhow::Result<Option<WorkspaceCatalogDeleteTablePreviewResponse>> {
         let connection = self.connection();
         ensure_workspace_access(&connection, user_id, workspace_id)?;
-
-        let Some(workflow) = find_catalog_workflow(&connection, workspace_id, workflow_id)? else {
-            return Ok(None);
-        };
+        let workspace = load_workspace_catalog(&connection, workspace_id)?;
         let storage_owner_user_id =
-            resolve_catalog_workflow_owner_user_id(&connection, workspace_id, &workflow)?;
-        let duckdb_path = self
-            .workflow_root_path(
-                storage_owner_user_id.as_str(),
-                workspace_id,
-                workflow.workflow_id.as_str(),
-            )
-            .join("db")
-            .join("workflow.duckdb");
+            lookup_workspace_storage_owner_user_id(&connection, workspace_id)?;
+        let duckdb_path =
+            self.workspace_duckdb_storage_path(storage_owner_user_id.as_str(), workspace_id);
         let duckdb = open_catalog_duckdb(&duckdb_path)?;
         if !workspace_catalog_table_exists(&duckdb, schema_name, table_name)? {
             return Ok(None);
@@ -1195,7 +1244,7 @@ impl PlatformStore {
         let plan = build_catalog_table_delete_plan(
             &connection,
             workspace_id,
-            &workflow,
+            &workspace,
             schema_name,
             table_name,
         )?;
@@ -1216,26 +1265,16 @@ impl PlatformStore {
         &self,
         user_id: &str,
         workspace_id: &str,
-        workflow_id: &str,
         schema_name: &str,
         table_name: &str,
     ) -> anyhow::Result<Option<WorkspaceCatalogDeleteTableResponse>> {
         let mut connection = self.connection();
         ensure_workspace_access(&connection, user_id, workspace_id)?;
-
-        let Some(workflow) = find_catalog_workflow(&connection, workspace_id, workflow_id)? else {
-            return Ok(None);
-        };
+        let workspace = load_workspace_catalog(&connection, workspace_id)?;
         let storage_owner_user_id =
-            resolve_catalog_workflow_owner_user_id(&connection, workspace_id, &workflow)?;
-        let duckdb_path = self
-            .workflow_root_path(
-                storage_owner_user_id.as_str(),
-                workspace_id,
-                workflow.workflow_id.as_str(),
-            )
-            .join("db")
-            .join("workflow.duckdb");
+            lookup_workspace_storage_owner_user_id(&connection, workspace_id)?;
+        let duckdb_path =
+            self.workspace_duckdb_storage_path(storage_owner_user_id.as_str(), workspace_id);
         let duckdb = open_catalog_duckdb(&duckdb_path)?;
         if !workspace_catalog_table_exists(&duckdb, schema_name, table_name)? {
             return Ok(None);
@@ -1244,7 +1283,7 @@ impl PlatformStore {
         let plan = build_catalog_table_delete_plan(
             &connection,
             workspace_id,
-            &workflow,
+            &workspace,
             schema_name,
             table_name,
         )?;
@@ -1302,25 +1341,15 @@ impl PlatformStore {
         &self,
         user_id: &str,
         workspace_id: &str,
-        workflow_id: &str,
         query: &str,
     ) -> anyhow::Result<Option<WorkspaceCatalogQueryResponse>> {
         let connection = self.connection();
         ensure_workspace_access(&connection, user_id, workspace_id)?;
-
-        let Some(workflow) = find_catalog_workflow(&connection, workspace_id, workflow_id)? else {
-            return Ok(None);
-        };
+        let workspace = load_workspace_catalog(&connection, workspace_id)?;
         let storage_owner_user_id =
-            resolve_catalog_workflow_owner_user_id(&connection, workspace_id, &workflow)?;
-        let duckdb_path = self
-            .workflow_root_path(
-                storage_owner_user_id.as_str(),
-                workspace_id,
-                workflow.workflow_id.as_str(),
-            )
-            .join("db")
-            .join("workflow.duckdb");
+            lookup_workspace_storage_owner_user_id(&connection, workspace_id)?;
+        let duckdb_path =
+            self.workspace_duckdb_storage_path(storage_owner_user_id.as_str(), workspace_id);
         initialize_workflow_duckdb(&duckdb_path)?;
 
         let normalized_query = normalize_workspace_catalog_query(query)?;
@@ -1328,9 +1357,9 @@ impl PlatformStore {
         let rows = execute_workspace_catalog_query_rows(&duckdb_path, &normalized_query, &columns)?;
 
         Ok(Some(WorkspaceCatalogQueryResponse {
-            workflow_id: workflow.workflow_id,
-            workflow_name: workflow.workflow_name,
-            database_name: "workflow.duckdb".to_string(),
+            workflow_id: workspace.workspace_id,
+            workflow_name: workspace.workspace_name,
+            database_name: WORKSPACE_DUCKDB_FILE_NAME.to_string(),
             query: normalized_query,
             columns,
             rows,
@@ -1695,9 +1724,9 @@ impl PlatformStore {
         let connection = self.connection();
         persist_run_snapshot_row(&connection, workspace_id, requested_by_user_id, snapshot)?;
         drop(connection);
-        if should_sync_workflow_duckdb_run(snapshot) {
-            if let Err(error) = self.sync_workflow_duckdb_run(workspace_id, snapshot) {
-                warn_workflow_duckdb_run_sync_failure(workspace_id, snapshot, &error);
+        if should_sync_workspace_duckdb_run(snapshot) {
+            if let Err(error) = self.sync_workspace_duckdb_run(workspace_id, snapshot) {
+                warn_workspace_duckdb_run_sync_failure(workspace_id, snapshot, &error);
             }
         }
         Ok(())
@@ -1718,9 +1747,9 @@ impl PlatformStore {
         }
         tx.commit()?;
         drop(connection);
-        if should_sync_workflow_duckdb_run(snapshot) {
-            if let Err(error) = self.sync_workflow_duckdb_run(workspace_id, snapshot) {
-                warn_workflow_duckdb_run_sync_failure(workspace_id, snapshot, &error);
+        if should_sync_workspace_duckdb_run(snapshot) {
+            if let Err(error) = self.sync_workspace_duckdb_run(workspace_id, snapshot) {
+                warn_workspace_duckdb_run_sync_failure(workspace_id, snapshot, &error);
             }
         }
         Ok(())
@@ -1891,7 +1920,34 @@ impl PlatformStore {
             .join(workflow_id)
     }
 
+    fn workspace_duckdb_storage_path(&self, user_id: &str, workspace_id: &str) -> PathBuf {
+        self.workspace_root_path(user_id, workspace_id)
+            .join("db")
+            .join(WORKSPACE_DUCKDB_FILE_NAME)
+    }
+
+    pub fn workspace_duckdb_path(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+    ) -> anyhow::Result<PathBuf> {
+        let connection = self.connection();
+        ensure_workspace_access(&connection, user_id, workspace_id)?;
+        let storage_owner_user_id =
+            lookup_workspace_storage_owner_user_id(&connection, workspace_id)?;
+        Ok(self.workspace_duckdb_storage_path(storage_owner_user_id.as_str(), workspace_id))
+    }
+
     pub fn workflow_duckdb_path(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        _workflow_id: &str,
+    ) -> anyhow::Result<PathBuf> {
+        self.workspace_duckdb_path(user_id, workspace_id)
+    }
+
+    pub fn workflow_storage_root_path(
         &self,
         user_id: &str,
         workspace_id: &str,
@@ -1901,10 +1957,113 @@ impl PlatformStore {
         ensure_workspace_access(&connection, user_id, workspace_id)?;
         let storage_owner_user_id =
             lookup_workflow_storage_owner_user_id(&connection, workspace_id, workflow_id)?;
+        Ok(self.workflow_root_path(storage_owner_user_id.as_str(), workspace_id, workflow_id))
+    }
+
+    pub fn workflow_files_root_path(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        workflow_id: &str,
+    ) -> anyhow::Result<PathBuf> {
         Ok(self
-            .workflow_root_path(storage_owner_user_id.as_str(), workspace_id, workflow_id)
-            .join("db")
-            .join("workflow.duckdb"))
+            .workflow_storage_root_path(user_id, workspace_id, workflow_id)?
+            .join("files"))
+    }
+
+    fn bootstrap_workspace_storage(&self, user_id: &str, workspace_id: &str) -> anyhow::Result<()> {
+        let workspace_root = self.workspace_root_path(user_id, workspace_id);
+        let db_dir = workspace_root.join("db");
+        let workflows_dir = workspace_root.join("workflows");
+
+        fs::create_dir_all(&db_dir).with_context(|| {
+            format!(
+                "failed to create workspace db dir at `{}`",
+                db_dir.display()
+            )
+        })?;
+        fs::create_dir_all(&workflows_dir).with_context(|| {
+            format!(
+                "failed to create workspace workflows dir at `{}`",
+                workflows_dir.display()
+            )
+        })?;
+
+        initialize_workflow_duckdb_if_absent(&db_dir.join(WORKSPACE_DUCKDB_FILE_NAME))?;
+
+        Ok(())
+    }
+
+    fn bootstrap_existing_workspace_storage(&self) -> anyhow::Result<()> {
+        let workspace_owners = {
+            let connection = self.connection();
+            let mut stmt = connection.prepare(
+                "select workspace_id, user_id
+                 from workspace_memberships
+                 where role = ?1
+                 order by created_at asc",
+            )?;
+            let rows = stmt
+                .query_map(params![role_to_db(WorkspaceMembershipRole::Owner)], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+
+        let mut bootstrapped_workspace_ids = BTreeSet::new();
+        for (workspace_id, owner_user_id) in workspace_owners {
+            if bootstrapped_workspace_ids.insert(workspace_id.clone()) {
+                self.bootstrap_workspace_storage(owner_user_id.as_str(), workspace_id.as_str())?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn cleanup_existing_legacy_workflow_duckdbs(&self) -> anyhow::Result<()> {
+        let workflow_storage_roots = {
+            let connection = self.connection();
+            let mut stmt = connection.prepare(
+                "select w.workspace_id,
+                        w.workflow_id,
+                        coalesce(nullif(w.storage_owner_user_id, ''), owner.user_id) as storage_owner_user_id
+                 from workflows w
+                 join (
+                    select workspace_id, user_id
+                    from workspace_memberships owner
+                    where role = ?1
+                      and created_at = (
+                        select min(created_at)
+                        from workspace_memberships
+                        where workspace_id = owner.workspace_id
+                          and role = ?1
+                      )
+                 ) owner on owner.workspace_id = w.workspace_id",
+            )?;
+            let rows =
+                stmt.query_map(params![role_to_db(WorkspaceMembershipRole::Owner)], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+
+        for (workspace_id, workflow_id, storage_owner_user_id) in workflow_storage_roots {
+            let legacy_duckdb_path = self
+                .workflow_root_path(
+                    storage_owner_user_id.as_str(),
+                    workspace_id.as_str(),
+                    workflow_id.as_str(),
+                )
+                .join("db")
+                .join(WORKFLOW_DUCKDB_FILE_NAME);
+            cleanup_legacy_workflow_duckdb_file(&legacy_duckdb_path)?;
+        }
+
+        Ok(())
     }
 
     fn bootstrap_workflow_storage(
@@ -1915,15 +2074,11 @@ impl PlatformStore {
     ) -> anyhow::Result<()> {
         let workflow_root =
             self.workflow_root_path(user_id, workspace_id, workflow.workflow_id.as_str());
-        let db_dir = workflow_root.join("db");
         let files_dir = workflow_root.join("files");
         let uploads_dir = files_dir.join("uploads");
         let outputs_dir = files_dir.join("outputs");
         let artifacts_dir = files_dir.join("artifacts");
 
-        fs::create_dir_all(&db_dir).with_context(|| {
-            format!("failed to create workflow db dir at `{}`", db_dir.display())
-        })?;
         fs::create_dir_all(&uploads_dir).with_context(|| {
             format!(
                 "failed to create workflow uploads dir at `{}`",
@@ -1953,8 +2108,8 @@ impl PlatformStore {
             )
         })?;
 
-        let duckdb_path = db_dir.join("workflow.duckdb");
-        initialize_workflow_duckdb_if_absent(&duckdb_path)?;
+        let legacy_duckdb_path = workflow_root.join("db").join(WORKFLOW_DUCKDB_FILE_NAME);
+        cleanup_legacy_workflow_duckdb_file(&legacy_duckdb_path)?;
 
         Ok(())
     }
@@ -2225,6 +2380,26 @@ struct StoredCatalogWorkflow {
     storage_owner_user_id: Option<String>,
 }
 
+fn load_workspace_catalog(
+    connection: &Connection,
+    workspace_id: &str,
+) -> anyhow::Result<StoredWorkspaceCatalog> {
+    connection
+        .query_row(
+            "select workspace_id, name
+             from workspaces
+             where workspace_id = ?1",
+            params![workspace_id],
+            |row| {
+                Ok(StoredWorkspaceCatalog {
+                    workspace_id: row.get(0)?,
+                    workspace_name: row.get(1)?,
+                })
+            },
+        )
+        .with_context(|| format!("workspace `{workspace_id}` was not found"))
+}
+
 fn list_catalog_workflows(
     connection: &Connection,
     workspace_id: &str,
@@ -2249,52 +2424,11 @@ fn list_catalog_workflows(
     Ok(workflows)
 }
 
-fn find_catalog_workflow(
-    connection: &Connection,
-    workspace_id: &str,
-    workflow_id: &str,
-) -> anyhow::Result<Option<StoredCatalogWorkflow>> {
-    connection
-        .query_row(
-            "select workflow_id, name, storage_owner_user_id
-             from workflows
-             where workspace_id = ?1 and workflow_id = ?2
-               and archived_at is null",
-            params![workspace_id, workflow_id],
-            |row| {
-                Ok(StoredCatalogWorkflow {
-                    workflow_id: row.get(0)?,
-                    workflow_name: row.get(1)?,
-                    storage_owner_user_id: row.get(2)?,
-                })
-            },
-        )
-        .optional()
-        .map_err(Into::into)
-}
-
-fn resolve_catalog_workflow_owner_user_id(
-    connection: &Connection,
-    workspace_id: &str,
-    workflow: &StoredCatalogWorkflow,
-) -> anyhow::Result<String> {
-    if let Some(user_id) = workflow
-        .storage_owner_user_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return Ok(user_id.to_string());
-    }
-
-    lookup_workflow_storage_owner_user_id(connection, workspace_id, workflow.workflow_id.as_str())
-}
-
 fn open_catalog_duckdb(database_path: &Path) -> anyhow::Result<DuckDbConnection> {
     initialize_workflow_duckdb(database_path)?;
     DuckDbConnection::open(database_path).with_context(|| {
         format!(
-            "failed to open workflow duckdb catalog at `{}`",
+            "failed to open workspace duckdb catalog at `{}`",
             database_path.display()
         )
     })
@@ -2425,14 +2559,9 @@ fn load_active_workflow_definition(
 
 fn clear_deleted_catalog_table_node_references(
     workflow_definition: &mut WorkflowDefinition,
-    catalog_workflow_id: &str,
     schema_name: &str,
     table_name: &str,
 ) -> Vec<WorkspaceCatalogTableUsageNode> {
-    if workflow_definition.workflow_id != catalog_workflow_id {
-        return Vec::new();
-    }
-
     let mut nodes = Vec::new();
 
     for node in &mut workflow_definition.nodes {
@@ -2495,21 +2624,27 @@ fn clear_deleted_catalog_table_node_references(
 fn build_catalog_table_delete_plan(
     connection: &Connection,
     workspace_id: &str,
-    workflow: &StoredCatalogWorkflow,
+    workspace: &StoredWorkspaceCatalog,
     schema_name: &str,
     table_name: &str,
 ) -> anyhow::Result<CatalogTableDeletePlan> {
     let protected_reason = protected_workspace_catalog_table_reason(schema_name, table_name);
     let mut affected_workflows = Vec::new();
     let mut workflow_updates = Vec::new();
+    let workflows = list_catalog_workflows(connection, workspace_id)?;
 
-    if let Some((current_version, definition)) =
-        load_active_workflow_definition(connection, workspace_id, workflow.workflow_id.as_str())?
-    {
+    for workflow in workflows {
+        let Some((current_version, definition)) = load_active_workflow_definition(
+            connection,
+            workspace_id,
+            workflow.workflow_id.as_str(),
+        )?
+        else {
+            continue;
+        };
         let mut next_definition = definition.clone();
         let matching_nodes = clear_deleted_catalog_table_node_references(
             &mut next_definition,
-            workflow.workflow_id.as_str(),
             schema_name,
             table_name,
         );
@@ -2526,23 +2661,32 @@ fn build_catalog_table_delete_plan(
                 workflow.workflow_id.as_str(),
                 current_version.saturating_add(1),
             )?;
+            let storage_owner_user_id = if let Some(user_id) = workflow
+                .storage_owner_user_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                user_id.to_string()
+            } else {
+                lookup_workflow_storage_owner_user_id(
+                    connection,
+                    workspace_id,
+                    workflow.workflow_id.as_str(),
+                )?
+            };
             workflow_updates.push(CatalogTableWorkflowUpdate {
                 workflow_id: workflow.workflow_id.clone(),
-                storage_owner_user_id: workflow
-                    .storage_owner_user_id
-                    .as_deref()
-                    .filter(|value| !value.trim().is_empty())
-                    .unwrap_or_default()
-                    .to_string(),
+                storage_owner_user_id,
                 definition: normalized,
             });
         }
     }
 
     Ok(CatalogTableDeletePlan {
-        workflow_id: workflow.workflow_id.clone(),
-        workflow_name: workflow.workflow_name.clone(),
-        database_name: "workflow.duckdb".to_string(),
+        workflow_id: workspace.workspace_id.clone(),
+        workflow_name: workspace.workspace_name.clone(),
+        database_name: WORKSPACE_DUCKDB_FILE_NAME.to_string(),
         schema_name: schema_name.to_string(),
         table_name: table_name.to_string(),
         is_deletable: protected_reason.is_none(),
@@ -2632,6 +2776,81 @@ fn workspace_catalog_table_exists(
         .optional()?;
 
     Ok(exists.is_some())
+}
+
+fn import_attached_legacy_workflow_duckdb_tables(
+    duckdb: &DuckDbConnection,
+    legacy_tables: &[LegacyWorkflowDuckDbTableRef],
+    existing_workspace_tables: &BTreeSet<(String, String)>,
+) -> anyhow::Result<LegacyWorkflowDuckDbImportReport> {
+    let mut imported_tables = Vec::new();
+    let mut skipped_tables = Vec::new();
+
+    for table in legacy_tables {
+        let display_name = format_catalog_table_name(&table.schema_name, &table.table_name);
+
+        if table.table_type != "BASE TABLE" {
+            skipped_tables.push(format!("{display_name} ({})", table.table_type));
+            continue;
+        }
+
+        if existing_workspace_tables
+            .contains(&(table.schema_name.clone(), table.table_name.clone()))
+        {
+            skipped_tables.push(display_name);
+            continue;
+        }
+
+        duckdb
+            .execute_batch(
+                format!(
+                    "create schema if not exists {};
+                     create table {}.{} as
+                     select * from {}.{}.{}",
+                    quote_duckdb_identifier(&table.schema_name),
+                    quote_duckdb_identifier(&table.schema_name),
+                    quote_duckdb_identifier(&table.table_name),
+                    quote_duckdb_identifier("legacy_workflow"),
+                    quote_duckdb_identifier(&table.schema_name),
+                    quote_duckdb_identifier(&table.table_name)
+                )
+                .as_str(),
+            )
+            .with_context(|| {
+                format!(
+                    "failed to import legacy workflow DuckDB table `{}`",
+                    display_name
+                )
+            })?;
+
+        imported_tables.push(display_name);
+    }
+
+    Ok(LegacyWorkflowDuckDbImportReport {
+        imported_tables,
+        skipped_tables,
+    })
+}
+
+fn existing_workspace_catalog_tables_for_legacy_import(
+    duckdb: &DuckDbConnection,
+    legacy_tables: &[LegacyWorkflowDuckDbTableRef],
+) -> anyhow::Result<BTreeSet<(String, String)>> {
+    let mut existing_tables = BTreeSet::new();
+
+    for table in legacy_tables {
+        if table.table_type == "BASE TABLE"
+            && workspace_catalog_table_exists(duckdb, &table.schema_name, &table.table_name)?
+        {
+            existing_tables.insert((table.schema_name.clone(), table.table_name.clone()));
+        }
+    }
+
+    Ok(existing_tables)
+}
+
+fn format_catalog_table_name(schema_name: &str, table_name: &str) -> String {
+    format!("{schema_name}.{table_name}")
 }
 
 fn load_workspace_catalog_columns(
@@ -3053,23 +3272,10 @@ fn lookup_workflow_storage_owner_user_id(
         return Ok(user_id);
     }
 
-    let fallback_owner: Option<String> = connection
-        .query_row(
-            "select user_id
-             from workspace_memberships
-             where workspace_id = ?1 and role = ?2
-             order by created_at asc
-             limit 1",
-            params![workspace_id, role_to_db(WorkspaceMembershipRole::Owner)],
-            |row| row.get(0),
-        )
-        .optional()?;
-
-    let fallback_owner = fallback_owner.ok_or_else(|| {
-        anyhow!(
-            "workflow `{workflow_id}` in workspace `{workspace_id}` does not have a storage owner"
-        )
-    })?;
+    let fallback_owner = lookup_workspace_storage_owner_user_id(connection, workspace_id)
+        .with_context(|| {
+            format!("workflow `{workflow_id}` in workspace `{workspace_id}` does not have a storage owner")
+        })?;
 
     connection.execute(
         "update workflows
@@ -3082,14 +3288,32 @@ fn lookup_workflow_storage_owner_user_id(
     Ok(fallback_owner)
 }
 
-fn persist_workflow_duckdb_run_snapshot(
+fn lookup_workspace_storage_owner_user_id(
+    connection: &Connection,
+    workspace_id: &str,
+) -> anyhow::Result<String> {
+    connection
+        .query_row(
+            "select user_id
+             from workspace_memberships
+             where workspace_id = ?1 and role = ?2
+             order by created_at asc
+             limit 1",
+            params![workspace_id, role_to_db(WorkspaceMembershipRole::Owner)],
+            |row| row.get(0),
+        )
+        .optional()?
+        .ok_or_else(|| anyhow!("workspace `{workspace_id}` does not have a storage owner"))
+}
+
+fn persist_workspace_duckdb_run_snapshot(
     database_path: &Path,
     workspace_id: &str,
     snapshot: &RunSnapshot,
 ) -> anyhow::Result<()> {
     let connection = DuckDbConnection::open(database_path).with_context(|| {
         format!(
-            "failed to open workflow duckdb for run persistence at `{}`",
+            "failed to open workspace duckdb for run persistence at `{}`",
             database_path.display()
         )
     })?;
@@ -3828,8 +4052,8 @@ fn materialize_mirrored_table_output(
     Ok(())
 }
 
-fn should_sync_workflow_duckdb_run(snapshot: &RunSnapshot) -> bool {
-    if !workflow_duckdb_run_sync_enabled() {
+fn should_sync_workspace_duckdb_run(snapshot: &RunSnapshot) -> bool {
+    if !workspace_duckdb_run_sync_enabled() {
         return false;
     }
 
@@ -3839,38 +4063,38 @@ fn should_sync_workflow_duckdb_run(snapshot: &RunSnapshot) -> bool {
     )
 }
 
-fn warn_workflow_duckdb_run_sync_failure(
+fn warn_workspace_duckdb_run_sync_failure(
     workspace_id: &str,
     snapshot: &RunSnapshot,
     error: &anyhow::Error,
 ) {
     eprintln!(
-        "warning: failed to mirror run `{}` for workflow `{}` in workspace `{}` into workflow DuckDB: {error:#}",
+        "warning: failed to mirror run `{}` for workflow `{}` in workspace `{}` into workspace DuckDB: {error:#}",
         snapshot.run_id,
         snapshot.workflow_id,
         workspace_id
     );
 }
 
-fn workflow_duckdb_run_sync_enabled() -> bool {
+fn workspace_duckdb_run_sync_enabled() -> bool {
     #[cfg(test)]
-    if let Some(enabled) = WORKFLOW_DUCKDB_RUN_SYNC_ENABLED_TEST_OVERRIDE.with(std::cell::Cell::get)
+    if let Some(enabled) =
+        WORKSPACE_DUCKDB_RUN_SYNC_ENABLED_TEST_OVERRIDE.with(std::cell::Cell::get)
     {
         return enabled;
     }
 
-    matches!(
-        env::var("STITCHLY_ENABLE_WORKFLOW_RUN_DUCKDB_SYNC")
-            .ok()
-            .as_deref()
-            .map(|value| value.trim().to_ascii_lowercase()),
-        Some(value) if matches!(value.as_str(), "1" | "true" | "yes" | "on")
-    )
+    let enabled_value = env::var("STITCHLY_ENABLE_WORKSPACE_RUN_DUCKDB_SYNC")
+        .or_else(|_| env::var("STITCHLY_ENABLE_WORKFLOW_RUN_DUCKDB_SYNC"))
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase());
+
+    matches!(enabled_value.as_deref(), Some("1" | "true" | "yes" | "on"))
 }
 
 #[cfg(test)]
 thread_local! {
-    static WORKFLOW_DUCKDB_RUN_SYNC_ENABLED_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
+    static WORKSPACE_DUCKDB_RUN_SYNC_ENABLED_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
         const { std::cell::Cell::new(None) };
 }
 
@@ -4378,12 +4602,8 @@ fn unique_test_storage_root() -> PathBuf {
 }
 
 fn initialize_workflow_duckdb(database_path: &Path) -> anyhow::Result<()> {
-    let connection = DuckDbConnection::open(database_path).with_context(|| {
-        format!(
-            "failed to open workflow duckdb at `{}`",
-            database_path.display()
-        )
-    })?;
+    let connection = DuckDbConnection::open(database_path)
+        .with_context(|| format!("failed to open duckdb at `{}`", database_path.display()))?;
     connection.execute_batch(
         "
         create schema if not exists runs;
@@ -4405,10 +4625,10 @@ fn initialize_workflow_duckdb_if_absent(database_path: &Path) -> anyhow::Result<
     initialize_workflow_duckdb(database_path)
 }
 
-fn reset_workflow_duckdb_run_mirror_tables(database_path: &Path) -> anyhow::Result<()> {
+fn reset_workspace_duckdb_run_mirror_tables(database_path: &Path) -> anyhow::Result<()> {
     let connection = DuckDbConnection::open(database_path).with_context(|| {
         format!(
-            "failed to open workflow duckdb for run mirror repair at `{}`",
+            "failed to open workspace duckdb for run mirror repair at `{}`",
             database_path.display()
         )
     })?;
@@ -4427,12 +4647,12 @@ fn reset_workflow_duckdb_run_mirror_tables(database_path: &Path) -> anyhow::Resu
     Ok(())
 }
 
-fn workflow_duckdb_run_mirror_tables_have_primary_keys(
+fn workspace_duckdb_run_mirror_tables_have_primary_keys(
     database_path: &Path,
 ) -> anyhow::Result<bool> {
     let connection = DuckDbConnection::open(database_path).with_context(|| {
         format!(
-            "failed to open workflow duckdb for run mirror schema inspection at `{}`",
+            "failed to open workspace duckdb for run mirror schema inspection at `{}`",
             database_path.display()
         )
     })?;
@@ -4455,11 +4675,23 @@ fn quarantine_workflow_duckdb_file(
     database_path: &Path,
     reason: &str,
 ) -> anyhow::Result<Option<PathBuf>> {
+    quarantine_duckdb_file(database_path, "corrupt", reason)
+}
+
+fn quarantine_duckdb_file(
+    database_path: &Path,
+    quarantine_kind: &str,
+    reason: &str,
+) -> anyhow::Result<Option<PathBuf>> {
     if !database_path.exists() {
         return Ok(None);
     }
 
-    let quarantine_suffix = format!("corrupt.{}", Utc::now().format("%Y%m%d%H%M%S"));
+    let quarantine_suffix = format!(
+        "{}.{}",
+        quarantine_kind.trim().replace('.', "-"),
+        Utc::now().format("%Y%m%d%H%M%S")
+    );
     let quarantine_path = database_path.with_extension(format!(
         "{}.{quarantine_suffix}",
         database_path
@@ -4470,26 +4702,19 @@ fn quarantine_workflow_duckdb_file(
 
     fs::rename(database_path, &quarantine_path).with_context(|| {
         format!(
-            "workflow DuckDB at `{}` failed initialization and could not be quarantined at `{}`. Failure reason: {reason}",
+            "DuckDB at `{}` could not be quarantined at `{}`. Reason: {reason}",
             database_path.display(),
             quarantine_path.display()
         )
     })?;
 
     for sidecar_extension in ["wal", "tmp"] {
-        let sidecar_path = database_path.with_extension(format!(
-            "{}.{sidecar_extension}",
-            database_path
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .unwrap_or("duckdb")
-        ));
+        let sidecar_path = duckdb_sidecar_path(database_path, sidecar_extension);
         if sidecar_path.exists() {
-            let sidecar_quarantine_path =
-                sidecar_path.with_extension(format!("{sidecar_extension}.{quarantine_suffix}"));
+            let sidecar_quarantine_path = duckdb_sidecar_path(&quarantine_path, sidecar_extension);
             fs::rename(&sidecar_path, &sidecar_quarantine_path).with_context(|| {
                 format!(
-                    "workflow DuckDB sidecar `{}` could not be quarantined at `{}` after `{}` failed initialization",
+                    "DuckDB sidecar `{}` could not be quarantined at `{}` after `{}` failed initialization",
                     sidecar_path.display(),
                     sidecar_quarantine_path.display(),
                     database_path.display()
@@ -4501,32 +4726,149 @@ fn quarantine_workflow_duckdb_file(
     Ok(Some(quarantine_path))
 }
 
+fn remove_duckdb_file_and_sidecars(database_path: &Path) -> anyhow::Result<()> {
+    if database_path.exists() {
+        fs::remove_file(database_path).with_context(|| {
+            format!(
+                "failed to remove legacy workflow DuckDB at `{}`",
+                database_path.display()
+            )
+        })?;
+    }
+
+    for sidecar_extension in ["wal", "tmp"] {
+        let sidecar_path = duckdb_sidecar_path(database_path, sidecar_extension);
+        if sidecar_path.exists() {
+            fs::remove_file(&sidecar_path).with_context(|| {
+                format!(
+                    "failed to remove legacy workflow DuckDB sidecar at `{}`",
+                    sidecar_path.display()
+                )
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
+fn duckdb_sidecar_path(database_path: &Path, sidecar_extension: &str) -> PathBuf {
+    let mut sidecar_path = database_path.as_os_str().to_owned();
+    sidecar_path.push(format!(".{sidecar_extension}"));
+    PathBuf::from(sidecar_path)
+}
+
+fn cleanup_legacy_workflow_duckdb_file(database_path: &Path) -> anyhow::Result<Option<PathBuf>> {
+    if !database_path.exists() {
+        return Ok(None);
+    }
+
+    let has_user_tables = match legacy_workflow_duckdb_has_user_tables(database_path) {
+        Ok(has_user_tables) => has_user_tables,
+        Err(error) => {
+            let reason = format!("legacy workflow DuckDB could not be inspected: {error:#}");
+            return quarantine_duckdb_file(database_path, "legacy-corrupt", &reason);
+        }
+    };
+
+    if has_user_tables {
+        let reason = "legacy workflow DuckDB contains non-system tables";
+        if let Err(error) = checkpoint_legacy_workflow_duckdb(database_path) {
+            eprintln!(
+                "warning: legacy workflow DuckDB `{}` could not be checkpointed before quarantine: {error:#}",
+                database_path.display()
+            );
+        }
+        let quarantine_path = quarantine_duckdb_file(database_path, "legacy", reason)?;
+        if let Some(path) = quarantine_path.as_ref() {
+            eprintln!(
+                "warning: quarantined legacy workflow DuckDB `{}` at `{}` because it contains non-system tables",
+                database_path.display(),
+                path.display()
+            );
+        }
+        return Ok(quarantine_path);
+    }
+
+    remove_duckdb_file_and_sidecars(database_path)?;
+    Ok(None)
+}
+
+fn checkpoint_legacy_workflow_duckdb(database_path: &Path) -> anyhow::Result<()> {
+    let connection = DuckDbConnection::open(database_path).with_context(|| {
+        format!(
+            "failed to open legacy workflow DuckDB for checkpoint at `{}`",
+            database_path.display()
+        )
+    })?;
+    connection
+        .execute_batch("checkpoint")
+        .context("legacy workflow DuckDB checkpoint failed")
+}
+
+fn legacy_workflow_duckdb_has_user_tables(database_path: &Path) -> anyhow::Result<bool> {
+    Ok(!list_legacy_workflow_duckdb_user_tables(database_path)?.is_empty())
+}
+
+fn list_legacy_workflow_duckdb_user_tables(
+    database_path: &Path,
+) -> anyhow::Result<Vec<LegacyWorkflowDuckDbTableRef>> {
+    let connection = DuckDbConnection::open(database_path).with_context(|| {
+        format!(
+            "failed to open legacy workflow DuckDB at `{}`",
+            database_path.display()
+        )
+    })?;
+    let mut stmt = connection.prepare(
+        "select table_schema, table_name, table_type
+         from information_schema.tables
+         where table_schema not in ('information_schema', 'pg_catalog')
+           and table_type in ('BASE TABLE', 'VIEW')",
+    )?;
+    let tables = stmt
+        .query_map([], |row| {
+            Ok(LegacyWorkflowDuckDbTableRef {
+                schema_name: row.get(0)?,
+                table_name: row.get(1)?,
+                table_type: row.get(2)?,
+            })
+        })?
+        .collect::<duckdb::Result<Vec<_>>>()?;
+
+    Ok(tables
+        .into_iter()
+        .filter(|table| {
+            !is_legacy_workflow_duckdb_system_table(&table.schema_name, &table.table_name)
+        })
+        .collect())
+}
+
+fn is_legacy_workflow_duckdb_system_table(schema_name: &str, table_name: &str) -> bool {
+    matches!(
+        (schema_name, table_name),
+        ("runs", "workflow_runs")
+            | ("runs", "node_runs")
+            | ("runs", "table_output_materializations")
+            | ("outputs", "node_outputs")
+    )
+}
+
 impl PlatformStore {
-    fn sync_workflow_duckdb_run(
+    fn sync_workspace_duckdb_run(
         &self,
         workspace_id: &str,
         snapshot: &RunSnapshot,
     ) -> anyhow::Result<()> {
         let connection = self.connection();
-        let storage_owner_user_id = lookup_workflow_storage_owner_user_id(
-            &connection,
-            workspace_id,
-            snapshot.workflow_id.as_str(),
-        )?;
-        let duckdb_path = self
-            .workflow_root_path(
-                storage_owner_user_id.as_str(),
-                workspace_id,
-                snapshot.workflow_id.as_str(),
-            )
-            .join("db")
-            .join("workflow.duckdb");
+        let storage_owner_user_id =
+            lookup_workspace_storage_owner_user_id(&connection, workspace_id)?;
+        let duckdb_path =
+            self.workspace_duckdb_storage_path(storage_owner_user_id.as_str(), workspace_id);
         drop(connection);
 
         if let Some(parent) = duckdb_path.parent() {
             fs::create_dir_all(parent).with_context(|| {
                 format!(
-                    "failed to create workflow duckdb parent dir at `{}`",
+                    "failed to create workspace duckdb parent dir at `{}`",
                     parent.display()
                 )
             })?;
@@ -4536,36 +4878,36 @@ impl PlatformStore {
             quarantine_workflow_duckdb_file(&duckdb_path, &reason)?;
             initialize_workflow_duckdb(&duckdb_path).with_context(|| {
                 format!(
-                    "failed to recreate workflow DuckDB at `{}` after initialization failure: {reason}",
+                    "failed to recreate workspace DuckDB at `{}` after initialization failure: {reason}",
                     duckdb_path.display()
                 )
             })?;
         }
         let mirror_tables_have_primary_keys =
-            workflow_duckdb_run_mirror_tables_have_primary_keys(&duckdb_path).unwrap_or(true);
+            workspace_duckdb_run_mirror_tables_have_primary_keys(&duckdb_path).unwrap_or(true);
         if mirror_tables_have_primary_keys {
-            reset_workflow_duckdb_run_mirror_tables(&duckdb_path).with_context(|| {
+            reset_workspace_duckdb_run_mirror_tables(&duckdb_path).with_context(|| {
                 format!(
-                    "failed to rebuild indexed workflow DuckDB run mirror tables at `{}` before persistence",
+                    "failed to rebuild indexed workspace DuckDB run mirror tables at `{}` before persistence",
                     duckdb_path.display()
                 )
             })?;
         }
 
-        match persist_workflow_duckdb_run_snapshot(&duckdb_path, workspace_id, snapshot) {
+        match persist_workspace_duckdb_run_snapshot(&duckdb_path, workspace_id, snapshot) {
             Ok(()) => Ok(()),
             Err(error) => {
                 let first_failure = error.to_string();
-                reset_workflow_duckdb_run_mirror_tables(&duckdb_path).with_context(|| {
+                reset_workspace_duckdb_run_mirror_tables(&duckdb_path).with_context(|| {
                     format!(
-                        "failed to repair workflow DuckDB run mirror tables at `{}` after persistence failure: {first_failure}",
+                        "failed to repair workspace DuckDB run mirror tables at `{}` after persistence failure: {first_failure}",
                         duckdb_path.display()
                     )
                 })?;
-                persist_workflow_duckdb_run_snapshot(&duckdb_path, workspace_id, snapshot)
+                persist_workspace_duckdb_run_snapshot(&duckdb_path, workspace_id, snapshot)
                     .with_context(|| {
                         format!(
-                            "failed to persist workflow DuckDB run mirror after repairing mirror tables at `{}`. Original failure: {first_failure}",
+                            "failed to persist workspace DuckDB run mirror after repairing mirror tables at `{}`. Original failure: {first_failure}",
                             duckdb_path.display()
                         )
                     })
@@ -4624,7 +4966,7 @@ fn hash_password(password: &str) -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, process::Command};
+    use std::{fs, path::Path, process::Command};
 
     use api_contract::{
         NodeRunSnapshot, NodeRunStatus, RunErrorCategory, RunErrorSummary, RunSnapshot, RunStatus,
@@ -4635,28 +4977,84 @@ mod tests {
     use rusqlite::params;
 
     use super::{
-        normalize_workspace_catalog_query, resolve_duckdb_cli_path, GoogleConnectionTokens,
-        GoogleIdentityProfile, PlatformStore, WORKFLOW_DUCKDB_RUN_SYNC_ENABLED_TEST_OVERRIDE,
+        cleanup_legacy_workflow_duckdb_file, initialize_workflow_duckdb,
+        normalize_workspace_catalog_query, resolve_duckdb_cli_path, unique_test_storage_root,
+        GoogleConnectionTokens, GoogleIdentityProfile, PlatformStore, WORKFLOW_DUCKDB_FILE_NAME,
+        WORKSPACE_DUCKDB_FILE_NAME, WORKSPACE_DUCKDB_RUN_SYNC_ENABLED_TEST_OVERRIDE,
     };
     use workflow_schema::{
         NodePosition, TypedValue, WorkflowDefinition, WorkflowEdge, WorkflowNode,
     };
 
-    struct WorkflowDuckDbRunSyncOverrideGuard {
+    struct WorkspaceDuckDbRunSyncOverrideGuard {
         previous: Option<bool>,
     }
 
-    impl Drop for WorkflowDuckDbRunSyncOverrideGuard {
+    impl Drop for WorkspaceDuckDbRunSyncOverrideGuard {
         fn drop(&mut self) {
-            WORKFLOW_DUCKDB_RUN_SYNC_ENABLED_TEST_OVERRIDE
+            WORKSPACE_DUCKDB_RUN_SYNC_ENABLED_TEST_OVERRIDE
                 .with(|override_value| override_value.set(self.previous));
         }
     }
 
-    fn enable_workflow_duckdb_run_sync_for_test() -> WorkflowDuckDbRunSyncOverrideGuard {
-        let previous = WORKFLOW_DUCKDB_RUN_SYNC_ENABLED_TEST_OVERRIDE
+    fn enable_workspace_duckdb_run_sync_for_test() -> WorkspaceDuckDbRunSyncOverrideGuard {
+        let previous = WORKSPACE_DUCKDB_RUN_SYNC_ENABLED_TEST_OVERRIDE
             .with(|override_value| override_value.replace(Some(true)));
-        WorkflowDuckDbRunSyncOverrideGuard { previous }
+        WorkspaceDuckDbRunSyncOverrideGuard { previous }
+    }
+
+    fn assert_duckdb_has_standard_workspace_schemas(duckdb_path: &Path) {
+        let duckdb = DuckDbConnection::open(duckdb_path).expect("duckdb opens");
+        let schema_names = ["runs", "staging", "tables", "outputs"];
+        for schema_name in schema_names {
+            let exists: Option<String> = duckdb
+                .query_row(
+                    "select schema_name
+                     from information_schema.schemata
+                     where schema_name = ?1",
+                    [schema_name],
+                    |row| row.get(0),
+                )
+                .expect("schema query");
+            assert_eq!(
+                exists.as_deref(),
+                Some(schema_name),
+                "schema `{schema_name}` should exist"
+            );
+        }
+
+        let workflow_runs_table_exists: Option<String> = duckdb
+            .query_row(
+                "select table_name
+                 from information_schema.tables
+                 where table_schema = 'runs' and table_name = 'workflow_runs'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("workflow_runs table query");
+        assert_eq!(workflow_runs_table_exists.as_deref(), Some("workflow_runs"));
+
+        let node_runs_table_exists: Option<String> = duckdb
+            .query_row(
+                "select table_name
+                 from information_schema.tables
+                 where table_schema = 'runs' and table_name = 'node_runs'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("node_runs table query");
+        assert_eq!(node_runs_table_exists.as_deref(), Some("node_runs"));
+
+        let node_outputs_table_exists: Option<String> = duckdb
+            .query_row(
+                "select table_name
+                 from information_schema.tables
+                 where table_schema = 'outputs' and table_name = 'node_outputs'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("node_outputs table query");
+        assert_eq!(node_outputs_table_exists.as_deref(), Some("node_outputs"));
     }
 
     fn table_output_payload(
@@ -5028,7 +5426,65 @@ mod tests {
     }
 
     #[test]
-    fn create_workflow_bootstraps_rooted_storage_and_duckdb() {
+    fn create_workspace_bootstraps_rooted_storage_and_workspace_duckdb() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Workspace DuckDB")
+            .expect("workspace");
+
+        let workspace_root = store.workspace_root_path("usr_builder", &workspace.workspace_id);
+        let duckdb_path = store
+            .workspace_duckdb_path("usr_builder", &workspace.workspace_id)
+            .expect("workspace duckdb path");
+
+        assert!(workspace_root.is_dir(), "workspace root should exist");
+        assert_eq!(
+            duckdb_path,
+            workspace_root.join("db").join(WORKSPACE_DUCKDB_FILE_NAME)
+        );
+        assert!(duckdb_path.is_file(), "workspace duckdb should exist");
+        assert_duckdb_has_standard_workspace_schemas(&duckdb_path);
+    }
+
+    #[test]
+    fn platform_open_bootstraps_missing_workspace_duckdbs() {
+        let storage_root = unique_test_storage_root();
+        let database_path = storage_root.join("platform").join("platform.sqlite3");
+        let database_path_string = database_path.to_string_lossy().to_string();
+        let store = PlatformStore::open_with_storage_root(
+            database_path_string.as_str(),
+            storage_root.clone(),
+        )
+        .expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Reopened Workspace DuckDB")
+            .expect("workspace");
+        let duckdb_path = store
+            .workspace_duckdb_path("usr_builder", &workspace.workspace_id)
+            .expect("workspace duckdb path");
+        assert!(duckdb_path.is_file(), "workspace duckdb should exist");
+        fs::remove_file(&duckdb_path).expect("remove workspace duckdb");
+        drop(store);
+
+        let reopened = PlatformStore::open_with_storage_root(
+            database_path_string.as_str(),
+            storage_root.clone(),
+        )
+        .expect("reopened platform store");
+        let reopened_duckdb_path = reopened
+            .workspace_duckdb_path("usr_builder", &workspace.workspace_id)
+            .expect("reopened workspace duckdb path");
+
+        assert_eq!(reopened_duckdb_path, duckdb_path);
+        assert!(
+            reopened_duckdb_path.is_file(),
+            "workspace duckdb should be recreated on open"
+        );
+        assert_duckdb_has_standard_workspace_schemas(&reopened_duckdb_path);
+    }
+
+    #[test]
+    fn create_workflow_bootstraps_rooted_storage_and_resolves_workspace_duckdb() {
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
             .create_workspace("usr_builder", "DuckDB Workspace")
@@ -5048,12 +5504,30 @@ mod tests {
             created.workflow.workflow_id.as_str(),
         );
         let workflow_json_path = workflow_root.join("workflow.json");
-        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let legacy_duckdb_path = workflow_root.join("db").join(WORKFLOW_DUCKDB_FILE_NAME);
+        let workspace_duckdb_path = store
+            .workspace_duckdb_path("usr_builder", &workspace.workspace_id)
+            .expect("workspace duckdb path");
+        let compatibility_duckdb_path = store
+            .workflow_duckdb_path(
+                "usr_builder",
+                &workspace.workspace_id,
+                created.workflow.workflow_id.as_str(),
+            )
+            .expect("workflow duckdb compatibility path");
         let files_dir = workflow_root.join("files");
 
         assert!(workflow_root.is_dir(), "workflow root should exist");
         assert!(workflow_json_path.is_file(), "workflow.json should exist");
-        assert!(duckdb_path.is_file(), "workflow duckdb should exist");
+        assert!(
+            !legacy_duckdb_path.exists(),
+            "new workflows should not create a workflow-local duckdb"
+        );
+        assert_eq!(compatibility_duckdb_path, workspace_duckdb_path);
+        assert!(
+            workspace_duckdb_path.is_file(),
+            "workspace duckdb should exist"
+        );
         assert!(files_dir.is_dir(), "files dir should exist");
         assert!(
             files_dir.join("uploads").is_dir(),
@@ -5077,57 +5551,7 @@ mod tests {
             "workflow.json should match stored workflow id"
         );
 
-        let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb opens");
-        let schema_names = ["runs", "staging", "tables", "outputs"];
-        for schema_name in schema_names {
-            let exists: Option<String> = duckdb
-                .query_row(
-                    "select schema_name
-                     from information_schema.schemata
-                     where schema_name = ?1",
-                    [schema_name],
-                    |row| row.get(0),
-                )
-                .expect("schema query");
-            assert_eq!(
-                exists.as_deref(),
-                Some(schema_name),
-                "schema `{schema_name}` should exist"
-            );
-        }
-
-        let workflow_runs_table_exists: Option<String> = duckdb
-            .query_row(
-                "select table_name
-                 from information_schema.tables
-                 where table_schema = 'runs' and table_name = 'workflow_runs'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("workflow_runs table query");
-        assert_eq!(workflow_runs_table_exists.as_deref(), Some("workflow_runs"));
-
-        let node_runs_table_exists: Option<String> = duckdb
-            .query_row(
-                "select table_name
-                 from information_schema.tables
-                 where table_schema = 'runs' and table_name = 'node_runs'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("node_runs table query");
-        assert_eq!(node_runs_table_exists.as_deref(), Some("node_runs"));
-
-        let node_outputs_table_exists: Option<String> = duckdb
-            .query_row(
-                "select table_name
-                 from information_schema.tables
-                 where table_schema = 'outputs' and table_name = 'node_outputs'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("node_outputs table query");
-        assert_eq!(node_outputs_table_exists.as_deref(), Some("node_outputs"));
+        assert_duckdb_has_standard_workspace_schemas(&workspace_duckdb_path);
     }
 
     #[test]
@@ -5175,7 +5599,30 @@ mod tests {
     }
 
     #[test]
-    fn workspace_catalog_lists_workflow_duckdbs_across_workflows() {
+    fn deleting_an_empty_workspace_removes_its_storage_root() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Empty Workspace To Delete")
+            .expect("workspace");
+        let workspace_root = store.workspace_root_path("usr_builder", &workspace.workspace_id);
+
+        assert!(workspace_root.is_dir(), "workspace root should exist");
+
+        let deleted = store
+            .delete_workspace("usr_builder", &workspace.workspace_id)
+            .expect("workspace deletion succeeds")
+            .expect("workspace exists");
+
+        assert_eq!(deleted.workspace_id, workspace.workspace_id);
+        assert!(deleted.deleted);
+        assert!(
+            !workspace_root.exists(),
+            "workspace storage root should be removed"
+        );
+    }
+
+    #[test]
+    fn workspace_catalog_lists_workspace_duckdb_once_across_workflows() {
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
             .create_workspace("usr_builder", "Catalog Workspace")
@@ -5198,14 +5645,12 @@ mod tests {
             .create_workflow("usr_builder", &workspace.workspace_id, &second_workflow)
             .expect("second workflow creates");
 
-        let second_workflow_root = store.workflow_root_path(
-            "usr_builder",
-            &workspace.workspace_id,
-            created_second.workflow.workflow_id.as_str(),
-        );
-        let second_duckdb_path = second_workflow_root.join("db").join("workflow.duckdb");
-        let second_duckdb = DuckDbConnection::open(&second_duckdb_path).expect("duckdb opens");
-        second_duckdb
+        let workspace_duckdb_path = store
+            .workspace_duckdb_path("usr_builder", &workspace.workspace_id)
+            .expect("workspace duckdb path");
+        let workspace_duckdb =
+            DuckDbConnection::open(&workspace_duckdb_path).expect("duckdb opens");
+        workspace_duckdb
             .execute_batch(
                 "
                 create table if not exists tables.customer_orders (
@@ -5220,29 +5665,24 @@ mod tests {
             .list_workspace_catalogs("usr_builder", &workspace.workspace_id)
             .expect("workspace catalog");
 
-        assert_eq!(catalog.catalogs.len(), 2);
+        assert_eq!(catalog.catalogs.len(), 1);
 
-        let first_catalog = catalog
-            .catalogs
-            .iter()
-            .find(|entry| entry.workflow_id == created_first.workflow.workflow_id)
-            .expect("first catalog present");
-        assert_eq!(first_catalog.database_name, "workflow.duckdb");
-        assert!(first_catalog
+        let workspace_catalog = &catalog.catalogs[0];
+        assert_eq!(workspace_catalog.workflow_id, workspace.workspace_id);
+        assert_eq!(workspace_catalog.workflow_name, workspace.name);
+        assert_eq!(workspace_catalog.database_name, "workspace.duckdb");
+        assert!(workspace_catalog
             .schemas
             .iter()
             .any(|schema| schema.schema_name == "runs"));
-        assert!(first_catalog
+        assert!(workspace_catalog
             .schemas
             .iter()
             .any(|schema| schema.schema_name == "outputs"));
 
-        let second_catalog = catalog
-            .catalogs
-            .iter()
-            .find(|entry| entry.workflow_id == created_second.workflow.workflow_id)
-            .expect("second catalog present");
-        let tables_schema = second_catalog
+        assert_eq!(created_first.workflow.workspace_id, workspace.workspace_id);
+        assert_eq!(created_second.workflow.workspace_id, workspace.workspace_id);
+        let tables_schema = workspace_catalog
             .schemas
             .iter()
             .find(|schema| schema.schema_name == "tables")
@@ -5266,16 +5706,13 @@ mod tests {
         workflow.workflow_id = "wf_catalog_preview".to_string();
         workflow.name = "Catalog Preview".to_string();
 
-        let created = store
+        let _created = store
             .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
             .expect("workflow creates");
 
-        let workflow_root = store.workflow_root_path(
-            "usr_builder",
-            &workspace.workspace_id,
-            created.workflow.workflow_id.as_str(),
-        );
-        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let duckdb_path = store
+            .workspace_duckdb_path("usr_builder", &workspace.workspace_id)
+            .expect("workspace duckdb path");
         let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb opens");
         duckdb
             .execute_batch(
@@ -5293,12 +5730,7 @@ mod tests {
             .expect("sample table persists");
 
         let schema = store
-            .get_workspace_catalog_schema(
-                "usr_builder",
-                &workspace.workspace_id,
-                created.workflow.workflow_id.as_str(),
-                "tables",
-            )
+            .get_workspace_catalog_schema("usr_builder", &workspace.workspace_id, "tables")
             .expect("schema lookup")
             .expect("schema exists");
         assert!(schema
@@ -5310,7 +5742,6 @@ mod tests {
             .get_workspace_catalog_table(
                 "usr_builder",
                 &workspace.workspace_id,
-                created.workflow.workflow_id.as_str(),
                 "tables",
                 "customer_orders",
             )
@@ -5335,16 +5766,13 @@ mod tests {
         workflow.workflow_id = "wf_catalog_json_preview".to_string();
         workflow.name = "Catalog JSON Preview".to_string();
 
-        let created = store
+        let _created = store
             .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
             .expect("workflow creates");
 
-        let workflow_root = store.workflow_root_path(
-            "usr_builder",
-            &workspace.workspace_id,
-            created.workflow.workflow_id.as_str(),
-        );
-        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let duckdb_path = store
+            .workspace_duckdb_path("usr_builder", &workspace.workspace_id)
+            .expect("workspace duckdb path");
         let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb opens");
         duckdb
             .execute_batch(
@@ -5363,7 +5791,6 @@ mod tests {
             .get_workspace_catalog_table(
                 "usr_builder",
                 &workspace.workspace_id,
-                created.workflow.workflow_id.as_str(),
                 "outputs",
                 "preview_payloads",
             )
@@ -5394,16 +5821,13 @@ mod tests {
         workflow.workflow_id = "wf_catalog_query_preview".to_string();
         workflow.name = "Catalog Query Preview".to_string();
 
-        let created = store
+        let _created = store
             .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
             .expect("workflow creates");
 
-        let workflow_root = store.workflow_root_path(
-            "usr_builder",
-            &workspace.workspace_id,
-            created.workflow.workflow_id.as_str(),
-        );
-        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let duckdb_path = store
+            .workspace_duckdb_path("usr_builder", &workspace.workspace_id)
+            .expect("workspace duckdb path");
         let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb opens");
         duckdb
             .execute_batch(
@@ -5423,7 +5847,6 @@ mod tests {
             .run_workspace_catalog_query(
                 "usr_builder",
                 &workspace.workspace_id,
-                created.workflow.workflow_id.as_str(),
                 "select order_id, customer_name from tables.customer_orders order by order_id",
             )
             .expect("query succeeds")
@@ -5459,6 +5882,155 @@ mod tests {
                 .contains("Only read-only SELECT queries are supported"),
             "unexpected message: {error}"
         );
+    }
+
+    #[test]
+    fn workspace_duckdb_table_created_by_one_workflow_is_visible_to_another_workflow() {
+        let _sync_guard = enable_workspace_duckdb_run_sync_for_test();
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Cross Workflow Dataset Workspace")
+            .expect("workspace");
+
+        let producer_workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_dataset_producer".to_string(),
+            version: 1,
+            name: "Dataset Producer".to_string(),
+            description: None,
+            nodes: vec![WorkflowNode {
+                node_id: "write_shared_digest".to_string(),
+                type_id: "table_output".to_string(),
+                definition_version: 1,
+                label: Some("Write Shared Digest".to_string()),
+                config: serde_json::json!({
+                    "target_schema": "tables",
+                    "table_name": "shared_digest",
+                    "write_mode": "append",
+                    "input_shape": "single_text_row",
+                    "value_column": "content"
+                }),
+                position: NodePosition::default(),
+            }],
+            edges: vec![],
+            metadata: Default::default(),
+        };
+        let producer = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &producer_workflow)
+            .expect("producer workflow creates");
+
+        let consumer_workflow = WorkflowDefinition {
+            schema_version: 1,
+            workflow_id: "wf_dataset_consumer".to_string(),
+            version: 1,
+            name: "Dataset Consumer".to_string(),
+            description: None,
+            nodes: vec![WorkflowNode {
+                node_id: "read_shared_digest".to_string(),
+                type_id: "table_input".to_string(),
+                definition_version: 1,
+                label: Some("Read Shared Digest".to_string()),
+                config: serde_json::json!({
+                    "catalog": "workspace.duckdb",
+                    "schema_name": "tables",
+                    "table_name": "shared_digest",
+                    "output_alias": "shared_digest"
+                }),
+                position: NodePosition::default(),
+            }],
+            edges: vec![],
+            metadata: Default::default(),
+        };
+        let consumer = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &consumer_workflow)
+            .expect("consumer workflow creates");
+
+        let started_at = Utc
+            .with_ymd_and_hms(2026, 6, 15, 8, 30, 0)
+            .single()
+            .expect("valid datetime");
+        let snapshot = RunSnapshot {
+            run_id: "run_dataset_producer".to_string(),
+            workflow_id: producer.workflow.workflow_id.clone(),
+            workflow_version: producer.workflow.version,
+            status: RunStatus::Succeeded,
+            trigger: RunTrigger {
+                kind: TriggerKind::Manual,
+            },
+            started_at: Some(started_at),
+            finished_at: Some(started_at + Duration::seconds(3)),
+            node_runs: vec![NodeRunSnapshot {
+                node_id: "write_shared_digest".to_string(),
+                type_id: "table_output".to_string(),
+                status: NodeRunStatus::Succeeded,
+                attempt: 1,
+                started_at: Some(started_at),
+                finished_at: Some(started_at + Duration::seconds(3)),
+                last_output: Some(table_output_payload(
+                    "tables",
+                    "shared_digest",
+                    "append",
+                    "content",
+                    "Shared row from producer",
+                )),
+                log_count: 1,
+                error: None,
+            }],
+            logs: vec![],
+            error: None,
+        };
+
+        store
+            .persist_run_snapshot(&workspace.workspace_id, Some("usr_builder"), &snapshot)
+            .expect("producer run snapshot persists");
+
+        let table = store
+            .get_workspace_catalog_table(
+                "usr_builder",
+                &workspace.workspace_id,
+                "tables",
+                "shared_digest",
+            )
+            .expect("catalog table lookup")
+            .expect("shared table exists");
+        assert_eq!(table.workflow_id, workspace.workspace_id);
+        assert_eq!(table.database_name, WORKSPACE_DUCKDB_FILE_NAME);
+        assert!(table
+            .columns
+            .iter()
+            .any(|column| column.column_name == "content"));
+
+        let query = store
+            .run_workspace_catalog_query(
+                "usr_builder",
+                &workspace.workspace_id,
+                "select content from tables.shared_digest order by written_at",
+            )
+            .expect("workspace query succeeds")
+            .expect("workspace exists");
+        assert_eq!(
+            query.rows,
+            vec![vec![Some("Shared row from producer".to_string())]]
+        );
+
+        let preview = store
+            .preview_workspace_catalog_table_delete(
+                "usr_builder",
+                &workspace.workspace_id,
+                "tables",
+                "shared_digest",
+            )
+            .expect("delete preview succeeds")
+            .expect("shared table exists");
+        assert_eq!(preview.affected_workflows.len(), 2);
+        assert!(preview
+            .affected_workflows
+            .iter()
+            .any(|workflow| workflow.workflow_id == producer.workflow.workflow_id));
+        assert!(preview
+            .affected_workflows
+            .iter()
+            .any(|workflow| workflow.workflow_id == consumer.workflow.workflow_id));
     }
 
     #[test]
@@ -5511,17 +6083,18 @@ mod tests {
             metadata: Default::default(),
         };
 
-        let created = store
+        let first_created = store
             .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
             .expect("workflow creates");
+        let mut second_workflow = workflow.clone();
+        second_workflow.workflow_id = "wf_catalog_delete_preview_downstream".to_string();
+        second_workflow.name = "Catalog Delete Preview Downstream".to_string();
+        let second_created = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &second_workflow)
+            .expect("downstream workflow creates");
         let duckdb_path = store
-            .workflow_root_path(
-                "usr_builder",
-                &workspace.workspace_id,
-                created.workflow.workflow_id.as_str(),
-            )
-            .join("db")
-            .join("workflow.duckdb");
+            .workspace_duckdb_path("usr_builder", &workspace.workspace_id)
+            .expect("workspace duckdb path");
         let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb opens");
         duckdb
             .execute_batch(
@@ -5533,7 +6106,6 @@ mod tests {
             .preview_workspace_catalog_table_delete(
                 "usr_builder",
                 &workspace.workspace_id,
-                created.workflow.workflow_id.as_str(),
                 "tables",
                 "daily_digest",
             )
@@ -5541,14 +6113,22 @@ mod tests {
             .expect("table exists");
 
         assert!(preview.is_deletable);
-        assert_eq!(preview.affected_workflows.len(), 1);
+        assert_eq!(preview.affected_workflows.len(), 2);
+        assert!(preview
+            .affected_workflows
+            .iter()
+            .any(|workflow| workflow.workflow_id == first_created.workflow.workflow_id));
+        assert!(preview
+            .affected_workflows
+            .iter()
+            .any(|workflow| workflow.workflow_id == second_created.workflow.workflow_id));
         assert_eq!(
-            preview.affected_workflows[0]
-                .nodes
+            preview
+                .affected_workflows
                 .iter()
-                .map(|node| node.usage_kind.as_str())
-                .collect::<Vec<_>>(),
-            vec!["source", "target"]
+                .map(|workflow| workflow.nodes.len())
+                .sum::<usize>(),
+            4
         );
     }
 
@@ -5604,7 +6184,9 @@ mod tests {
             &workspace.workspace_id,
             created.workflow.workflow_id.as_str(),
         );
-        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let duckdb_path = store
+            .workspace_duckdb_path("usr_builder", &workspace.workspace_id)
+            .expect("workspace duckdb path");
         let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb opens");
         duckdb
             .execute_batch(
@@ -5617,7 +6199,6 @@ mod tests {
             .delete_workspace_catalog_table(
                 "usr_builder",
                 &workspace.workspace_id,
-                created.workflow.workflow_id.as_str(),
                 "tables",
                 "daily_digest",
             )
@@ -5783,7 +6364,7 @@ mod tests {
     }
 
     #[test]
-    fn workflow_update_does_not_open_existing_workflow_duckdb() {
+    fn workflow_update_quarantines_corrupt_legacy_workflow_duckdb() {
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
             .create_workspace("usr_builder", "Existing DuckDB Bootstrap Workspace")
@@ -5804,7 +6385,9 @@ mod tests {
                 created.workflow.workflow_id.as_str(),
             )
             .join("db")
-            .join("workflow.duckdb");
+            .join(WORKFLOW_DUCKDB_FILE_NAME);
+        fs::create_dir_all(duckdb_path.parent().expect("legacy duckdb parent"))
+            .expect("legacy duckdb parent created");
         fs::write(&duckdb_path, b"not a duckdb file").expect("replace workflow duckdb");
 
         workflow.name = "Updated Existing DuckDB Bootstrap Flow".to_string();
@@ -5815,22 +6398,249 @@ mod tests {
                 created.workflow.workflow_id.as_str(),
                 &workflow,
             )
-            .expect("workflow update should not open existing duckdb")
+            .expect("workflow update should quarantine corrupt legacy duckdb")
             .expect("workflow exists");
 
         assert_eq!(
             updated.workflow.name,
             "Updated Existing DuckDB Bootstrap Flow"
         );
-        assert_eq!(
-            fs::read(&duckdb_path).expect("workflow duckdb remains"),
-            b"not a duckdb file"
+        assert!(
+            !duckdb_path.exists(),
+            "corrupt legacy workflow duckdb should be quarantined"
+        );
+        let quarantine_files = fs::read_dir(duckdb_path.parent().expect("legacy duckdb parent"))
+            .expect("legacy duckdb dir readable")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .filter(|name| name.starts_with("workflow.duckdb.legacy-corrupt."))
+            .collect::<Vec<_>>();
+        assert_eq!(quarantine_files.len(), 1);
+    }
+
+    #[test]
+    fn workflow_bootstrap_removes_system_only_legacy_workflow_duckdb() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Legacy System DuckDB Workspace")
+            .expect("workspace");
+        let workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+        let created = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
+            .expect("workflow creates");
+        let legacy_duckdb_path = store
+            .workflow_root_path(
+                "usr_builder",
+                &workspace.workspace_id,
+                created.workflow.workflow_id.as_str(),
+            )
+            .join("db")
+            .join(WORKFLOW_DUCKDB_FILE_NAME);
+        fs::create_dir_all(legacy_duckdb_path.parent().expect("legacy duckdb parent"))
+            .expect("legacy duckdb parent created");
+        initialize_workflow_duckdb(&legacy_duckdb_path).expect("legacy system duckdb created");
+        fs::write(
+            legacy_duckdb_path.with_extension("duckdb.wal"),
+            b"legacy sidecar",
+        )
+        .expect("legacy sidecar written");
+
+        store
+            .bootstrap_workflow_storage("usr_builder", &workspace.workspace_id, &created.definition)
+            .expect("workflow storage bootstraps");
+
+        assert!(
+            !legacy_duckdb_path.exists(),
+            "system-only legacy workflow duckdb should be removed"
+        );
+        assert!(
+            !legacy_duckdb_path.with_extension("duckdb.wal").exists(),
+            "legacy workflow duckdb sidecar should be removed"
         );
     }
 
     #[test]
-    fn run_snapshot_mirrors_into_workflow_duckdb_when_enabled() {
-        let _sync_guard = enable_workflow_duckdb_run_sync_for_test();
+    fn workflow_bootstrap_quarantines_legacy_workflow_duckdb_with_user_tables() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Legacy User DuckDB Workspace")
+            .expect("workspace");
+        let workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+        let created = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
+            .expect("workflow creates");
+        let legacy_duckdb_path = store
+            .workflow_root_path(
+                "usr_builder",
+                &workspace.workspace_id,
+                created.workflow.workflow_id.as_str(),
+            )
+            .join("db")
+            .join(WORKFLOW_DUCKDB_FILE_NAME);
+        fs::create_dir_all(legacy_duckdb_path.parent().expect("legacy duckdb parent"))
+            .expect("legacy duckdb parent created");
+        let legacy_duckdb =
+            DuckDbConnection::open(&legacy_duckdb_path).expect("legacy duckdb opens");
+        legacy_duckdb
+            .execute_batch(
+                "create schema if not exists tables;
+                 create table tables.legacy_orders (order_id integer);",
+            )
+            .expect("legacy user table created");
+        drop(legacy_duckdb);
+
+        store
+            .bootstrap_workflow_storage("usr_builder", &workspace.workspace_id, &created.definition)
+            .expect("workflow storage bootstraps");
+
+        assert!(
+            !legacy_duckdb_path.exists(),
+            "legacy workflow duckdb with user tables should move out of the canonical path"
+        );
+        let quarantine_files =
+            fs::read_dir(legacy_duckdb_path.parent().expect("legacy duckdb parent"))
+                .expect("legacy duckdb dir readable")
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name().to_string_lossy().to_string())
+                .filter(|name| name.starts_with("workflow.duckdb.legacy."))
+                .collect::<Vec<_>>();
+        assert_eq!(quarantine_files.len(), 1);
+    }
+
+    #[test]
+    fn legacy_workflow_duckdb_import_copies_quarantined_user_tables_into_workspace_duckdb() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Legacy Import Workspace")
+            .expect("workspace");
+        let legacy_duckdb_path = store
+            .workspace_root_path("usr_builder", &workspace.workspace_id)
+            .join("workflows")
+            .join("wf_legacy_import")
+            .join("db")
+            .join(WORKFLOW_DUCKDB_FILE_NAME);
+        fs::create_dir_all(legacy_duckdb_path.parent().expect("legacy duckdb parent"))
+            .expect("legacy duckdb parent created");
+        let legacy_duckdb =
+            DuckDbConnection::open(&legacy_duckdb_path).expect("legacy duckdb opens");
+        legacy_duckdb
+            .execute_batch(
+                "create schema if not exists tables;
+                 create table tables.legacy_orders (order_id integer, customer varchar);
+                 insert into tables.legacy_orders values (42, 'Ada');",
+            )
+            .expect("legacy user table created");
+        drop(legacy_duckdb);
+
+        let quarantine_path = cleanup_legacy_workflow_duckdb_file(&legacy_duckdb_path)
+            .expect("legacy duckdb cleanup")
+            .expect("legacy duckdb quarantined");
+        let report = store
+            .import_legacy_workflow_duckdb_tables(
+                "usr_builder",
+                &workspace.workspace_id,
+                &quarantine_path,
+            )
+            .expect("legacy duckdb imports");
+
+        assert_eq!(
+            report.imported_tables,
+            vec!["tables.legacy_orders"],
+            "legacy import report: {report:?}"
+        );
+        assert!(report.skipped_tables.is_empty());
+        assert!(
+            quarantine_path.exists(),
+            "import should preserve quarantined file"
+        );
+
+        let workspace_duckdb_path = store
+            .workspace_duckdb_path("usr_builder", &workspace.workspace_id)
+            .expect("workspace duckdb path");
+        let workspace_duckdb =
+            DuckDbConnection::open(&workspace_duckdb_path).expect("workspace duckdb opens");
+        let imported: (i64, String) = workspace_duckdb
+            .query_row(
+                "select order_id, customer from tables.legacy_orders",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("imported row exists");
+        assert_eq!(imported, (42, "Ada".to_string()));
+    }
+
+    #[test]
+    fn legacy_workflow_duckdb_import_skips_existing_workspace_tables() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Legacy Import Conflict Workspace")
+            .expect("workspace");
+        let legacy_duckdb_path = store
+            .workspace_root_path("usr_builder", &workspace.workspace_id)
+            .join("workflows")
+            .join("wf_legacy")
+            .join("db")
+            .join(WORKFLOW_DUCKDB_FILE_NAME);
+        fs::create_dir_all(legacy_duckdb_path.parent().expect("legacy duckdb parent"))
+            .expect("legacy duckdb parent created");
+        let legacy_duckdb =
+            DuckDbConnection::open(&legacy_duckdb_path).expect("legacy duckdb opens");
+        legacy_duckdb
+            .execute_batch(
+                "create schema if not exists tables;
+                 create table tables.legacy_orders (order_id integer);
+                 insert into tables.legacy_orders values (99);",
+            )
+            .expect("legacy user table created");
+        drop(legacy_duckdb);
+
+        let workspace_duckdb_path = store
+            .workspace_duckdb_path("usr_builder", &workspace.workspace_id)
+            .expect("workspace duckdb path");
+        let workspace_duckdb =
+            DuckDbConnection::open(&workspace_duckdb_path).expect("workspace duckdb opens");
+        workspace_duckdb
+            .execute_batch(
+                "create schema if not exists tables;
+                 create table tables.legacy_orders (order_id integer);
+                 insert into tables.legacy_orders values (7);",
+            )
+            .expect("workspace table created");
+        drop(workspace_duckdb);
+
+        let quarantine_path = cleanup_legacy_workflow_duckdb_file(&legacy_duckdb_path)
+            .expect("legacy duckdb cleanup")
+            .expect("legacy duckdb quarantined");
+        let report = store
+            .import_legacy_workflow_duckdb_tables(
+                "usr_builder",
+                &workspace.workspace_id,
+                &quarantine_path,
+            )
+            .expect("legacy duckdb imports with conflict skip");
+
+        assert!(report.imported_tables.is_empty());
+        assert_eq!(report.skipped_tables, vec!["tables.legacy_orders"]);
+
+        let workspace_duckdb =
+            DuckDbConnection::open(&workspace_duckdb_path).expect("workspace duckdb opens");
+        let retained_order_id: i64 = workspace_duckdb
+            .query_row("select order_id from tables.legacy_orders", [], |row| {
+                row.get(0)
+            })
+            .expect("workspace row exists");
+        assert_eq!(retained_order_id, 7);
+    }
+
+    #[test]
+    fn run_snapshot_mirrors_into_workspace_duckdb_when_enabled() {
+        let _sync_guard = enable_workspace_duckdb_run_sync_for_test();
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
             .create_workspace("usr_builder", "Workflow Mirror Workspace")
@@ -5868,7 +6678,7 @@ mod tests {
                     attempt: 1,
                     started_at: Some(started_at),
                     finished_at: Some(started_at + Duration::seconds(1)),
-                    last_output: Some(TypedValue::text("Hello from workflow db")),
+                    last_output: Some(TypedValue::text("Hello from workspace db")),
                     log_count: 1,
                     error: None,
                 },
@@ -5892,13 +6702,22 @@ mod tests {
             .persist_run_snapshot(&workspace.workspace_id, Some("usr_builder"), &snapshot)
             .expect("run snapshot persists");
 
-        let workflow_root = store.workflow_root_path(
-            "usr_builder",
-            &workspace.workspace_id,
-            created.workflow.workflow_id.as_str(),
-        );
-        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let duckdb_path = store
+            .workspace_duckdb_path("usr_builder", &workspace.workspace_id)
+            .expect("workspace duckdb path");
         let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb opens");
+        let legacy_duckdb_path = store
+            .workflow_root_path(
+                "usr_builder",
+                &workspace.workspace_id,
+                created.workflow.workflow_id.as_str(),
+            )
+            .join("db")
+            .join(WORKFLOW_DUCKDB_FILE_NAME);
+        assert!(
+            !legacy_duckdb_path.exists(),
+            "run mirror should not recreate workflow-local duckdb"
+        );
 
         let workflow_run_rows: i64 = duckdb
             .query_row(
@@ -5935,8 +6754,8 @@ mod tests {
     }
 
     #[test]
-    fn run_snapshot_persists_even_when_workflow_duckdb_mirroring_fails() {
-        let _sync_guard = enable_workflow_duckdb_run_sync_for_test();
+    fn run_snapshot_persists_even_when_workspace_duckdb_mirroring_fails() {
+        let _sync_guard = enable_workspace_duckdb_run_sync_for_test();
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
             .create_workspace("usr_builder", "Mirror Failure Workspace")
@@ -5987,7 +6806,7 @@ mod tests {
 
         store
             .persist_run_snapshot(&workspace.workspace_id, Some("usr_builder"), &snapshot)
-            .expect("sqlite run snapshot persists even when workflow duckdb mirror fails");
+            .expect("sqlite run snapshot persists even when workspace duckdb mirror fails");
 
         let connection = store.connection();
         let persisted_run_count: i64 = connection
@@ -6003,8 +6822,8 @@ mod tests {
     }
 
     #[test]
-    fn run_snapshot_repairs_workflow_duckdb_mirror_tables_without_dropping_staging_data() {
-        let _sync_guard = enable_workflow_duckdb_run_sync_for_test();
+    fn run_snapshot_repairs_workspace_duckdb_mirror_tables_without_dropping_staging_data() {
+        let _sync_guard = enable_workspace_duckdb_run_sync_for_test();
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
             .create_workspace("usr_builder", "Mirror Repair Workspace")
@@ -6018,12 +6837,9 @@ mod tests {
         let created = store
             .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
             .expect("workflow creates");
-        let workflow_root = store.workflow_root_path(
-            "usr_builder",
-            &workspace.workspace_id,
-            created.workflow.workflow_id.as_str(),
-        );
-        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let duckdb_path = store
+            .workspace_duckdb_path("usr_builder", &workspace.workspace_id)
+            .expect("workspace duckdb path");
         let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb opens");
         duckdb
             .execute_batch(
@@ -6088,7 +6904,7 @@ mod tests {
 
     #[test]
     fn cancelled_run_updates_do_not_duplicate_mirrored_rows() {
-        let _sync_guard = enable_workflow_duckdb_run_sync_for_test();
+        let _sync_guard = enable_workspace_duckdb_run_sync_for_test();
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
             .create_workspace("usr_builder", "DuckDB Idempotent Workspace")
@@ -6159,12 +6975,9 @@ mod tests {
             )
             .expect("cancelled snapshot persists");
 
-        let workflow_root = store.workflow_root_path(
-            "usr_builder",
-            &workspace.workspace_id,
-            created.workflow.workflow_id.as_str(),
-        );
-        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let duckdb_path = store
+            .workspace_duckdb_path("usr_builder", &workspace.workspace_id)
+            .expect("workspace duckdb path");
         let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb opens");
 
         let workflow_run_rows: i64 = duckdb
@@ -6181,7 +6994,7 @@ mod tests {
 
     #[test]
     fn table_output_snapshot_writes_to_the_configured_target_table() {
-        let _sync_guard = enable_workflow_duckdb_run_sync_for_test();
+        let _sync_guard = enable_workspace_duckdb_run_sync_for_test();
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
             .create_workspace("usr_builder", "Table Output Workspace")
@@ -6234,12 +7047,9 @@ mod tests {
             .persist_run_snapshot(&workspace.workspace_id, Some("usr_builder"), &snapshot)
             .expect("run snapshot persists");
 
-        let workflow_root = store.workflow_root_path(
-            "usr_builder",
-            &workspace.workspace_id,
-            created.workflow.workflow_id.as_str(),
-        );
-        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let duckdb_path = store
+            .workspace_duckdb_path("usr_builder", &workspace.workspace_id)
+            .expect("workspace duckdb path");
         let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb opens");
 
         let row: (String, String, String) = duckdb
@@ -6259,7 +7069,7 @@ mod tests {
 
     #[test]
     fn table_output_replace_mode_overwrites_previous_target_rows() {
-        let _sync_guard = enable_workflow_duckdb_run_sync_for_test();
+        let _sync_guard = enable_workspace_duckdb_run_sync_for_test();
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
             .create_workspace("usr_builder", "Table Output Replace Workspace")
@@ -6344,12 +7154,9 @@ mod tests {
             .persist_run_snapshot(&workspace.workspace_id, Some("usr_builder"), &snapshot_two)
             .expect("second run snapshot persists");
 
-        let workflow_root = store.workflow_root_path(
-            "usr_builder",
-            &workspace.workspace_id,
-            created.workflow.workflow_id.as_str(),
-        );
-        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let duckdb_path = store
+            .workspace_duckdb_path("usr_builder", &workspace.workspace_id)
+            .expect("workspace duckdb path");
         let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb opens");
 
         let row_count: i64 = duckdb
@@ -6373,7 +7180,7 @@ mod tests {
 
     #[test]
     fn table_output_source_table_materialization_copies_filtered_rows_into_target_table() {
-        let _sync_guard = enable_workflow_duckdb_run_sync_for_test();
+        let _sync_guard = enable_workspace_duckdb_run_sync_for_test();
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
             .create_workspace("usr_builder", "Table Input Output Workspace")
@@ -6386,12 +7193,9 @@ mod tests {
             .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
             .expect("workflow creates");
 
-        let workflow_root = store.workflow_root_path(
-            "usr_builder",
-            &workspace.workspace_id,
-            created.workflow.workflow_id.as_str(),
-        );
-        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let duckdb_path = store
+            .workspace_duckdb_path("usr_builder", &workspace.workspace_id)
+            .expect("workspace duckdb path");
         let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb opens");
 
         for (run_id, status, error_category, error_message) in [
@@ -6518,7 +7322,7 @@ mod tests {
 
     #[test]
     fn table_output_schema_materialization_bootstraps_target_table() {
-        let _sync_guard = enable_workflow_duckdb_run_sync_for_test();
+        let _sync_guard = enable_workspace_duckdb_run_sync_for_test();
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
             .create_workspace("usr_builder", "Table Schema Output Workspace")
@@ -6531,12 +7335,9 @@ mod tests {
             .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
             .expect("workflow creates");
 
-        let workflow_root = store.workflow_root_path(
-            "usr_builder",
-            &workspace.workspace_id,
-            created.workflow.workflow_id.as_str(),
-        );
-        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let duckdb_path = store
+            .workspace_duckdb_path("usr_builder", &workspace.workspace_id)
+            .expect("workspace duckdb path");
 
         let started_at = Utc
             .with_ymd_and_hms(2026, 6, 3, 14, 0, 0)
@@ -6622,7 +7423,7 @@ mod tests {
 
     #[test]
     fn table_output_schema_materialization_bootstraps_multiple_target_tables() {
-        let _sync_guard = enable_workflow_duckdb_run_sync_for_test();
+        let _sync_guard = enable_workspace_duckdb_run_sync_for_test();
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
             .create_workspace("usr_builder", "Multi Table Schema Output Workspace")
@@ -6635,12 +7436,9 @@ mod tests {
             .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
             .expect("workflow creates");
 
-        let workflow_root = store.workflow_root_path(
-            "usr_builder",
-            &workspace.workspace_id,
-            created.workflow.workflow_id.as_str(),
-        );
-        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let duckdb_path = store
+            .workspace_duckdb_path("usr_builder", &workspace.workspace_id)
+            .expect("workspace duckdb path");
 
         let started_at = Utc
             .with_ymd_and_hms(2026, 6, 3, 14, 5, 0)
@@ -6718,7 +7516,7 @@ mod tests {
 
     #[test]
     fn table_output_schema_materialization_adds_new_tables_when_primary_already_exists() {
-        let _sync_guard = enable_workflow_duckdb_run_sync_for_test();
+        let _sync_guard = enable_workspace_duckdb_run_sync_for_test();
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
             .create_workspace("usr_builder", "Existing Primary Schema Output Workspace")
@@ -6731,12 +7529,9 @@ mod tests {
             .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
             .expect("workflow creates");
 
-        let workflow_root = store.workflow_root_path(
-            "usr_builder",
-            &workspace.workspace_id,
-            created.workflow.workflow_id.as_str(),
-        );
-        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let duckdb_path = store
+            .workspace_duckdb_path("usr_builder", &workspace.workspace_id)
+            .expect("workspace duckdb path");
 
         let started_at = Utc
             .with_ymd_and_hms(2026, 6, 3, 14, 10, 0)

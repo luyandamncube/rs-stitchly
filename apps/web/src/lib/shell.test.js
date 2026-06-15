@@ -13,7 +13,7 @@ describe('shell helpers', () => {
     const groups = groupNodeDefinitions(nodeDefinitionFixture.node_definitions);
 
     expect(groups.map((group) => group.category)).toEqual(['input', 'compute', 'output']);
-    expect(groups[0].items[0].type_id).toBe('text_input');
+    expect(groups[0].items[0].type_id).toBe('table_input');
   });
 
   it('derives problem metadata from validation payloads', () => {

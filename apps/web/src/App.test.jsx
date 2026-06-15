@@ -259,7 +259,7 @@ const WORKSPACE_CATALOG_QUERY_RESPONSE = {
 describe('App platform shell', () => {
   beforeEach(() => {
     window.localStorage.clear();
-    window.history.replaceState({}, '', '/');
+    window.history.replaceState({}, '', '/login');
     delete window.google;
     api.cancelWorkspaceRun.mockReset();
     api.connectWorkspaceGmail.mockReset();
@@ -610,12 +610,8 @@ describe('App platform shell', () => {
     expect(screen.getByLabelText('Data sources window')).toBeInTheDocument();
     expect(screen.getByText('Catalog Tree')).toBeInTheDocument();
     const tree = screen.getByRole('tree', { name: 'Catalog hierarchy' });
-    expect(
-      await within(tree).findByText('default-workspace · ScJUvQ7dgxHqu7tXtsekiL · workflow.duckdb')
-    ).toBeInTheDocument();
-    expect(
-      within(tree).getByText('warehouse-workspace · wf_warehouse_ops · workflow.duckdb')
-    ).toBeInTheDocument();
+    expect(await within(tree).findByText('default-workspace')).toBeInTheDocument();
+    expect(within(tree).getByText('warehouse-workspace')).toBeInTheDocument();
     expect(within(tree).getByText('runs')).toBeInTheDocument();
     expect(within(tree).getByText('workflow_runs')).toBeInTheDocument();
     expect(screen.getByText('SQL Editor')).toBeInTheDocument();

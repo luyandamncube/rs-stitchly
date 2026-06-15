@@ -37,7 +37,8 @@ use futures::{stream, StreamExt};
 use platform::{AuthenticatedSession, PlatformStore};
 use runtime_core::{
     RunEventSubscription, RuntimeError, RuntimeService, INTERNAL_PARAM_DISABLE_LIVE_DOLT,
-    INTERNAL_PARAM_WORKFLOW_DUCKDB_PATH,
+    INTERNAL_PARAM_WORKFLOW_DUCKDB_PATH, INTERNAL_PARAM_WORKFLOW_FILES_ROOT,
+    INTERNAL_PARAM_WORKFLOW_ROOT_PATH, INTERNAL_PARAM_WORKSPACE_DUCKDB_PATH,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -230,19 +231,19 @@ pub fn app(runtime: RuntimeService, platform: PlatformStore) -> Router {
             get(list_workspace_catalogs),
         )
         .route(
-            "/api/workspaces/:workspace_id/catalog/:workflow_id/schemas/:schema_name",
+            "/api/workspaces/:workspace_id/catalog/schemas/:schema_name",
             get(get_workspace_catalog_schema),
         )
         .route(
-            "/api/workspaces/:workspace_id/catalog/:workflow_id/schemas/:schema_name/tables/:table_name",
+            "/api/workspaces/:workspace_id/catalog/schemas/:schema_name/tables/:table_name",
             get(get_workspace_catalog_table).delete(delete_workspace_catalog_table),
         )
         .route(
-            "/api/workspaces/:workspace_id/catalog/:workflow_id/schemas/:schema_name/tables/:table_name/delete-preview",
+            "/api/workspaces/:workspace_id/catalog/schemas/:schema_name/tables/:table_name/delete-preview",
             get(preview_workspace_catalog_table_delete),
         )
         .route(
-            "/api/workspaces/:workspace_id/catalog/:workflow_id/query",
+            "/api/workspaces/:workspace_id/catalog/query",
             post(run_workspace_catalog_query),
         )
         .route(
@@ -1022,7 +1023,7 @@ async fn update_workflow_state(
         ("workspace_id" = String, Path, description = "Workspace identifier.")
     ),
     responses(
-        (status = 200, description = "Catalogs for workflow DuckDB databases in the workspace.", body = WorkspaceCatalogResponse),
+        (status = 200, description = "Workspace DuckDB catalog for the workspace.", body = WorkspaceCatalogResponse),
         (status = 401, description = "Authentication required.", body = ErrorResponse),
         (status = 404, description = "Workspace not found.", body = ErrorResponse)
     )
@@ -1042,11 +1043,10 @@ async fn list_workspace_catalogs(
 
 #[utoipa::path(
     get,
-    path = "/api/workspaces/{workspace_id}/catalog/{workflow_id}/schemas/{schema_name}",
+    path = "/api/workspaces/{workspace_id}/catalog/schemas/{schema_name}",
     tag = "Catalog",
     params(
         ("workspace_id" = String, Path, description = "Workspace identifier."),
-        ("workflow_id" = String, Path, description = "Workflow identifier."),
         ("schema_name" = String, Path, description = "DuckDB schema name.")
     ),
     responses(
@@ -1058,21 +1058,16 @@ async fn list_workspace_catalogs(
 async fn get_workspace_catalog_schema(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path((workspace_id, workflow_id, schema_name)): Path<(String, String, String)>,
+    Path((workspace_id, schema_name)): Path<(String, String)>,
 ) -> Result<Json<WorkspaceCatalogSchemaResponse>, ApiError> {
     let session = require_session(&state, &headers)?;
     let schema = state
         .platform
-        .get_workspace_catalog_schema(
-            &session.user_id,
-            &workspace_id,
-            &workflow_id,
-            &schema_name,
-        )
+        .get_workspace_catalog_schema(&session.user_id, &workspace_id, &schema_name)
         .map_err(map_workflow_persistence_error)?
         .ok_or_else(|| {
             ApiError::not_found(format!(
-                "Schema `{schema_name}` was not found in workflow `{workflow_id}` for workspace `{workspace_id}`."
+                "Schema `{schema_name}` was not found in workspace `{workspace_id}`."
             ))
         })?;
     Ok(Json(schema))
@@ -1080,11 +1075,10 @@ async fn get_workspace_catalog_schema(
 
 #[utoipa::path(
     get,
-    path = "/api/workspaces/{workspace_id}/catalog/{workflow_id}/schemas/{schema_name}/tables/{table_name}",
+    path = "/api/workspaces/{workspace_id}/catalog/schemas/{schema_name}/tables/{table_name}",
     tag = "Catalog",
     params(
         ("workspace_id" = String, Path, description = "Workspace identifier."),
-        ("workflow_id" = String, Path, description = "Workflow identifier."),
         ("schema_name" = String, Path, description = "DuckDB schema name."),
         ("table_name" = String, Path, description = "DuckDB table name.")
     ),
@@ -1097,39 +1091,27 @@ async fn get_workspace_catalog_schema(
 async fn get_workspace_catalog_table(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path((workspace_id, workflow_id, schema_name, table_name)): Path<(
-        String,
-        String,
-        String,
-        String,
-    )>,
+    Path((workspace_id, schema_name, table_name)): Path<(String, String, String)>,
 ) -> Result<Json<WorkspaceCatalogTableResponse>, ApiError> {
     let session = require_session(&state, &headers)?;
     let table = state
         .platform
-        .get_workspace_catalog_table(
-            &session.user_id,
-            &workspace_id,
-            &workflow_id,
-            &schema_name,
-            &table_name,
-        )
+        .get_workspace_catalog_table(&session.user_id, &workspace_id, &schema_name, &table_name)
         .map_err(map_workflow_persistence_error)?
         .ok_or_else(|| {
             ApiError::not_found(format!(
-                "Table `{schema_name}.{table_name}` was not found in workflow `{workflow_id}` for workspace `{workspace_id}`."
+                "Table `{schema_name}.{table_name}` was not found in workspace `{workspace_id}`."
             ))
-    })?;
+        })?;
     Ok(Json(table))
 }
 
 #[utoipa::path(
     get,
-    path = "/api/workspaces/{workspace_id}/catalog/{workflow_id}/schemas/{schema_name}/tables/{table_name}/delete-preview",
+    path = "/api/workspaces/{workspace_id}/catalog/schemas/{schema_name}/tables/{table_name}/delete-preview",
     tag = "Catalog",
     params(
         ("workspace_id" = String, Path, description = "Workspace identifier."),
-        ("workflow_id" = String, Path, description = "Workflow identifier."),
         ("schema_name" = String, Path, description = "DuckDB schema name."),
         ("table_name" = String, Path, description = "DuckDB table name.")
     ),
@@ -1142,12 +1124,7 @@ async fn get_workspace_catalog_table(
 async fn preview_workspace_catalog_table_delete(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path((workspace_id, workflow_id, schema_name, table_name)): Path<(
-        String,
-        String,
-        String,
-        String,
-    )>,
+    Path((workspace_id, schema_name, table_name)): Path<(String, String, String)>,
 ) -> Result<Json<WorkspaceCatalogDeleteTablePreviewResponse>, ApiError> {
     let session = require_session(&state, &headers)?;
     let preview = state
@@ -1155,14 +1132,13 @@ async fn preview_workspace_catalog_table_delete(
         .preview_workspace_catalog_table_delete(
             &session.user_id,
             &workspace_id,
-            &workflow_id,
             &schema_name,
             &table_name,
         )
         .map_err(map_workflow_persistence_error)?
         .ok_or_else(|| {
             ApiError::not_found(format!(
-                "Table `{schema_name}.{table_name}` was not found in workflow `{workflow_id}` for workspace `{workspace_id}`."
+                "Table `{schema_name}.{table_name}` was not found in workspace `{workspace_id}`."
             ))
         })?;
     Ok(Json(preview))
@@ -1170,11 +1146,10 @@ async fn preview_workspace_catalog_table_delete(
 
 #[utoipa::path(
     delete,
-    path = "/api/workspaces/{workspace_id}/catalog/{workflow_id}/schemas/{schema_name}/tables/{table_name}",
+    path = "/api/workspaces/{workspace_id}/catalog/schemas/{schema_name}/tables/{table_name}",
     tag = "Catalog",
     params(
         ("workspace_id" = String, Path, description = "Workspace identifier."),
-        ("workflow_id" = String, Path, description = "Workflow identifier."),
         ("schema_name" = String, Path, description = "DuckDB schema name."),
         ("table_name" = String, Path, description = "DuckDB table name.")
     ),
@@ -1188,27 +1163,16 @@ async fn preview_workspace_catalog_table_delete(
 async fn delete_workspace_catalog_table(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path((workspace_id, workflow_id, schema_name, table_name)): Path<(
-        String,
-        String,
-        String,
-        String,
-    )>,
+    Path((workspace_id, schema_name, table_name)): Path<(String, String, String)>,
 ) -> Result<Json<WorkspaceCatalogDeleteTableResponse>, ApiError> {
     let session = require_session(&state, &headers)?;
     let response = state
         .platform
-        .delete_workspace_catalog_table(
-            &session.user_id,
-            &workspace_id,
-            &workflow_id,
-            &schema_name,
-            &table_name,
-        )
+        .delete_workspace_catalog_table(&session.user_id, &workspace_id, &schema_name, &table_name)
         .map_err(map_catalog_query_error)?
         .ok_or_else(|| {
             ApiError::not_found(format!(
-                "Table `{schema_name}.{table_name}` was not found in workflow `{workflow_id}` for workspace `{workspace_id}`."
+                "Table `{schema_name}.{table_name}` was not found in workspace `{workspace_id}`."
             ))
         })?;
     Ok(Json(response))
@@ -1216,11 +1180,10 @@ async fn delete_workspace_catalog_table(
 
 #[utoipa::path(
     post,
-    path = "/api/workspaces/{workspace_id}/catalog/{workflow_id}/query",
+    path = "/api/workspaces/{workspace_id}/catalog/query",
     tag = "Catalog",
     params(
-        ("workspace_id" = String, Path, description = "Workspace identifier."),
-        ("workflow_id" = String, Path, description = "Workflow identifier.")
+        ("workspace_id" = String, Path, description = "Workspace identifier.")
     ),
     request_body = WorkspaceCatalogQueryRequest,
     responses(
@@ -1233,24 +1196,15 @@ async fn delete_workspace_catalog_table(
 async fn run_workspace_catalog_query(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path((workspace_id, workflow_id)): Path<(String, String)>,
+    Path(workspace_id): Path<String>,
     Json(request): Json<WorkspaceCatalogQueryRequest>,
 ) -> Result<Json<WorkspaceCatalogQueryResponse>, ApiError> {
     let session = require_session(&state, &headers)?;
     let response = state
         .platform
-        .run_workspace_catalog_query(
-            &session.user_id,
-            &workspace_id,
-            &workflow_id,
-            request.query.as_str(),
-        )
+        .run_workspace_catalog_query(&session.user_id, &workspace_id, request.query.as_str())
         .map_err(map_catalog_query_error)?
-        .ok_or_else(|| {
-            ApiError::not_found(format!(
-                "Workflow `{workflow_id}` was not found for workspace `{workspace_id}`."
-            ))
-        })?;
+        .ok_or_else(|| ApiError::not_found(format!("Workspace `{workspace_id}` was not found.")))?;
     Ok(Json(response))
 }
 
@@ -1340,17 +1294,41 @@ async fn create_workspace_run(
             ))
         })?;
 
-    let workflow_duckdb_path = state
+    let workspace_duckdb_path = state
         .platform
-        .workflow_duckdb_path(
+        .workspace_duckdb_path(&session.user_id, &workspace_id)
+        .map_err(ApiError::internal)?;
+    let workflow_root_path = state
+        .platform
+        .workflow_storage_root_path(
+            &session.user_id,
+            &workspace_id,
+            &request.workflow.workflow_id,
+        )
+        .map_err(ApiError::internal)?;
+    let workflow_files_root = state
+        .platform
+        .workflow_files_root_path(
             &session.user_id,
             &workspace_id,
             &request.workflow.workflow_id,
         )
         .map_err(ApiError::internal)?;
     request.params.insert(
+        INTERNAL_PARAM_WORKSPACE_DUCKDB_PATH.to_string(),
+        Value::String(workspace_duckdb_path.to_string_lossy().to_string()),
+    );
+    request.params.insert(
+        INTERNAL_PARAM_WORKFLOW_ROOT_PATH.to_string(),
+        Value::String(workflow_root_path.to_string_lossy().to_string()),
+    );
+    request.params.insert(
+        INTERNAL_PARAM_WORKFLOW_FILES_ROOT.to_string(),
+        Value::String(workflow_files_root.to_string_lossy().to_string()),
+    );
+    request.params.insert(
         INTERNAL_PARAM_WORKFLOW_DUCKDB_PATH.to_string(),
-        Value::String(workflow_duckdb_path.to_string_lossy().to_string()),
+        Value::String(workspace_duckdb_path.to_string_lossy().to_string()),
     );
 
     hydrate_send_email_runtime_delivery(
@@ -4998,7 +4976,7 @@ mod tests {
             .await
             .expect("body")
             .to_bytes();
-        let created: api_contract::WorkflowResponse =
+        let _created: api_contract::WorkflowResponse =
             serde_json::from_slice(&create_workflow_body).expect("workflow payload");
 
         let catalog_request = Request::builder()
@@ -5033,8 +5011,8 @@ mod tests {
         let table_request = Request::builder()
             .method("GET")
             .uri(format!(
-                "/api/workspaces/{}/catalog/{}/schemas/runs/tables/workflow_runs",
-                workspace.workspace.workspace_id, created.workflow.workflow_id
+                "/api/workspaces/{}/catalog/schemas/runs/tables/workflow_runs",
+                workspace.workspace.workspace_id
             ))
             .header("cookie", &cookie)
             .body(Body::empty())
@@ -5063,8 +5041,8 @@ mod tests {
         let query_request = Request::builder()
             .method("POST")
             .uri(format!(
-                "/api/workspaces/{}/catalog/{}/query",
-                workspace.workspace.workspace_id, created.workflow.workflow_id
+                "/api/workspaces/{}/catalog/query",
+                workspace.workspace.workspace_id
             ))
             .header("content-type", "application/json")
             .header("cookie", &cookie)
@@ -5089,7 +5067,7 @@ mod tests {
             .to_bytes();
         let query: api_contract::WorkspaceCatalogQueryResponse =
             serde_json::from_slice(&query_body).expect("query payload");
-        assert_eq!(query.workflow_id, created.workflow.workflow_id);
+        assert_eq!(query.workflow_id, workspace.workspace.workspace_id);
         assert_eq!(
             query
                 .columns
@@ -5187,14 +5165,14 @@ mod tests {
             .await
             .expect("body")
             .to_bytes();
-        let created: api_contract::WorkflowResponse =
+        let _created: api_contract::WorkflowResponse =
             serde_json::from_slice(&create_workflow_body).expect("workflow payload");
 
         let preview_request = Request::builder()
             .method("GET")
             .uri(format!(
-                "/api/workspaces/{}/catalog/{}/schemas/runs/tables/workflow_runs/delete-preview",
-                workspace.workspace.workspace_id, created.workflow.workflow_id
+                "/api/workspaces/{}/catalog/schemas/runs/tables/workflow_runs/delete-preview",
+                workspace.workspace.workspace_id
             ))
             .header("cookie", &cookie)
             .body(Body::empty())
@@ -5223,8 +5201,8 @@ mod tests {
         let delete_request = Request::builder()
             .method("DELETE")
             .uri(format!(
-                "/api/workspaces/{}/catalog/{}/schemas/runs/tables/workflow_runs",
-                workspace.workspace.workspace_id, created.workflow.workflow_id
+                "/api/workspaces/{}/catalog/schemas/runs/tables/workflow_runs",
+                workspace.workspace.workspace_id
             ))
             .header("cookie", &cookie)
             .body(Body::empty())

@@ -119,32 +119,30 @@ export function getWorkspaceCatalog(workspaceId) {
   return request(`/api/workspaces/${workspaceId}/catalog`);
 }
 
-export function getWorkspaceCatalogSchema(workspaceId, workflowId, schemaName) {
+export function getWorkspaceCatalogSchema(workspaceId, _workflowId, schemaName) {
   return request(
-    `/api/workspaces/${workspaceId}/catalog/${encodeURIComponent(
-      workflowId
-    )}/schemas/${encodeURIComponent(schemaName)}`
+    `/api/workspaces/${workspaceId}/catalog/schemas/${encodeURIComponent(schemaName)}`
   );
 }
 
-export function getWorkspaceCatalogTable(workspaceId, workflowId, schemaName, tableName) {
+export function getWorkspaceCatalogTable(workspaceId, _workflowId, schemaName, tableName) {
   return request(
-    `/api/workspaces/${workspaceId}/catalog/${encodeURIComponent(
-      workflowId
-    )}/schemas/${encodeURIComponent(schemaName)}/tables/${encodeURIComponent(tableName)}`
+    `/api/workspaces/${workspaceId}/catalog/schemas/${encodeURIComponent(
+      schemaName
+    )}/tables/${encodeURIComponent(tableName)}`
   );
 }
 
 export function previewWorkspaceCatalogTableDelete(
   workspaceId,
-  workflowId,
+  _workflowId,
   schemaName,
   tableName
 ) {
   return request(
-    `/api/workspaces/${workspaceId}/catalog/${encodeURIComponent(
-      workflowId
-    )}/schemas/${encodeURIComponent(schemaName)}/tables/${encodeURIComponent(
+    `/api/workspaces/${workspaceId}/catalog/schemas/${encodeURIComponent(
+      schemaName
+    )}/tables/${encodeURIComponent(
       tableName
     )}/delete-preview`
   );
@@ -152,28 +150,25 @@ export function previewWorkspaceCatalogTableDelete(
 
 export function deleteWorkspaceCatalogTable(
   workspaceId,
-  workflowId,
+  _workflowId,
   schemaName,
   tableName
 ) {
   return request(
-    `/api/workspaces/${workspaceId}/catalog/${encodeURIComponent(
-      workflowId
-    )}/schemas/${encodeURIComponent(schemaName)}/tables/${encodeURIComponent(tableName)}`,
+    `/api/workspaces/${workspaceId}/catalog/schemas/${encodeURIComponent(
+      schemaName
+    )}/tables/${encodeURIComponent(tableName)}`,
     {
       method: 'DELETE'
     }
   );
 }
 
-export function runWorkspaceCatalogQuery(workspaceId, workflowId, query) {
-  return request(
-    `/api/workspaces/${workspaceId}/catalog/${encodeURIComponent(workflowId)}/query`,
-    {
-      body: JSON.stringify({ query }),
-      method: 'POST'
-    }
-  );
+export function runWorkspaceCatalogQuery(workspaceId, _workflowId, query) {
+  return request(`/api/workspaces/${workspaceId}/catalog/query`, {
+    body: JSON.stringify({ query }),
+    method: 'POST'
+  });
 }
 
 export function getWorkspaceRuns(workspaceId) {

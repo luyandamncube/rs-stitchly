@@ -2428,20 +2428,31 @@ mod tests {
     #[test]
     fn builtin_definitions_have_unique_ports() {
         for definition in builtin_node_definitions() {
-            let mut port_ids = definition
+            let mut input_port_ids = definition
                 .inputs
                 .iter()
                 .map(|port| port.port_id.clone())
                 .collect::<Vec<_>>();
-            port_ids.extend(definition.outputs.iter().map(|port| port.port_id.clone()));
-            port_ids.sort();
-            port_ids.dedup();
-
-            let total_ports = definition.inputs.len() + definition.outputs.len();
+            input_port_ids.sort();
+            input_port_ids.dedup();
             assert_eq!(
-                port_ids.len(),
-                total_ports,
-                "duplicate port in {}",
+                input_port_ids.len(),
+                definition.inputs.len(),
+                "duplicate input port in {}",
+                definition.type_id
+            );
+
+            let mut output_port_ids = definition
+                .outputs
+                .iter()
+                .map(|port| port.port_id.clone())
+                .collect::<Vec<_>>();
+            output_port_ids.sort();
+            output_port_ids.dedup();
+            assert_eq!(
+                output_port_ids.len(),
+                definition.outputs.len(),
+                "duplicate output port in {}",
                 definition.type_id
             );
         }

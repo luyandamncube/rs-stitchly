@@ -13,6 +13,13 @@ Use this file to capture important product and technical decisions in a compact 
 
 ## Entries
 
+### 2026-06-15 - Workspace data plane should use one DuckDB per workspace
+
+- status: accepted
+- context: per-workflow DuckDB files isolate workflow datasets, which prevents workflows in the same workspace from building on each other's tables and complicates shared catalog behavior.
+- decision: move the analytical data plane to `db/workspace.duckdb` under the workspace root, while keeping workflow definitions and files under per-workflow directories. Compatibility wrappers may temporarily preserve old workflow-DuckDB call sites during migration.
+- consequence: runtime and catalog work should resolve DuckDB through the workspace boundary, and table delete/reference checks need to scan all workflows in the workspace rather than only the workflow that produced a table.
+
 ### 2026-05-27 - Venture evaluation should include sourcing and pre-scoring before full idea scoring
 
 - status: accepted

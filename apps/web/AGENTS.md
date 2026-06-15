@@ -27,7 +27,62 @@
 
 Use `design_lab` to inspect or create static UI studies. Do not add backend calls, production routing, or real persistence to lab samples.
 
-## Validation
+## Frontend Validation Policy
 
-- Run `corepack pnpm --dir apps/web test --run` for behavior changes.
-- Run `corepack pnpm --dir apps/web typecheck` when touching props, API shapes, or shared helpers.
+For changes under `apps/web`, prefer frontend-only validation first.
+
+### Default frontend validation
+
+Run frontend tests for behavior changes:
+
+```bash
+corepack pnpm --dir apps/web test --run
+```
+
+Run frontend typecheck when touching props, API shapes, or shared helpers:
+
+```bash
+corepack pnpm --dir apps/web typecheck
+```
+
+When a narrower Vitest command is available, prefer the narrower command.
+
+### Avoid unnecessary Rust rebuilds
+
+Do not run Rust builds for frontend-only changes unless the change also affects:
+
+- API contracts,
+- backend routes,
+- generated node definitions,
+- runtime execution behavior,
+- workflow schema compatibility,
+- frontend/backend integration that requires a live backend.
+
+### Live app validation
+
+If the frontend needs a live backend, use the project script instead of ad hoc backend commands:
+
+```bash
+scripts/dev_ui_agent.sh restart --no-open
+```
+
+Do not launch separate `cargo check`, `cargo build`, or `cargo test` commands in parallel with the startup script.
+
+### Canvas/workflow areas
+
+For canvas and workflow UI changes, inspect the focused files first:
+
+- `src/App.jsx`
+- `src/components/CanvasWorkspace.jsx`
+- `src/components/WorkflowCanvas.jsx`
+- `src/lib/workflow.js`
+- `src/lib/workflowTemplates.js`
+- `src/lib/workspaceConnectionsSync.js`
+- `src/lib/runSync.js`
+- `src/styles.css`
+
+Prefer nearby tests before broad test runs.
+
+### Reporting validation
+
+If validation is skipped or unavailable, state that explicitly in the handoff. Include the exact command run and the first meaningful error when a command fails.

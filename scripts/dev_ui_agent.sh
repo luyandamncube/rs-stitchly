@@ -30,6 +30,7 @@ NVM_INSTALL_URL="${STITCHLY_NVM_INSTALL_URL:-https://raw.githubusercontent.com/n
 CARGO_BUILD_JOBS="${STITCHLY_CARGO_BUILD_JOBS:-1}"
 CARGO_TOOLCHAIN="${STITCHLY_CARGO_TOOLCHAIN:-nightly}"
 CARGO_USE_NEXT_LOCKFILE_BUMP="${STITCHLY_CARGO_USE_NEXT_LOCKFILE_BUMP:-1}"
+SCCACHE_ENABLED="${STITCHLY_SCCACHE_ENABLED:-1}"
 MIN_NODE_MAJOR="${STITCHLY_MIN_NODE_MAJOR:-18}"
 
 if [[ -f "$BACKEND_ENV_FILE" ]]; then
@@ -70,6 +71,18 @@ Usage:
   scripts/dev_ui_agent.sh status
   scripts/dev_ui_agent.sh open
 
+Backend compile/debug helpers:
+  scripts/dev_ui_agent.sh check [--verbose] [--trace]
+      Run cargo check for runtime_server using the same nightly/lockfile/job defaults.
+  scripts/dev_ui_agent.sh test [TEST_FILTER] [--verbose] [--trace] [-- TEST_ARGS...]
+      Run cargo test for runtime_server. If TEST_FILTER is provided, only matching tests run.
+  scripts/dev_ui_agent.sh timings [--verbose] [--trace]
+      Build runtime_server with --timings and print the cargo timings report directory.
+  scripts/dev_ui_agent.sh build [--verbose] [--trace]
+      Build only the runtime_server stitchly-server binary; does not start services.
+  scripts/dev_ui_agent.sh clear-cargo-lock [--verbose] [--trace]
+      Stop processes currently holding Cargo's build-directory lock, if any.
+
 Environment overrides:
   STITCHLY_SERVER_ADDR       Backend bind address. Default: 127.0.0.1:3000
   STITCHLY_BACKEND_HTTP_URL  Backend HTTP URL for health checks. Default: http://127.0.0.1:3000
@@ -97,6 +110,9 @@ Environment overrides:
                              Rust toolchain used for backend build. Default: nightly
   STITCHLY_CARGO_USE_NEXT_LOCKFILE_BUMP
                              Use -Znext-lockfile-bump for Cargo.lock v4. Default: 1
+  STITCHLY_SCCACHE_ENABLED
+                             Use sccache as RUSTC_WRAPPER when sccache is on PATH.
+                             Default: 1
   STITCHLY_MIN_NODE_MAJOR
                              Minimum Node.js major version for frontend tooling. Default: 18
 EOF
@@ -118,6 +134,21 @@ log_verbose() {
   if verbose_enabled; then
     echo "[verbose] $*"
   fi
+}
+
+enable_sccache_if_available() {
+  if [[ "$SCCACHE_ENABLED" == "0" ]]; then
+    log_verbose "sccache disabled by STITCHLY_SCCACHE_ENABLED=0"
+    return 0
+  fi
+
+  if command_exists sccache; then
+    export RUSTC_WRAPPER="${RUSTC_WRAPPER:-sccache}"
+    log_verbose "Using RUSTC_WRAPPER=$RUSTC_WRAPPER"
+    return 0
+  fi
+
+  log_verbose "sccache not found on PATH; continuing without RUSTC_WRAPPER. Install with: cargo install sccache"
 }
 
 node_major_version() {
@@ -267,10 +298,14 @@ prepare_log_file() {
   : >"$log_file"
 }
 
-ensure_state_paths_writable() {
+ensure_state_dirs_writable() {
   ensure_writable_dir "$PID_DIR"
   ensure_writable_dir "$LOG_DIR"
   ensure_writable_dir "$DOLT_HOME_DIR"
+}
+
+ensure_state_paths_writable() {
+  ensure_state_dirs_writable
 
   prepare_log_file "$BACKEND_LOG_FILE"
   prepare_log_file "$FRONTEND_LOG_FILE"
@@ -519,6 +554,10 @@ ensure_rust_toolchain() {
     echo "[verbose] Backend cargo toolchain: $CARGO_TOOLCHAIN"
     echo "[verbose] Backend cargo build jobs: $CARGO_BUILD_JOBS"
     echo "[verbose] Backend cargo next-lockfile-bump: $CARGO_USE_NEXT_LOCKFILE_BUMP"
+    echo "[verbose] Backend sccache enabled: $SCCACHE_ENABLED"
+    if command_exists sccache; then
+      echo "[verbose] sccache: $(sccache --version 2>/dev/null || echo 'available')"
+    fi
   fi
 }
 
@@ -595,10 +634,9 @@ active_rust_toolchain() {
   fi
 }
 
-cargo_build_backend_binary() {
-  local status
-  local cargo_args=()
+CARGO_BASE_ARGS=()
 
+prepare_backend_cargo_base_args() {
   prefer_rustup_cargo_path
 
   if ! command_exists rustup; then
@@ -612,7 +650,7 @@ cargo_build_backend_binary() {
   echo "Ensuring Rust toolchain is installed: $CARGO_TOOLCHAIN"
   rustup toolchain install "$CARGO_TOOLCHAIN"
 
-  cargo_args=("+$CARGO_TOOLCHAIN")
+  CARGO_BASE_ARGS=("+$CARGO_TOOLCHAIN")
 
   if [[ "$CARGO_USE_NEXT_LOCKFILE_BUMP" != "0" ]]; then
     if [[ "$CARGO_TOOLCHAIN" != nightly* ]]; then
@@ -621,21 +659,110 @@ cargo_build_backend_binary() {
       return 1
     fi
 
-    cargo_args+=("-Znext-lockfile-bump")
+    CARGO_BASE_ARGS+=("-Znext-lockfile-bump")
   fi
 
-  cargo_args+=(
+  enable_sccache_if_available
+}
+
+run_backend_cargo_args() {
+  local cargo_args=("$@")
+
+  echo "Running Cargo command:"
+  echo "  CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS cargo ${cargo_args[*]}"
+
+  run_cargo_command_capture env CARGO_BUILD_JOBS="$CARGO_BUILD_JOBS" cargo "${cargo_args[@]}"
+}
+
+cargo_build_backend_binary() {
+  local status
+  local cargo_args=()
+
+  prepare_backend_cargo_base_args
+
+  cargo_args=(
+    "${CARGO_BASE_ARGS[@]}"
     build
     -j "$CARGO_BUILD_JOBS"
     -p runtime_server
     --bin stitchly-server
   )
 
-  echo "Building backend with:"
-  echo "  CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS cargo ${cargo_args[*]}"
-
-  run_cargo_command_capture env CARGO_BUILD_JOBS="$CARGO_BUILD_JOBS" cargo "${cargo_args[@]}"
+  run_backend_cargo_args "${cargo_args[@]}"
   status=$?
+
+  return "$status"
+}
+
+cargo_check_runtime_server() {
+  local status
+  local cargo_args=()
+
+  prepare_backend_cargo_base_args
+
+  cargo_args=(
+    "${CARGO_BASE_ARGS[@]}"
+    check
+    -j "$CARGO_BUILD_JOBS"
+    -p runtime_server
+  )
+
+  run_backend_cargo_args "${cargo_args[@]}"
+  status=$?
+
+  return "$status"
+}
+
+cargo_test_runtime_server() {
+  local status
+  local cargo_args=()
+  local test_args=("$@")
+
+  prepare_backend_cargo_base_args
+
+  cargo_args=(
+    "${CARGO_BASE_ARGS[@]}"
+    test
+    -j "$CARGO_BUILD_JOBS"
+    -p runtime_server
+  )
+
+  if (( ${#test_args[@]} > 0 )); then
+    cargo_args+=("${test_args[@]}")
+  else
+    echo "No test filter provided; running all runtime_server tests."
+    echo "Tip: pass a test name/filter to keep the feedback loop short."
+  fi
+
+  run_backend_cargo_args "${cargo_args[@]}"
+  status=$?
+
+  return "$status"
+}
+
+cargo_timings_runtime_server() {
+  local status
+  local cargo_args=()
+
+  prepare_backend_cargo_base_args
+
+  cargo_args=(
+    "${CARGO_BASE_ARGS[@]}"
+    build
+    -j "$CARGO_BUILD_JOBS"
+    -p runtime_server
+    --bin stitchly-server
+    --timings
+  )
+
+  run_backend_cargo_args "${cargo_args[@]}"
+  status=$?
+
+  if (( status == 0 )); then
+    echo
+    echo "Cargo timings report directory: $ROOT_DIR/target/cargo-timings"
+    echo "Open the newest .html file in that directory to inspect compile bottlenecks."
+  fi
 
   return "$status"
 }
@@ -1123,6 +1250,144 @@ start_agent() {
   fi
 }
 
+run_backend_build_command() {
+  local invalid_args=()
+  local arg
+
+  for arg in "$@"; do
+    case "$arg" in
+      --verbose|--trace)
+        ;;
+      *)
+        invalid_args+=("$arg")
+        ;;
+    esac
+  done
+
+  if (( ${#invalid_args[@]} > 0 )); then
+    echo "Unknown option(s) for build: ${invalid_args[*]}"
+    usage
+    return 1
+  fi
+
+  ensure_state_dirs_writable
+  ensure_backend_prerequisites
+  clear_cargo_build_lock
+  (
+    cd "$ROOT_DIR"
+    cargo_build_backend_binary
+  )
+}
+
+run_backend_check_command() {
+  local invalid_args=()
+  local arg
+
+  for arg in "$@"; do
+    case "$arg" in
+      --verbose|--trace)
+        ;;
+      *)
+        invalid_args+=("$arg")
+        ;;
+    esac
+  done
+
+  if (( ${#invalid_args[@]} > 0 )); then
+    echo "Unknown option(s) for check: ${invalid_args[*]}"
+    usage
+    return 1
+  fi
+
+  ensure_state_dirs_writable
+  ensure_backend_prerequisites
+  clear_cargo_build_lock
+  (
+    cd "$ROOT_DIR"
+    cargo_check_runtime_server
+  )
+}
+
+run_backend_test_command() {
+  local test_args=()
+  local arg
+
+  for arg in "$@"; do
+    case "$arg" in
+      --verbose|--trace)
+        ;;
+      *)
+        test_args+=("$arg")
+        ;;
+    esac
+  done
+
+  ensure_state_dirs_writable
+  ensure_backend_prerequisites
+  clear_cargo_build_lock
+  (
+    cd "$ROOT_DIR"
+    cargo_test_runtime_server "${test_args[@]}"
+  )
+}
+
+run_backend_timings_command() {
+  local invalid_args=()
+  local arg
+
+  for arg in "$@"; do
+    case "$arg" in
+      --verbose|--trace)
+        ;;
+      *)
+        invalid_args+=("$arg")
+        ;;
+    esac
+  done
+
+  if (( ${#invalid_args[@]} > 0 )); then
+    echo "Unknown option(s) for timings: ${invalid_args[*]}"
+    usage
+    return 1
+  fi
+
+  ensure_state_dirs_writable
+  ensure_backend_prerequisites
+  clear_cargo_build_lock
+  (
+    cd "$ROOT_DIR"
+    cargo_timings_runtime_server
+  )
+}
+
+run_clear_cargo_lock_command() {
+  local invalid_args=()
+  local arg
+
+  for arg in "$@"; do
+    case "$arg" in
+      --verbose|--trace)
+        ;;
+      *)
+        invalid_args+=("$arg")
+        ;;
+    esac
+  done
+
+  if (( ${#invalid_args[@]} > 0 )); then
+    echo "Unknown option(s) for clear-cargo-lock: ${invalid_args[*]}"
+    usage
+    return 1
+  fi
+
+  ensure_state_dirs_writable
+  ensure_tool "lsof" \
+    "Install lsof and rerun this script." \
+    "lsof (Cargo build lock tracking)"
+  clear_cargo_build_lock
+  echo "Cargo build lock cleanup complete."
+}
+
 main() {
   local command=""
   local args=()
@@ -1140,7 +1405,7 @@ main() {
 
   for arg in "$@"; do
     case "$arg" in
-      up|restart|down|status|open)
+      up|restart|down|status|open|build|check|test|timings|clear-cargo-lock)
         if [[ -z "$command" ]]; then
           command="$arg"
         else
@@ -1224,6 +1489,21 @@ main() {
         exit 1
       fi
       open_ui
+      ;;
+    build)
+      run_backend_build_command "${args[@]}"
+      ;;
+    check)
+      run_backend_check_command "${args[@]}"
+      ;;
+    test)
+      run_backend_test_command "${args[@]}"
+      ;;
+    timings)
+      run_backend_timings_command "${args[@]}"
+      ;;
+    clear-cargo-lock)
+      run_clear_cargo_lock_command "${args[@]}"
       ;;
     -h|--help|help)
       usage

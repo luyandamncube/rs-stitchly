@@ -23,7 +23,7 @@ use argon2::{
     Argon2,
 };
 use chrono::{Duration, Utc};
-use duckdb::{config, types::ValueRef, Config, Connection as DuckDbConnection, OptionalExt};
+use duckdb::{types::ValueRef, AccessMode, Config, Connection as DuckDbConnection, OptionalExt};
 use rand_core::OsRng;
 use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
@@ -2906,69 +2906,56 @@ fn normalize_workspace_catalog_query(query: &str) -> anyhow::Result<String> {
     Ok(without_trailing_semicolons.to_string())
 }
 
-fn resolve_duckdb_cli_path() -> PathBuf {
-    env::var("STITCHLY_DUCKDB_CLI_PATH")
-        .ok()
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or_else(|| {
-            let snap_path = PathBuf::from("/snap/duckdb/current/duckdb");
-            if snap_path.is_file() {
-                snap_path
-            } else {
-                PathBuf::from("duckdb")
-            }
-        })
-}
-
-fn run_duckdb_cli_json(database_path: &Path, sql: &str) -> anyhow::Result<String> {
-    let cli_path = resolve_duckdb_cli_path();
-    let output = Command::new(&cli_path)
-        .arg("-readonly")
-        .arg("-json")
-        .arg(database_path)
-        .arg(sql)
-        .output()
-        .with_context(|| format!("failed to launch DuckDB CLI at `{}`", cli_path.display()))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let detail = if !stderr.is_empty() {
-            stderr
-        } else if !stdout.is_empty() {
-            stdout
-        } else {
-            format!("process exited with status {:?}", output.status)
-        };
-
-        let detail = if detail.contains("Out of Memory Error") {
-            format!(
-                "{detail}. Try removing heavy preview columns like *_json, *_payload, error_message, created_at, or updated_at."
-            )
-        } else {
-            detail
-        };
-
-        return Err(anyhow!("DuckDB query failed: {detail}"));
-    }
-
-    String::from_utf8(output.stdout).context("DuckDB CLI returned non-UTF-8 output")
-}
-
 #[derive(serde::Deserialize)]
 struct DuckDbDescribeColumn {
     column_name: String,
     column_type: String,
 }
 
+fn open_catalog_duckdb_read_only(database_path: &Path) -> anyhow::Result<DuckDbConnection> {
+    DuckDbConnection::open_with_flags(
+        database_path,
+        Config::default().access_mode(AccessMode::ReadOnly)?,
+    )
+    .with_context(|| {
+        format!(
+            "failed to open workspace DuckDB for read-only catalog query at `{}`",
+            database_path.display()
+        )
+    })
+}
+
+fn map_duckdb_catalog_query_error(error: duckdb::Error) -> anyhow::Error {
+    let detail = error.to_string();
+    let detail = if detail.contains("Out of Memory Error") {
+        format!(
+            "{detail}. Try removing heavy preview columns like *_json, *_payload, error_message, created_at, or updated_at."
+        )
+    } else {
+        detail
+    };
+
+    anyhow!("DuckDB query failed: {detail}")
+}
+
 fn describe_workspace_catalog_query(
     database_path: &Path,
     query: &str,
 ) -> anyhow::Result<Vec<WorkspaceCatalogQueryColumn>> {
-    let output = run_duckdb_cli_json(database_path, &format!("describe {query}"))?;
-    let describe_rows: Vec<DuckDbDescribeColumn> =
-        serde_json::from_str(&output).context("failed to parse DuckDB query columns")?;
+    let duckdb = open_catalog_duckdb_read_only(database_path)?;
+    let mut statement = duckdb
+        .prepare(&format!("describe {query}"))
+        .map_err(map_duckdb_catalog_query_error)?;
+    let describe_rows = statement
+        .query_map([], |row| {
+            Ok(DuckDbDescribeColumn {
+                column_name: row.get(0)?,
+                column_type: row.get(1)?,
+            })
+        })
+        .map_err(map_duckdb_catalog_query_error)?
+        .collect::<duckdb::Result<Vec<_>>>()
+        .map_err(map_duckdb_catalog_query_error)?;
 
     Ok(describe_rows
         .into_iter()
@@ -2985,39 +2972,51 @@ fn execute_workspace_catalog_query_rows(
     columns: &[WorkspaceCatalogQueryColumn],
 ) -> anyhow::Result<Vec<Vec<Option<String>>>> {
     let capped_query = format!("select * from ({query}) as stitchly_query limit 1000");
-    let output = run_duckdb_cli_json(database_path, &capped_query)?;
-    if output.trim().is_empty() {
-        return Ok(Vec::new());
-    }
-    let json_rows: Vec<serde_json::Value> =
-        serde_json::from_str(&output).context("failed to parse DuckDB query rows")?;
-    let mut rows = Vec::with_capacity(json_rows.len());
+    let duckdb = open_catalog_duckdb_read_only(database_path)?;
+    let mut statement = duckdb
+        .prepare(&capped_query)
+        .map_err(map_duckdb_catalog_query_error)?;
+    let mut query_rows = statement
+        .query([])
+        .map_err(map_duckdb_catalog_query_error)?;
+    let mut rows = Vec::new();
 
-    for row in json_rows {
-        let Some(object) = row.as_object() else {
-            return Err(anyhow!(
-                "DuckDB returned a non-object row in query results."
+    while let Some(row) = query_rows.next().map_err(map_duckdb_catalog_query_error)? {
+        let mut cells = Vec::with_capacity(columns.len());
+        for column_index in 0..columns.len() {
+            cells.push(stringify_catalog_query_cell_ref(
+                row.get_ref(column_index)
+                    .map_err(map_duckdb_catalog_query_error)?,
             ));
-        };
-
-        rows.push(
-            columns
-                .iter()
-                .map(|column| stringify_catalog_query_cell(object.get(&column.column_name)))
-                .collect(),
-        );
+        }
+        rows.push(cells);
     }
 
     Ok(rows)
 }
 
-fn stringify_catalog_query_cell(value: Option<&serde_json::Value>) -> Option<String> {
+fn stringify_catalog_query_cell_ref(value: ValueRef<'_>) -> Option<String> {
     match value {
-        None | Some(serde_json::Value::Null) => None,
-        Some(serde_json::Value::Bool(boolean)) => Some(boolean.to_string()),
-        Some(serde_json::Value::Number(number)) => Some(number.to_string()),
-        Some(serde_json::Value::String(string)) => Some(string.clone()),
-        Some(other) => Some(other.to_string()),
+        ValueRef::Null => None,
+        ValueRef::Boolean(value) => Some(value.to_string()),
+        ValueRef::TinyInt(value) => Some(value.to_string()),
+        ValueRef::SmallInt(value) => Some(value.to_string()),
+        ValueRef::Int(value) => Some(value.to_string()),
+        ValueRef::BigInt(value) => Some(value.to_string()),
+        ValueRef::HugeInt(value) => Some(value.to_string()),
+        ValueRef::UTinyInt(value) => Some(value.to_string()),
+        ValueRef::USmallInt(value) => Some(value.to_string()),
+        ValueRef::UInt(value) => Some(value.to_string()),
+        ValueRef::UBigInt(value) => Some(value.to_string()),
+        ValueRef::Float(value) => Some(value.to_string()),
+        ValueRef::Double(value) => Some(value.to_string()),
+        ValueRef::Decimal(value) => Some(value.to_string()),
+        ValueRef::Timestamp(_, value) => Some(value.to_string()),
+        ValueRef::Text(value) => Some(String::from_utf8_lossy(value).to_string()),
+        ValueRef::Blob(value) => Some(format!("<{} bytes>", value.len())),
+        ValueRef::Date32(value) => Some(value.to_string()),
+        ValueRef::Time64(_, value) => Some(value.to_string()),
+        other => Some(format!("{other:?}")),
     }
 }
 
@@ -4965,7 +4964,7 @@ fn hash_password(password: &str) -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::Path, process::Command};
+    use std::{fs, path::Path};
 
     use api_contract::{
         NodeRunSnapshot, NodeRunStatus, RunErrorCategory, RunErrorSummary, RunSnapshot, RunStatus,
@@ -4977,8 +4976,8 @@ mod tests {
 
     use super::{
         cleanup_legacy_workflow_duckdb_file, initialize_workflow_duckdb,
-        normalize_workspace_catalog_query, resolve_duckdb_cli_path, unique_test_storage_root,
-        GoogleConnectionTokens, GoogleIdentityProfile, PlatformStore, WORKFLOW_DUCKDB_FILE_NAME,
+        normalize_workspace_catalog_query, unique_test_storage_root, GoogleConnectionTokens,
+        GoogleIdentityProfile, PlatformStore, WORKFLOW_DUCKDB_FILE_NAME,
         WORKSPACE_DUCKDB_FILE_NAME, WORKSPACE_DUCKDB_RUN_SYNC_ENABLED_TEST_OVERRIDE,
     };
     use workflow_schema::{
@@ -5800,15 +5799,6 @@ mod tests {
 
     #[test]
     fn workspace_catalog_query_runs_against_table_preview_with_row_cap() {
-        if Command::new(resolve_duckdb_cli_path())
-            .arg("--version")
-            .output()
-            .is_err()
-        {
-            eprintln!("skipping catalog query test because the DuckDB CLI is unavailable");
-            return;
-        }
-
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
             .create_workspace("usr_builder", "Catalog Query Workspace")

@@ -49,11 +49,107 @@ Update the decision log only when a durable product or architecture direction ch
 - Prefer existing local patterns over new abstractions.
 - Do not edit generated fixtures or docs unless the contract change requires it.
 
-## Validation
+## Build and Validation
 
-- Frontend tests: `corepack pnpm --dir apps/web test --run`
-- Frontend typecheck: `corepack pnpm --dir apps/web typecheck`
-- Rust tests: `cargo test --workspace`
-- Dev UI stack: `npm run dev:ui:no-open`
+Stitchly has expensive Rust dependencies, including DuckDB-backed paths. Validation must be cheap, sequential, and targeted.
 
-If validation is skipped or unavailable, state that explicitly in the handoff.
+### Use the project script first
+
+Prefer the project startup/debug script over ad hoc Cargo commands:
+
+```bash
+scripts/dev_ui_agent.sh check
+scripts/dev_ui_agent.sh test <test-name>
+scripts/dev_ui_agent.sh build
+scripts/dev_ui_agent.sh timings
+scripts/dev_ui_agent.sh restart --no-open
+```
+
+The backend compile path is intentionally WSL-safe and low-memory:
+
+```bash
+CARGO_BUILD_JOBS=1 cargo +nightly -Znext-lockfile-bump ... -j 1
+```
+
+Preserve this behavior unless the user explicitly asks to tune build parallelism.
+
+### One Cargo command at a time
+
+Never run multiple Cargo commands concurrently in this repo. Do not start `cargo check`, `cargo build`, and `cargo test` at the same time. Cargo target-dir lock contention is expensive here and can make debugging much slower.
+
+Before starting a long Rust validation, check whether another Cargo command is already running. If one is active, do not start another command. Wait for the current command, cancel the redundant command, or tell the user validation is blocked by the existing process.
+
+### Do not bypass lock contention with temporary target dirs
+
+Avoid commands like this unless the user explicitly asks for isolated builds:
+
+```bash
+CARGO_TARGET_DIR=/tmp/stitchly-runtime-server-check cargo check -p runtime_server
+```
+
+Using a temporary target dir may avoid a lock, but it creates a separate cache and can duplicate expensive dependency work.
+
+### Validation ladder
+
+Use the cheapest validation that proves the change.
+
+1. For frontend-only changes under `apps/web`, run frontend tests first:
+
+   ```bash
+   corepack pnpm --dir apps/web test --run
+   ```
+
+2. Run frontend typecheck when touching props, API shapes, or shared helpers:
+
+   ```bash
+   corepack pnpm --dir apps/web typecheck
+   ```
+
+3. For Rust-only changes, run:
+
+   ```bash
+   scripts/dev_ui_agent.sh check
+   ```
+
+4. If a specific Rust test is relevant, run:
+
+   ```bash
+   scripts/dev_ui_agent.sh test <test-name>
+   ```
+
+5. Only build the backend binary when a binary is required:
+
+   ```bash
+   scripts/dev_ui_agent.sh build
+   ```
+
+6. Only restart the live app when runtime behavior must be exercised:
+
+   ```bash
+   scripts/dev_ui_agent.sh restart --no-open
+   ```
+
+7. Only run broad Rust tests when the user explicitly asks or the change is risky enough to justify it:
+
+   ```bash
+   cargo test --workspace
+   ```
+
+### Dev UI stack
+
+For normal app startup, prefer:
+
+```bash
+scripts/dev_ui_agent.sh restart --no-open
+```
+
+Use `npm run dev:ui:no-open` only when explicitly validating the package-script path.
+
+### Reporting validation
+
+When reporting validation results, include:
+
+- the exact command run,
+- whether it passed or failed,
+- the first meaningful error if it failed,
+- any skipped validation and why it was skipped.

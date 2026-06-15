@@ -434,18 +434,22 @@ function catalogWorkspaceLabel(catalog) {
 }
 
 function catalogWorkflowLabel(catalog) {
-  return catalog.workflow_name ?? catalog.workflow_id ?? catalog.workflowId ?? 'workspace';
+  return catalog.workflow_id ?? catalog.workflowId ?? catalog.workflow_name ?? 'workflow';
 }
 
 function formatCatalogDatabaseLabel(catalog) {
-  return catalogWorkspaceLabel(catalog);
+  return [
+    catalogWorkspaceLabel(catalog),
+    catalogWorkflowLabel(catalog),
+    catalog.database_name
+  ].join(' · ');
 }
 
 function buildCatalogTableDeleteWarning(preview) {
   const lines = [
     `Delete table "${preview.schema_name}.${preview.table_name}" from ${preview.workflow_name}?`,
     '',
-    'This removes the table from the workspace DuckDB catalog.'
+    'This removes the table from the workflow DuckDB catalog.'
   ];
 
   if (preview.affected_workflows?.length) {
@@ -585,6 +589,7 @@ function AppRoutes({
 }) {
   return (
     <Routes>
+      <Route path="/" element={<Navigate replace to={getDefaultAppPath(session)} />} />
       <Route
         path="/login"
         element={
@@ -3279,7 +3284,7 @@ function CanvasDataPanel({ activeWorkspace, workspaces = [] }) {
     .filter((catalog) => catalog.isVisible);
   const editorScopeLabel = selectedCatalog
     ? formatCatalogDatabaseLabel(selectedCatalog)
-    : 'Select a workspace catalog';
+    : 'Select a workflow catalog';
   const isSampleDataEnabled = selection?.kind === 'table';
   const isQueryRunning = queryState.status === 'loading';
   const editorLines = editorLineNumbers(editorQuery);
@@ -3638,7 +3643,7 @@ function CanvasDataPanel({ activeWorkspace, workspaces = [] }) {
               <div className="canvas-data-panel__tree-empty">
                 {normalizedTreeQuery
                   ? 'No matching objects in this workspace catalog.'
-                  : 'No workspace DuckDB catalog is available yet.'}
+                  : 'No workflow DuckDB catalogs are available yet.'}
               </div>
             ) : null}
           </div>

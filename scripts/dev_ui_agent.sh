@@ -22,6 +22,15 @@ UI_PORT="${STITCHLY_UI_PORT:-5173}"
 BACKEND_ENV_FILE="$ROOT_DIR/.env.server"
 AUTO_INSTALL_PREREQS="${STITCHLY_AUTO_INSTALL_PREREQS:-1}"
 DOLT_LINUX_INSTALL_URL="${STITCHLY_DOLT_LINUX_INSTALL_URL:-https://github.com/dolthub/dolt/releases/latest/download/install.sh}"
+NVM_INSTALL_URL="${STITCHLY_NVM_INSTALL_URL:-https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh}"
+
+# Rust build defaults.
+# These mirror the WSL-safe command that successfully compiled the backend:
+#   CARGO_BUILD_JOBS=1 cargo +nightly -Znext-lockfile-bump build -j 1 -p runtime_server --bin stitchly-server
+CARGO_BUILD_JOBS="${STITCHLY_CARGO_BUILD_JOBS:-1}"
+CARGO_TOOLCHAIN="${STITCHLY_CARGO_TOOLCHAIN:-nightly}"
+CARGO_USE_NEXT_LOCKFILE_BUMP="${STITCHLY_CARGO_USE_NEXT_LOCKFILE_BUMP:-1}"
+MIN_NODE_MAJOR="${STITCHLY_MIN_NODE_MAJOR:-18}"
 
 if [[ -f "$BACKEND_ENV_FILE" ]]; then
   set -a
@@ -69,6 +78,7 @@ Environment overrides:
   STITCHLY_UI_HTTP_URL       Frontend URL for health checks and browser open. Default: http://127.0.0.1:5173
   STITCHLY_AUTO_INSTALL_PREREQS
                              Best-effort install missing Unix prerequisites before startup.
+                             Installs curl, lsof, Node/npm via nvm, corepack, Rust/Cargo, and dolt where supported.
                              Default: 1
   STITCHLY_VERBOSE           Stream startup progress and backend build output to the terminal.
                              Default: 0
@@ -79,6 +89,16 @@ Environment overrides:
                              Default: 60
   STITCHLY_DOLT_LINUX_INSTALL_URL
                              Override the official Dolt Linux install script URL.
+  STITCHLY_NVM_INSTALL_URL
+                             Override the official nvm install script URL.
+  STITCHLY_CARGO_BUILD_JOBS
+                             Cargo parallel build jobs. Default: 1
+  STITCHLY_CARGO_TOOLCHAIN
+                             Rust toolchain used for backend build. Default: nightly
+  STITCHLY_CARGO_USE_NEXT_LOCKFILE_BUMP
+                             Use -Znext-lockfile-bump for Cargo.lock v4. Default: 1
+  STITCHLY_MIN_NODE_MAJOR
+                             Minimum Node.js major version for frontend tooling. Default: 18
 EOF
 }
 
@@ -98,6 +118,162 @@ log_verbose() {
   if verbose_enabled; then
     echo "[verbose] $*"
   fi
+}
+
+node_major_version() {
+  node -p 'Number(process.versions.node.split(".")[0])' 2>/dev/null
+}
+
+source_nvm() {
+  export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+
+  if [[ -s "$NVM_DIR/nvm.sh" ]]; then
+    # shellcheck disable=SC1090
+    source "$NVM_DIR/nvm.sh"
+    return 0
+  fi
+
+  return 1
+}
+
+install_node_lts_with_nvm() {
+  if ! command_exists curl; then
+    install_unix_package curl
+  fi
+
+  if ! source_nvm; then
+    echo "Installing nvm..."
+    curl -o- "$NVM_INSTALL_URL" | bash
+    if ! source_nvm; then
+      echo "nvm was installed but could not be loaded in this shell."
+      echo "Open a new shell or source ~/.nvm/nvm.sh, then rerun this script."
+      return 1
+    fi
+  fi
+
+  if ! declare -F nvm >/dev/null 2>&1; then
+    echo "nvm was installed but could not be loaded in this shell."
+    echo "Open a new shell or source ~/.nvm/nvm.sh, then rerun this script."
+    return 1
+  fi
+
+  echo "Installing Node.js LTS with nvm..."
+  nvm install --lts
+  nvm use --lts
+  nvm alias default 'lts/*' >/dev/null 2>&1 || true
+  hash -r 2>/dev/null || true
+
+  command_exists node && command_exists npm
+}
+
+ensure_node_version() {
+  local node_version
+  local node_major
+
+  node_version="$(node --version 2>/dev/null || true)"
+  node_major="$(node_major_version || true)"
+
+  if [[ -z "$node_major" || ! "$node_major" =~ ^[0-9]+$ ]]; then
+    echo "Could not determine Node.js version."
+    if auto_install_enabled; then
+      echo "Attempting to install Node.js LTS with nvm..."
+      install_node_lts_with_nvm
+      node_major="$(node_major_version || true)"
+      node_version="$(node --version 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$node_major" || ! "$node_major" =~ ^[0-9]+$ ]]; then
+      echo "Install Node.js $MIN_NODE_MAJOR or newer, then rerun this script."
+      return 1
+    fi
+  fi
+
+  if (( node_major < MIN_NODE_MAJOR )); then
+    echo "Node.js $node_version is too old for this frontend toolchain."
+    echo "Corepack and Vite require Node.js $MIN_NODE_MAJOR or newer."
+    echo
+    if auto_install_enabled; then
+      echo "Attempting to install Node.js LTS with nvm..."
+      install_node_lts_with_nvm
+      node_major="$(node_major_version || true)"
+      node_version="$(node --version 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$node_major" || ! "$node_major" =~ ^[0-9]+$ || "$node_major" -lt "$MIN_NODE_MAJOR" ]]; then
+      echo "Install a newer Node.js in this environment, then rerun this script."
+      echo "Recommended options:"
+      echo "  nvm install --lts && nvm use --lts"
+      echo "  or install Node.js from https://nodejs.org/"
+      return 1
+    fi
+  fi
+
+  if verbose_enabled; then
+    echo "[verbose] Node: $node_version"
+  fi
+}
+
+ensure_corepack_available() {
+  local corepack_version
+
+  set +e
+  corepack_version="$(corepack --version 2>&1)"
+  local status=$?
+  set -e
+
+  if (( status != 0 )); then
+    echo "Corepack is installed but cannot run with the current Node.js runtime."
+    echo
+    echo "$corepack_version"
+    echo
+    echo "Install Node.js $MIN_NODE_MAJOR or newer, then rerun this script."
+    return "$status"
+  fi
+
+  if verbose_enabled; then
+    echo "[verbose] Corepack: $corepack_version"
+  fi
+}
+
+ensure_writable_dir() {
+  local dir="$1"
+
+  mkdir -p "$dir"
+
+  if [[ ! -w "$dir" ]]; then
+    echo "Directory is not writable: $dir"
+    echo
+    echo "Fix ownership from the repo root with:"
+    echo "  sudo chown -R \"\$(id -u):\$(id -g)\" \"$STATE_DIR\""
+    return 1
+  fi
+}
+
+prepare_log_file() {
+  local log_file="$1"
+  local log_dir
+
+  log_dir="$(dirname "$log_file")"
+  ensure_writable_dir "$log_dir"
+
+  if [[ -e "$log_file" && ! -w "$log_file" ]]; then
+    echo "Log file is not writable: $log_file"
+    echo
+    echo "Fix ownership from the repo root with:"
+    echo "  sudo chown -R \"\$(id -u):\$(id -g)\" \"$STATE_DIR\""
+    return 1
+  fi
+
+  : >"$log_file"
+}
+
+ensure_state_paths_writable() {
+  ensure_writable_dir "$PID_DIR"
+  ensure_writable_dir "$LOG_DIR"
+  ensure_writable_dir "$DOLT_HOME_DIR"
+
+  prepare_log_file "$BACKEND_LOG_FILE"
+  prepare_log_file "$FRONTEND_LOG_FILE"
 }
 
 start_verbose_heartbeat() {
@@ -141,14 +317,25 @@ run_with_log_capture() {
   shift 2
   local heartbeat_pid=""
 
+  prepare_log_file "$log_file"
+
   if verbose_enabled; then
     heartbeat_pid="$(start_verbose_heartbeat "$label" "$log_file" "$VERBOSE_HEARTBEAT_SECONDS")"
+
     set +e
     "$@" 2>&1 | tee "$log_file"
-    local command_status="${PIPESTATUS[0]}"
+    local pipe_status=("${PIPESTATUS[@]}")
     set -e
+
     stop_verbose_heartbeat "$heartbeat_pid"
-    return "$command_status"
+    heartbeat_pid=""
+
+    if (( pipe_status[1] != 0 )); then
+      echo "$label logging failed while writing to: $log_file"
+      return "${pipe_status[1]}"
+    fi
+
+    return "${pipe_status[0]}"
   else
     "$@" >"$log_file" 2>&1
   fi
@@ -208,31 +395,6 @@ install_dolt_official_linux() {
   run_with_privilege bash -lc "curl -L \"$install_url\" | bash"
 }
 
-try_install_tool() {
-  local tool="$1"
-
-  case "$tool" in
-    curl|lsof)
-      install_unix_package "$tool"
-      ;;
-    dolt)
-      install_dolt_official_linux
-      ;;
-    corepack)
-      if command_exists npm; then
-        npm install -g corepack
-        corepack enable >/dev/null 2>&1 || true
-      else
-        echo "npm is not available, so corepack could not be installed automatically."
-        return 1
-      fi
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
-
 ensure_tool() {
   local tool="$1"
   local install_hint="$2"
@@ -258,6 +420,108 @@ ensure_tool() {
   return 1
 }
 
+install_rustup_stable() {
+  if ! command_exists curl; then
+    install_unix_package curl
+  fi
+
+  if [[ -d "$HOME/.cargo/bin" ]]; then
+    export PATH="$HOME/.cargo/bin:$PATH"
+    hash -r 2>/dev/null || true
+  fi
+
+  if command_exists rustup; then
+    rustup toolchain install stable
+    rustup default stable
+    return 0
+  fi
+
+  echo "Installing Rust toolchain with rustup..."
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+    sh -s -- -y --profile minimal --default-toolchain stable
+
+  # Make cargo/rustup available inside this running script.
+  if [[ -f "$HOME/.cargo/env" ]]; then
+    # shellcheck disable=SC1090
+    source "$HOME/.cargo/env"
+  fi
+
+  export PATH="$HOME/.cargo/bin:$PATH"
+  hash -r 2>/dev/null || true
+
+  command_exists cargo
+}
+
+prefer_rustup_cargo_path() {
+  if [[ -d "$HOME/.cargo/bin" ]]; then
+    export PATH="$HOME/.cargo/bin:$PATH"
+    hash -r 2>/dev/null || true
+  fi
+}
+
+cargo_output_is_lockfile_v4_error() {
+  local output="$1"
+
+  grep -Eiq \
+    'lock file version[[:space:]]+`?4`?|lock file version 4 requires|next-lockfile-bump' \
+    <<<"$output"
+}
+
+try_install_tool() {
+  local tool="$1"
+
+  case "$tool" in
+    curl|lsof|npm)
+      install_unix_package "$tool"
+      ;;
+    cargo|rustup)
+      install_rustup_stable
+      ;;
+    node)
+      install_node_lts_with_nvm
+      ;;
+    dolt)
+      install_dolt_official_linux
+      ;;
+    corepack)
+      if command_exists npm; then
+        npm install -g corepack
+        corepack enable >/dev/null 2>&1 || true
+      else
+        echo "npm is not available, so corepack could not be installed automatically."
+        return 1
+      fi
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+ensure_rust_toolchain() {
+  prefer_rustup_cargo_path
+
+  ensure_tool "cargo" \
+    "Install the Rust toolchain with rustup and rerun this script." \
+    "cargo (Rust backend build)"
+
+  prefer_rustup_cargo_path
+
+  if verbose_enabled; then
+    echo "[verbose] Cargo: $(cargo --version 2>/dev/null || echo 'not available')"
+    if command_exists rustup; then
+      local rustup_version
+      rustup_version="$(rustup --version 2>/dev/null || true)"
+      rustup_version="${rustup_version%%$'\n'*}"
+      echo "[verbose] Rustup: ${rustup_version:-not available}"
+      echo "[verbose] Active Rust toolchain: $(rustup show active-toolchain 2>/dev/null || echo 'not available')"
+    fi
+    echo "[verbose] Backend cargo toolchain: $CARGO_TOOLCHAIN"
+    echo "[verbose] Backend cargo build jobs: $CARGO_BUILD_JOBS"
+    echo "[verbose] Backend cargo next-lockfile-bump: $CARGO_USE_NEXT_LOCKFILE_BUMP"
+  fi
+}
+
 ensure_backend_prerequisites() {
   ensure_tool "curl" \
     "Install curl and rerun this script." \
@@ -265,21 +529,115 @@ ensure_backend_prerequisites() {
   ensure_tool "lsof" \
     "Install lsof and rerun this script." \
     "lsof (backend port tracking)"
-  ensure_tool "cargo" \
-    "Install the Rust toolchain with rustup and rerun this script." \
-    "cargo (Rust backend build)"
+  ensure_rust_toolchain
 }
 
 ensure_frontend_prerequisites() {
+  if ! command_exists node; then
+    ensure_tool "node" \
+      "Install Node.js $MIN_NODE_MAJOR or newer and rerun this script." \
+      "node (frontend runtime)"
+  else
+    source_nvm >/dev/null 2>&1 || true
+  fi
+  ensure_node_version
+  ensure_tool "npm" \
+    "Install Node.js/npm and rerun this script." \
+    "npm (frontend package tooling)"
   ensure_tool "corepack" \
     "Install Node.js with corepack support, or make corepack available on PATH, then rerun this script." \
     "corepack (frontend package runner)"
+  ensure_corepack_available
   corepack enable >/dev/null 2>&1 || true
 }
 
 ensure_prerequisites() {
   ensure_backend_prerequisites
   ensure_frontend_prerequisites
+}
+
+frontend_dependencies_installed() {
+  [[ -x "$ROOT_DIR/apps/web/node_modules/.bin/vite" ]] || [[ -x "$ROOT_DIR/node_modules/.bin/vite" ]]
+}
+
+ensure_frontend_dependencies() {
+  if frontend_dependencies_installed; then
+    return 0
+  fi
+
+  echo "Installing frontend dependencies with pnpm..."
+  (
+    cd "$ROOT_DIR"
+    run_with_log_capture "Frontend dependency install" "$FRONTEND_LOG_FILE" corepack pnpm install --frozen-lockfile
+  )
+}
+
+CARGO_LAST_OUTPUT=""
+
+run_cargo_command_capture() {
+  local tmp_file
+  tmp_file="$(mktemp)"
+
+  set +e
+  "$@" 2>&1 | tee "$tmp_file"
+  local pipe_status=("${PIPESTATUS[@]}")
+  set -e
+
+  CARGO_LAST_OUTPUT="$(cat "$tmp_file")"
+  rm -f "$tmp_file"
+
+  return "${pipe_status[0]}"
+}
+
+active_rust_toolchain() {
+  if command_exists rustup; then
+    rustup show active-toolchain 2>/dev/null | awk '{print $1}' || true
+  fi
+}
+
+cargo_build_backend_binary() {
+  local status
+  local cargo_args=()
+
+  prefer_rustup_cargo_path
+
+  if ! command_exists rustup; then
+    echo "rustup is required because this project currently needs cargo +nightly -Znext-lockfile-bump."
+    echo "Install Rust with rustup, then rerun:"
+    echo "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+    echo "  source ~/.cargo/env"
+    return 1
+  fi
+
+  echo "Ensuring Rust toolchain is installed: $CARGO_TOOLCHAIN"
+  rustup toolchain install "$CARGO_TOOLCHAIN"
+
+  cargo_args=("+$CARGO_TOOLCHAIN")
+
+  if [[ "$CARGO_USE_NEXT_LOCKFILE_BUMP" != "0" ]]; then
+    if [[ "$CARGO_TOOLCHAIN" != nightly* ]]; then
+      echo "STITCHLY_CARGO_USE_NEXT_LOCKFILE_BUMP=1 requires a nightly toolchain."
+      echo "Current STITCHLY_CARGO_TOOLCHAIN: $CARGO_TOOLCHAIN"
+      return 1
+    fi
+
+    cargo_args+=("-Znext-lockfile-bump")
+  fi
+
+  cargo_args+=(
+    build
+    -j "$CARGO_BUILD_JOBS"
+    -p runtime_server
+    --bin stitchly-server
+  )
+
+  echo "Building backend with:"
+  echo "  CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS cargo ${cargo_args[*]}"
+
+  run_cargo_command_capture env CARGO_BUILD_JOBS="$CARGO_BUILD_JOBS" cargo "${cargo_args[@]}"
+  status=$?
+
+  return "$status"
 }
 
 dolt_diagnostics_endpoint() {
@@ -573,7 +931,7 @@ start_backend() {
   clear_cargo_build_lock
   (
     cd "$ROOT_DIR"
-    run_with_log_capture "Backend build" "$BACKEND_LOG_FILE" cargo build -p runtime_server --bin stitchly-server
+    run_with_log_capture "Backend build" "$BACKEND_LOG_FILE" cargo_build_backend_binary
   )
   (
     cd "$ROOT_DIR"
@@ -600,6 +958,8 @@ start_frontend() {
     wait_for_ready "Frontend" frontend_ready "$FRONTEND_LOG_FILE" "$FRONTEND_PID_FILE"
     return 0
   fi
+
+  ensure_frontend_dependencies
 
   echo "Starting frontend on $UI_BIND_HOST:$UI_PORT"
   log_verbose "Frontend log: $FRONTEND_LOG_FILE"
@@ -743,6 +1103,7 @@ start_agent() {
     echo "[verbose] State directory: $STATE_DIR"
   fi
 
+  ensure_state_paths_writable
   ensure_prerequisites
   start_backend
   ensure_dolt_via_api

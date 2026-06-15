@@ -2027,7 +2027,7 @@ fn execute_dolt_diff_export(
 
 fn managed_workflow_root_from_context(context: &AdapterExecutionContext) -> Option<PathBuf> {
     if let Some(root) = context.workflow_root_path.as_ref() {
-        return Some(root.clone());
+        return Some(absolutize_runtime_path(root));
     }
 
     let workflow_duckdb_path = context.workflow_duckdb_path.as_ref()?;
@@ -2036,7 +2036,7 @@ fn managed_workflow_root_from_context(context: &AdapterExecutionContext) -> Opti
     let db_dir_name = db_dir.file_name()?.to_str()?;
 
     if file_name.eq_ignore_ascii_case("workflow.duckdb") && db_dir_name == "db" {
-        db_dir.parent().map(Path::to_path_buf)
+        db_dir.parent().map(absolutize_runtime_path)
     } else {
         None
     }
@@ -2048,7 +2048,7 @@ fn workflow_root_from_context(context: &AdapterExecutionContext) -> Option<PathB
             .workflow_duckdb_path
             .as_ref()
             .and_then(|path| path.parent())
-            .map(Path::to_path_buf)
+            .map(absolutize_runtime_path)
     })
 }
 
@@ -2056,7 +2056,18 @@ fn workflow_files_root_from_context(context: &AdapterExecutionContext) -> Option
     context
         .workflow_files_root
         .clone()
+        .map(|path| absolutize_runtime_path(&path))
         .or_else(|| workflow_root_from_context(context).map(|root| root.join("files")))
+}
+
+fn absolutize_runtime_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+
+    env::current_dir()
+        .map(|current_dir| current_dir.join(path))
+        .unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn runtime_duckdb_path_from_context(context: &AdapterExecutionContext) -> Option<&Path> {
@@ -7212,6 +7223,23 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&workflow_root);
+    }
+
+    #[test]
+    fn workflow_files_root_from_relative_context_is_absolute() {
+        let context = AdapterExecutionContext {
+            workflow_root_path: Some(PathBuf::from(
+                ".stitchly/users/usr_test/workspaces/ws_test/workflows/wf_test",
+            )),
+            ..AdapterExecutionContext::default()
+        };
+
+        let files_root =
+            workflow_files_root_from_context(&context).expect("workflow files root should resolve");
+
+        assert!(files_root.is_absolute());
+        assert!(files_root
+            .ends_with(".stitchly/users/usr_test/workspaces/ws_test/workflows/wf_test/files"));
     }
 
     #[test]

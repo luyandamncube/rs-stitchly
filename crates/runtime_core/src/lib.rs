@@ -1,5 +1,7 @@
 use std::{
+    any::Any,
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
+    panic::{catch_unwind, AssertUnwindSafe},
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -34,6 +36,17 @@ pub struct RuntimeService {
 
 pub const INTERNAL_PARAM_WORKFLOW_DUCKDB_PATH: &str = "__workflow_duckdb_path";
 pub const INTERNAL_PARAM_DISABLE_LIVE_DOLT: &str = "__disable_live_dolt";
+
+fn panic_payload_to_string(payload: Box<dyn Any + Send + 'static>) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        return (*message).to_string();
+    }
+    if let Some(message) = payload.downcast_ref::<String>() {
+        return message.clone();
+    }
+
+    "non-string panic payload".to_string()
+}
 
 struct RuntimeState {
     runs: HashMap<String, Arc<RunRecord>>,
@@ -604,7 +617,23 @@ impl RuntimeService {
                 let node = node.clone();
                 let inputs = inputs.clone();
                 task::spawn_blocking(move || {
-                    adapters.execute_with_context(&definition, &node, &inputs, &execution_context)
+                    catch_unwind(AssertUnwindSafe(|| {
+                        adapters.execute_with_context(
+                            &definition,
+                            &node,
+                            &inputs,
+                            &execution_context,
+                        )
+                    }))
+                    .unwrap_or_else(|payload| {
+                        Err(AdapterError::ExecutionFailed {
+                            node_id: node.node_id.clone(),
+                            message: format!(
+                                "adapter panicked: {}",
+                                panic_payload_to_string(payload)
+                            ),
+                        })
+                    })
                 })
             };
             let cancellation = record.cancellation_notify.notified();

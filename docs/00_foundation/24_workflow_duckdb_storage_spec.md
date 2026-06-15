@@ -230,9 +230,9 @@ Phase 4 adds the first concrete workflow-local run mirror tables.
 
 Current implementation note:
 - workflow-local run mirroring is feature-flagged behind `STITCHLY_ENABLE_WORKFLOW_RUN_DUCKDB_SYNC`
-- the default is `enabled`
+- the default is `disabled`
 - canonical run history remains the control-plane store in SQLite
-- set `STITCHLY_ENABLE_WORKFLOW_RUN_DUCKDB_SYNC=0` to disable local DuckDB mirroring if needed during debugging
+- set `STITCHLY_ENABLE_WORKFLOW_RUN_DUCKDB_SYNC=1` to enable local DuckDB mirroring during debugging or focused development
 
 ### `runs.workflow_runs`
 
@@ -312,7 +312,7 @@ create schema if not exists tables;
 create schema if not exists outputs;
 
 create table if not exists runs.workflow_runs (
-  run_id varchar primary key,
+  run_id varchar not null,
   workspace_id varchar not null,
   workflow_id varchar not null,
   workflow_version integer not null,
@@ -346,8 +346,7 @@ create table if not exists runs.node_runs (
   error_message varchar,
   last_output_json text,
   created_at varchar not null,
-  updated_at varchar not null,
-  primary key (run_id, node_id)
+  updated_at varchar not null
 );
 
 create table if not exists outputs.node_outputs (
@@ -356,10 +355,11 @@ create table if not exists outputs.node_outputs (
   output_data_type varchar not null,
   output_json text not null,
   output_text_preview varchar,
-  produced_at varchar not null,
-  primary key (run_id, node_id)
+  produced_at varchar not null
 );
 ```
+
+The mirror tables intentionally avoid DuckDB primary-key indexes. Run history remains canonical in SQLite, and the mirror writer maintains idempotency with delete-then-insert semantics so damaged mirror indexes can be rebuilt without touching workflow staging or durable tables.
 
 Optional later additions such as metadata tables should still wait until needed.
 

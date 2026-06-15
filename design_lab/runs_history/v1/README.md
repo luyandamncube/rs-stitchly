@@ -12,6 +12,8 @@ Current studies:
 
 - `00_runs_window/`
   First pass for a canvas-triggered run-history popup with list filters, KPI summaries, and a compact runs table.
+- `01_run_detail_submenu/`
+  Selected-run detail submenu using the same popup shell, with run facts, node states, persisted events, and logs.
 
 Goals for this pass:
 

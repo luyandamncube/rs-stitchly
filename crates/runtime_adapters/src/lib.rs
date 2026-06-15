@@ -1,6 +1,8 @@
 use std::{
+    any::Any,
     collections::BTreeMap,
     env, fs,
+    panic::{catch_unwind, AssertUnwindSafe},
     path::{Path, PathBuf},
     process::Command,
     time::Duration as StdDuration,
@@ -16,6 +18,17 @@ use thiserror::Error;
 use workflow_schema::{DataType, TypedValue, WorkflowNode};
 
 pub type PortValues = BTreeMap<String, TypedValue>;
+
+fn panic_payload_to_string(payload: Box<dyn Any + Send + 'static>) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        return (*message).to_string();
+    }
+    if let Some(message) = payload.downcast_ref::<String>() {
+        return message.clone();
+    }
+
+    "non-string panic payload".to_string()
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct RuntimeAdapters;
@@ -2154,9 +2167,9 @@ fn load_duckdb_query_column_names(
     query_sql: &str,
     node_id: &str,
 ) -> Result<Vec<String>, AdapterError> {
-    let statement = connection
+    let mut statement = connection
         .prepare(&format!(
-            "select * from ({query_sql}) as source_data limit 0"
+            "describe select * from ({query_sql}) as source_data"
         ))
         .map_err(|error| AdapterError::ExecutionFailed {
             node_id: node_id.to_string(),
@@ -2165,7 +2178,21 @@ fn load_duckdb_query_column_names(
             ),
         })?;
 
-    Ok(statement.column_names())
+    statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!(
+                "failed to query workflow DuckDB query columns for file-backed load: {error}"
+            ),
+        })?
+        .collect::<duckdb::Result<Vec<_>>>()
+        .map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!(
+                "failed to collect workflow DuckDB query columns for file-backed load: {error}"
+            ),
+        })
 }
 
 fn build_load_to_duckdb_file_projection_sql(
@@ -2513,8 +2540,13 @@ fn resolve_upstream_live_working_copy_path(
         .map(PathBuf::from)
 }
 
-fn resolve_dolt_dump_csv_path(repo_dir: &Path, table_name: &str) -> Option<PathBuf> {
+fn resolve_dolt_dump_csv_path(
+    dump_dir: &Path,
+    repo_dir: &Path,
+    table_name: &str,
+) -> Option<PathBuf> {
     let candidate_paths = [
+        dump_dir.join(format!("{table_name}.csv")),
         repo_dir.join(format!("{table_name}.csv")),
         repo_dir.join("doltdump").join(format!("{table_name}.csv")),
     ];
@@ -3108,10 +3140,38 @@ fn try_materialize_actual_dolt_dump_bundle(
         repo_dir
     };
 
-    run_command_capture_stdout("dolt", &["dump", "-r", "csv"], Some(&repo_dir), node_id)?;
     let actual_commit = try_resolve_dolt_head_commit(&repo_dir, node_id)
         .unwrap_or_else(|_| current_commit.to_string());
     let effective_format = output_format;
+    let dump_dir = files_root
+        .join("artifacts")
+        .join("dolt_dump_work")
+        .join(repo_family)
+        .join(&actual_commit)
+        .join("csv");
+    if dump_dir.exists() {
+        fs::remove_dir_all(&dump_dir).map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!(
+                "failed to clear Dolt dump work directory `{}`: {error}",
+                dump_dir.display()
+            ),
+        })?;
+    }
+    fs::create_dir_all(&dump_dir).map_err(|error| AdapterError::ExecutionFailed {
+        node_id: node_id.to_string(),
+        message: format!(
+            "failed to create Dolt dump work directory `{}`: {error}",
+            dump_dir.display()
+        ),
+    })?;
+    let dump_dir_arg = dump_dir.to_string_lossy().to_string();
+    run_command_capture_stdout(
+        "dolt",
+        &["dump", "-f", "-r", "csv", "-d", dump_dir_arg.as_str()],
+        Some(&repo_dir),
+        node_id,
+    )?;
     let bundle_path = build_dolt_dump_bundle_path(repo_family, &actual_commit, effective_format);
     let bundle_root = files_root.join(&bundle_path);
     if bundle_root.exists() {
@@ -3138,11 +3198,12 @@ fn try_materialize_actual_dolt_dump_bundle(
 
     let mut exported_tables = Vec::with_capacity(export_table_names.len());
     for table_name in export_table_names {
-        let Some(source_csv) = resolve_dolt_dump_csv_path(&repo_dir, table_name) else {
+        let Some(source_csv) = resolve_dolt_dump_csv_path(&dump_dir, &repo_dir, table_name) else {
             return Err(AdapterError::ExecutionFailed {
                 node_id: node_id.to_string(),
                 message: format!(
-                    "expected Dolt dump to produce `{table_name}.csv` under either `{}` or `{}`, but neither file was found.",
+                    "expected Dolt dump to produce `{table_name}.csv` under `{}`, `{}`, or `{}`, but no file was found.",
+                    dump_dir.display(),
                     repo_dir.display(),
                     repo_dir.join("doltdump").display()
                 ),
@@ -3187,6 +3248,23 @@ fn open_runtime_workflow_duckdb(
         return Ok(None);
     };
 
+    ensure_runtime_workflow_duckdb_parent(database_path, node_id)?;
+
+    open_duckdb_connection_for_path(database_path)
+        .map(Some)
+        .map_err(|error| AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!(
+                "failed to open workflow DuckDB at `{}`: {error}",
+                database_path.display()
+            ),
+        })
+}
+
+fn ensure_runtime_workflow_duckdb_parent(
+    database_path: &Path,
+    node_id: &str,
+) -> Result<(), AdapterError> {
     if let Some(parent) = database_path.parent() {
         fs::create_dir_all(parent).map_err(|error| AdapterError::ExecutionFailed {
             node_id: node_id.to_string(),
@@ -3197,15 +3275,170 @@ fn open_runtime_workflow_duckdb(
         })?;
     }
 
-    DuckDbConnection::open(database_path)
-        .map(Some)
-        .map_err(|error| AdapterError::ExecutionFailed {
-            node_id: node_id.to_string(),
-            message: format!(
-                "failed to open workflow DuckDB at `{}`: {error}",
+    Ok(())
+}
+
+fn open_duckdb_connection_for_path(database_path: &Path) -> Result<DuckDbConnection, String> {
+    match catch_unwind(AssertUnwindSafe(|| DuckDbConnection::open(database_path))) {
+        Ok(Ok(connection)) => Ok(connection),
+        Ok(Err(error)) => Err(error.to_string()),
+        Err(payload) => Err(format!(
+            "panicked while opening database: {}",
+            panic_payload_to_string(payload)
+        )),
+    }
+}
+
+fn validate_runtime_workflow_duckdb_connection(
+    connection: &DuckDbConnection,
+    database_path: &Path,
+    node_id: &str,
+) -> Result<(), String> {
+    match catch_unwind(AssertUnwindSafe(|| {
+        connection.query_row(
+            "select count(*) from information_schema.tables",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+    })) {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(error)) => Err(format!(
+            "workflow DuckDB at `{}` failed validation before load for node `{node_id}`: {error}",
+            database_path.display()
+        )),
+        Err(payload) => Err(format!(
+            "workflow DuckDB at `{}` panicked during validation before load for node `{node_id}`: {}",
+            database_path.display(),
+            panic_payload_to_string(payload)
+        )),
+    }
+}
+
+fn quarantine_workflow_duckdb_file(
+    database_path: &Path,
+    reason: &str,
+    node_id: &str,
+) -> Result<Option<PathBuf>, AdapterError> {
+    if !database_path.exists() {
+        return Ok(None);
+    }
+
+    let quarantine_suffix = format!("corrupt.{}", Utc::now().format("%Y%m%d%H%M%S"));
+    let quarantine_path = database_path.with_extension(format!(
+        "{}.{quarantine_suffix}",
+        database_path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or("duckdb")
+    ));
+
+    fs::rename(database_path, &quarantine_path).map_err(|error| AdapterError::ExecutionFailed {
+        node_id: node_id.to_string(),
+        message: format!(
+            "workflow DuckDB at `{}` failed open/validation and could not be quarantined at `{}`: {error}. Failure reason: {reason}",
+            database_path.display(),
+            quarantine_path.display()
+        ),
+    })?;
+
+    for sidecar_extension in ["wal", "tmp"] {
+        let sidecar_path = database_path.with_extension(format!(
+            "{}.{sidecar_extension}",
+            database_path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .unwrap_or("duckdb")
+        ));
+        if sidecar_path.exists() {
+            let sidecar_quarantine_path =
+                sidecar_path.with_extension(format!("{sidecar_extension}.{quarantine_suffix}"));
+            fs::rename(&sidecar_path, &sidecar_quarantine_path).map_err(|error| {
+                AdapterError::ExecutionFailed {
+                    node_id: node_id.to_string(),
+                    message: format!(
+                        "workflow DuckDB sidecar `{}` was present after quarantining `{}` but could not be moved to `{}`: {error}",
+                        sidecar_path.display(),
+                        database_path.display(),
+                        sidecar_quarantine_path.display()
+                    ),
+                }
+            })?;
+        }
+    }
+
+    Ok(Some(quarantine_path))
+}
+
+fn open_recovering_runtime_workflow_duckdb_for_load(
+    context: &AdapterExecutionContext,
+    node_id: &str,
+) -> Result<Option<(DuckDbConnection, Option<PathBuf>)>, AdapterError> {
+    let Some(database_path) = context.workflow_duckdb_path.as_deref() else {
+        return Ok(None);
+    };
+
+    ensure_runtime_workflow_duckdb_parent(database_path, node_id)?;
+    let connection = match open_duckdb_connection_for_path(database_path) {
+        Ok(connection) => connection,
+        Err(open_failure) => {
+            let failure_reason = format!(
+                "workflow DuckDB at `{}` failed to open before load for node `{node_id}`: {open_failure}",
                 database_path.display()
-            ),
-        })
+            );
+            let quarantine_path =
+                quarantine_workflow_duckdb_file(database_path, &failure_reason, node_id)?;
+            let recreated_connection =
+                open_duckdb_connection_for_path(database_path).map_err(|error| {
+                    AdapterError::ExecutionFailed {
+                        node_id: node_id.to_string(),
+                        message: format!(
+                            "workflow DuckDB at `{}` was recreated after open failure, but the new database could not be opened: {error}",
+                            database_path.display()
+                        ),
+                    }
+                })?;
+            validate_runtime_workflow_duckdb_connection(
+                &recreated_connection,
+                database_path,
+                node_id,
+            )
+            .map_err(|error| AdapterError::ExecutionFailed {
+                node_id: node_id.to_string(),
+                message: format!(
+                    "workflow DuckDB at `{}` was recreated after open failure, but the new database failed validation: {error}",
+                    database_path.display()
+                ),
+            })?;
+
+            return Ok(Some((recreated_connection, quarantine_path)));
+        }
+    };
+
+    match validate_runtime_workflow_duckdb_connection(&connection, database_path, node_id) {
+        Ok(()) => Ok(Some((connection, None))),
+        Err(validation_failure) => {
+            drop(connection);
+            let quarantine_path =
+                quarantine_workflow_duckdb_file(database_path, &validation_failure, node_id)?;
+            let Some(recreated_connection) = open_runtime_workflow_duckdb(context, node_id)? else {
+                return Ok(None);
+            };
+            validate_runtime_workflow_duckdb_connection(
+                &recreated_connection,
+                database_path,
+                node_id,
+            )
+            .map_err(|error| AdapterError::ExecutionFailed {
+                node_id: node_id.to_string(),
+                message: format!(
+                    "workflow DuckDB at `{}` was recreated after validation failure, but the new database also failed validation: {error}",
+                    database_path.display()
+                ),
+            })?;
+
+            Ok(Some((recreated_connection, quarantine_path)))
+        }
+    }
 }
 
 fn quote_duckdb_identifier(identifier: &str) -> String {
@@ -3377,6 +3610,22 @@ fn load_duckdb_table_column_names(
                 "failed to collect columns for workflow DuckDB table `{schema_name}.{table_name}`: {error}"
             ),
         })
+        .and_then(|columns| {
+            if !columns.is_empty() {
+                return Ok(columns);
+            }
+
+            let qualified_table = format!(
+                "{}.{}",
+                quote_duckdb_identifier(schema_name),
+                quote_duckdb_identifier(table_name)
+            );
+            load_duckdb_query_column_names(
+                connection,
+                &format!("select * from {qualified_table}"),
+                node_id,
+            )
+        })
 }
 
 fn source_tables_from_table_reference(
@@ -3493,6 +3742,12 @@ fn render_sql_transform_sql(
         quote_duckdb_identifier(source_schema_name),
         quote_duckdb_identifier(source_table_name)
     );
+    if let Some(rewritten_sql) =
+        rewrite_simple_unpivot_sql_transform(sql_text, qualified_source.as_str())
+    {
+        return rewritten_sql;
+    }
+
     sql_text
         .replace("{{source}}", &qualified_source)
         .replace(
@@ -3503,6 +3758,116 @@ fn render_sql_transform_sql(
             "{{source_table}}",
             &quote_duckdb_identifier(source_table_name),
         )
+}
+
+fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
+    haystack
+        .to_ascii_lowercase()
+        .find(&needle.to_ascii_lowercase())
+}
+
+fn split_sql_comma_list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn trim_duckdb_identifier_quotes(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+        return trimmed[1..trimmed.len() - 1].replace("\"\"", "\"");
+    }
+    trimmed.to_string()
+}
+
+fn rewrite_simple_unpivot_sql_transform(sql_text: &str, qualified_source: &str) -> Option<String> {
+    let trimmed_sql = sql_text.trim();
+    let select_prefix_end = find_ascii_case_insensitive(trimmed_sql, "select")?;
+    if trimmed_sql[..select_prefix_end].trim().len() != 0 {
+        return None;
+    }
+
+    let from_token = "from {{source}}";
+    let from_index = find_ascii_case_insensitive(trimmed_sql, from_token)?;
+    let select_list = trimmed_sql[select_prefix_end + "select".len()..from_index].trim();
+    let after_source = trimmed_sql[from_index + from_token.len()..].trim();
+    let unpivot_index = find_ascii_case_insensitive(after_source, "unpivot")?;
+    if after_source[..unpivot_index].trim().len() != 0 {
+        return None;
+    }
+
+    let unpivot_body = after_source[unpivot_index + "unpivot".len()..].trim();
+    if !unpivot_body.starts_with('(') || !unpivot_body.ends_with(')') {
+        return None;
+    }
+    let unpivot_body = unpivot_body[1..unpivot_body.len() - 1].trim();
+    let for_index = find_ascii_case_insensitive(unpivot_body, " for ")?;
+    let in_index = find_ascii_case_insensitive(unpivot_body, " in ")?;
+    if for_index >= in_index {
+        return None;
+    }
+
+    let value_alias = trim_duckdb_identifier_quotes(unpivot_body[..for_index].trim());
+    let name_alias =
+        trim_duckdb_identifier_quotes(unpivot_body[for_index + " for ".len()..in_index].trim());
+    let in_list = unpivot_body[in_index + " in ".len()..].trim();
+    if !in_list.starts_with('(') || !in_list.ends_with(')') {
+        return None;
+    }
+
+    let source_columns = split_sql_comma_list(&in_list[1..in_list.len() - 1])
+        .into_iter()
+        .map(|column| trim_duckdb_identifier_quotes(column.as_str()))
+        .collect::<Vec<_>>();
+    if source_columns.is_empty() {
+        return None;
+    }
+
+    let select_expressions = split_sql_comma_list(select_list);
+    if select_expressions.is_empty() {
+        return None;
+    }
+
+    let union_queries = source_columns
+        .iter()
+        .map(|source_column| {
+            let source_identifier = quote_duckdb_identifier(source_column);
+            let rewritten_select = select_expressions
+                .iter()
+                .map(|expression| {
+                    let normalized_expression = trim_duckdb_identifier_quotes(expression);
+                    if normalized_expression.eq_ignore_ascii_case(name_alias.as_str()) {
+                        format!(
+                            "{} as {}",
+                            quote_duckdb_string_literal(source_column),
+                            quote_duckdb_identifier(name_alias.as_str())
+                        )
+                    } else if normalized_expression.eq_ignore_ascii_case(value_alias.as_str()) {
+                        format!(
+                            "{source_identifier} as {}",
+                            quote_duckdb_identifier(value_alias.as_str())
+                        )
+                    } else {
+                        expression.clone()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            format!(
+                "select {rewritten_select} from {qualified_source} where {source_identifier} is not null"
+            )
+        })
+        .collect::<Vec<_>>();
+
+    Some(union_queries.join(" union all "))
+}
+
+fn sql_transform_requires_table_materialization(sql_text: &str) -> bool {
+    sql_text.to_ascii_lowercase().contains("unpivot")
 }
 
 fn merge_live_source_sql(qualified_source: &str, source_columns: &[String]) -> String {
@@ -3517,6 +3882,14 @@ fn merge_live_source_sql(qualified_source: &str, source_columns: &[String]) -> S
     } else {
         qualified_source.to_string()
     }
+}
+
+fn duckdb_projection_for_columns(columns: &[String]) -> String {
+    columns
+        .iter()
+        .map(|column| quote_duckdb_identifier(column))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn persist_table_merge_tables(
@@ -3573,9 +3946,10 @@ fn persist_table_merge_tables(
 
         match write_policy {
             TableMergeWritePolicy::SnapshotReplace => {
+                let source_projection = duckdb_projection_for_columns(&source_columns);
                 connection
                     .execute_batch(&format!(
-                        "create or replace table {qualified_target} as select * from {qualified_source};"
+                        "create or replace table {qualified_target} as select {source_projection} from {qualified_source};"
                     ))
                     .map_err(|error| AdapterError::ExecutionFailed {
                         node_id: node_id.to_string(),
@@ -3586,9 +3960,10 @@ fn persist_table_merge_tables(
             }
             TableMergeWritePolicy::AppendOnly => {
                 if !target_exists {
+                    let source_projection = duckdb_projection_for_columns(&source_columns);
                     connection
                         .execute_batch(&format!(
-                            "create table {qualified_target} as select * from {qualified_source};"
+                            "create table {qualified_target} as select {source_projection} from {qualified_source};"
                         ))
                         .map_err(|error| AdapterError::ExecutionFailed {
                             node_id: node_id.to_string(),
@@ -3597,9 +3972,11 @@ fn persist_table_merge_tables(
                             ),
                         })?;
                 } else {
+                    let insert_columns = duckdb_projection_for_columns(&source_columns);
+                    let source_projection = duckdb_projection_for_columns(&source_columns);
                     connection
                         .execute_batch(&format!(
-                            "insert into {qualified_target} select * from {qualified_source};"
+                            "insert into {qualified_target} ({insert_columns}) select {source_projection} from {qualified_source};"
                         ))
                         .map_err(|error| AdapterError::ExecutionFailed {
                             node_id: node_id.to_string(),
@@ -3611,9 +3988,10 @@ fn persist_table_merge_tables(
             }
             TableMergeWritePolicy::Upsert => {
                 if !target_exists {
+                    let source_projection = duckdb_projection_for_columns(&source_columns);
                     connection
                         .execute_batch(&format!(
-                            "create table {qualified_target} as select * from {qualified_source};"
+                            "create table {qualified_target} as select {source_projection} from {qualified_source};"
                         ))
                         .map_err(|error| AdapterError::ExecutionFailed {
                             node_id: node_id.to_string(),
@@ -3983,7 +4361,11 @@ fn execute_load_to_duckdb(
         &resolved_bundle.current_commit,
     );
     let mut loaded_from_files = false;
-    if let Some(connection) = open_runtime_workflow_duckdb(context, &node.node_id)? {
+    let mut recovered_duckdb_path = None;
+    if let Some((connection, quarantine_path)) =
+        open_recovering_runtime_workflow_duckdb_for_load(context, &node.node_id)?
+    {
+        recovered_duckdb_path = quarantine_path;
         loaded_from_files = persist_load_to_duckdb_tables_from_files(
             &connection,
             context,
@@ -4132,20 +4514,26 @@ fn execute_load_to_duckdb(
         format!("current commit {}", resolved_bundle.current_commit)
     };
 
-    Ok(NodeExecutionResult {
-        outputs,
-        logs: vec![format!(
-            "Prepared {table_count} staging table(s) in `{target_schema}` from {bundle_label} for `{repository}` using `{table_mapping}` and `{schema_handling}` ({merge_context_summary}; {load_summary}).",
-            repository = resolved_bundle.repository,
-            table_mapping = table_mapping.as_str(),
-            schema_handling = schema_handling.as_str(),
-            load_summary = if loaded_from_files {
-                "loaded bundle files into DuckDB"
-            } else {
-                "used bundle metadata only"
-            }
-        )],
-    })
+    let mut logs = Vec::new();
+    if let Some(quarantine_path) = recovered_duckdb_path {
+        logs.push(format!(
+            "Recreated workflow DuckDB after open/validation failure; quarantined previous database at `{}`.",
+            quarantine_path.display()
+        ));
+    }
+    logs.push(format!(
+        "Prepared {table_count} staging table(s) in `{target_schema}` from {bundle_label} for `{repository}` using `{table_mapping}` and `{schema_handling}` ({merge_context_summary}; {load_summary}).",
+        repository = resolved_bundle.repository,
+        table_mapping = table_mapping.as_str(),
+        schema_handling = schema_handling.as_str(),
+        load_summary = if loaded_from_files {
+            "loaded bundle files into DuckDB"
+        } else {
+            "used bundle metadata only"
+        }
+    ));
+
+    Ok(NodeExecutionResult { outputs, logs })
 }
 
 fn execute_table_merge(
@@ -4380,6 +4768,7 @@ fn execute_sql_transform(
     let materialization_mode = config
         .materialization_mode
         .unwrap_or(SqlTransformMaterializationMode::View);
+    let materialize_as_table = sql_transform_requires_table_materialization(sql_text);
     let (source_schema_name, source_table_name) = resolve_sql_transform_source_table(
         &table_payload,
         config.source_table_name.as_deref(),
@@ -4393,7 +4782,9 @@ fn execute_sql_transform(
         }
     })?;
 
-    if duckdb_table_exists(&connection, target_schema, output_table_name, &node.node_id)? {
+    if !materialize_as_table
+        && duckdb_table_exists(&connection, target_schema, output_table_name, &node.node_id)?
+    {
         return Err(AdapterError::ExecutionFailed {
             node_id: node.node_id.clone(),
             message: format!(
@@ -4406,15 +4797,23 @@ fn execute_sql_transform(
     let table_identifier = quote_duckdb_identifier(output_table_name);
     let qualified_output = format!("{schema_identifier}.{table_identifier}");
     let rendered_sql = render_sql_transform_sql(sql_text, &source_schema_name, &source_table_name);
-    connection
-        .execute_batch(&format!(
+    let materialization_sql = if materialize_as_table {
+        format!(
+            "create schema if not exists {schema_identifier};
+             create or replace table {qualified_output} as {rendered_sql};"
+        )
+    } else {
+        format!(
             "create schema if not exists {schema_identifier};
              create or replace view {qualified_output} as {rendered_sql};"
-        ))
+        )
+    };
+    connection
+        .execute_batch(&materialization_sql)
         .map_err(|error| AdapterError::ExecutionFailed {
             node_id: node.node_id.clone(),
             message: format!(
-                "failed to materialize sql_transform view `{target_schema}.{output_table_name}`: {error}"
+                "failed to materialize sql_transform `{target_schema}.{output_table_name}`: {error}"
             ),
         })?;
 
@@ -4435,7 +4834,14 @@ fn execute_sql_transform(
         );
         metadata_object.insert("source_table".to_string(), json!(source_table_name.clone()));
         metadata_object.insert("transform_kind".to_string(), json!("sql_transform"));
-        metadata_object.insert("materialization_mode".to_string(), json!("view"));
+        metadata_object.insert(
+            "materialization_mode".to_string(),
+            json!(if materialize_as_table {
+                "table"
+            } else {
+                "view"
+            }),
+        );
         metadata_object.insert("target_schema".to_string(), json!(target_schema));
         metadata_object.insert("target_table".to_string(), json!(output_table_name));
     }
@@ -4470,6 +4876,11 @@ fn execute_sql_transform(
 
     let mode_label = match materialization_mode {
         SqlTransformMaterializationMode::View => "view",
+    };
+    let mode_label = if materialize_as_table {
+        "table"
+    } else {
+        mode_label
     };
 
     Ok(NodeExecutionResult {
@@ -6732,10 +7143,45 @@ mod tests {
     }
 
     #[test]
-    fn resolve_dolt_dump_csv_path_finds_doltdump_subdirectory_output() {
+    fn resolve_dolt_dump_csv_path_prefers_controlled_dump_directory() {
         let workflow_root = unique_test_workflow_root("dolt_dump_output_path");
         let repo_dir = workflow_root.join("repo");
+        let controlled_dump_dir = workflow_root
+            .join("files")
+            .join("artifacts")
+            .join("dolt_dump_work");
         let dump_dir = repo_dir.join("doltdump");
+        fs::create_dir_all(&controlled_dump_dir).expect("controlled dump directory");
+        fs::create_dir_all(&dump_dir).expect("doltdump directory");
+        fs::write(
+            controlled_dump_dir.join("us_treasury.csv"),
+            "curve_date,tenor,yield_pct\n2026-06-12,2Y,4.77\n",
+        )
+        .expect("controlled dump csv");
+        fs::write(
+            dump_dir.join("us_treasury.csv"),
+            "curve_date,tenor,yield_pct\n",
+        )
+        .expect("dump csv");
+
+        assert_eq!(
+            resolve_dolt_dump_csv_path(&controlled_dump_dir, &repo_dir, "us_treasury"),
+            Some(controlled_dump_dir.join("us_treasury.csv"))
+        );
+
+        let _ = fs::remove_dir_all(&workflow_root);
+    }
+
+    #[test]
+    fn resolve_dolt_dump_csv_path_falls_back_to_doltdump_subdirectory_output() {
+        let workflow_root = unique_test_workflow_root("dolt_dump_output_path_fallback");
+        let repo_dir = workflow_root.join("repo");
+        let controlled_dump_dir = workflow_root
+            .join("files")
+            .join("artifacts")
+            .join("dolt_dump_work");
+        let dump_dir = repo_dir.join("doltdump");
+        fs::create_dir_all(&controlled_dump_dir).expect("controlled dump directory");
         fs::create_dir_all(&dump_dir).expect("doltdump directory");
         fs::write(
             dump_dir.join("us_treasury.csv"),
@@ -6744,7 +7190,7 @@ mod tests {
         .expect("dump csv");
 
         assert_eq!(
-            resolve_dolt_dump_csv_path(&repo_dir, "us_treasury"),
+            resolve_dolt_dump_csv_path(&controlled_dump_dir, &repo_dir, "us_treasury"),
             Some(dump_dir.join("us_treasury.csv"))
         );
 
@@ -8099,6 +8545,138 @@ mod tests {
     }
 
     #[test]
+    fn load_to_duckdb_adds_metadata_columns_for_actual_csv_bundle_files() {
+        let registry = builtin_node_definitions();
+        let load_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "load_to_duckdb")
+            .expect("load_to_duckdb definition");
+        let workflow_root = unique_test_workflow_root("load_to_duckdb_metadata_columns");
+        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let bundle_dir = workflow_root
+            .join("files")
+            .join("artifacts")
+            .join("dolt_dump")
+            .join("rates")
+            .join("c0ffee")
+            .join("csv");
+        fs::create_dir_all(&bundle_dir).expect("bundle directory should be created");
+        fs::write(
+            bundle_dir.join("us_treasury.csv"),
+            "curve_date,tenor,yield_pct\n2026-06-01,2Y,4.820000\n",
+        )
+        .expect("sample csv should be written");
+
+        let mut inputs = PortValues::new();
+        inputs.insert(
+            "bundle".to_string(),
+            TypedValue {
+                data_type: DataType::DirectoryRef,
+                value: json!({
+                    "kind": "dolt_dump_bundle",
+                    "directory_ref": {
+                        "path": "artifacts/dolt_dump/rates/c0ffee/csv",
+                        "format": "csv",
+                    },
+                    "repo_ref": {
+                        "connection_ref": "dolthub_public",
+                        "repository": "post-no-preference/rates",
+                        "branch": "main",
+                        "checkout_ref": Value::Null,
+                        "current_commit": "c0ffee",
+                    },
+                    "metadata": {
+                        "repo_family": "rates",
+                        "exported_tables": [
+                            {
+                                "source_table": "us_treasury",
+                                "file_path": "artifacts/dolt_dump/rates/c0ffee/csv/us_treasury.csv",
+                                "row_count": Value::Null,
+                            }
+                        ]
+                    }
+                }),
+            },
+        );
+        let node = WorkflowNode {
+            node_id: "load_to_duckdb".to_string(),
+            type_id: "load_to_duckdb".to_string(),
+            definition_version: 1,
+            label: Some("Load to DuckDB".to_string()),
+            config: json!({
+                "target_schema": "staging"
+            }),
+            position: NodePosition::default(),
+        };
+        let context = AdapterExecutionContext {
+            workflow_duckdb_path: Some(duckdb_path.clone()),
+            ..AdapterExecutionContext::default()
+        };
+
+        let result = RuntimeAdapters::default()
+            .execute_with_context(load_definition, &node, &inputs, &context)
+            .expect("load_to_duckdb should load actual files and add metadata columns");
+        let payload = result
+            .outputs
+            .get("table")
+            .expect("table output should be present");
+        let schema_column_names = payload.value["schema_definition"]["columns"]
+            .as_array()
+            .expect("schema columns should be present")
+            .iter()
+            .filter_map(|column| column.get("name").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+
+        for expected_column in [
+            "curve_date",
+            "tenor",
+            "yield_pct",
+            "source_repo",
+            "source_table",
+            "batch_id",
+            "ingested_at",
+            "bundle_kind",
+            "current_commit",
+            "delete_rows_present",
+        ] {
+            assert!(
+                schema_column_names.contains(&expected_column),
+                "expected schema to contain `{expected_column}`, got {schema_column_names:?}"
+            );
+        }
+
+        let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb should open");
+        let loaded_row: (String, String, String, String, bool) = duckdb
+            .query_row(
+                "select source_repo,
+                        source_table,
+                        batch_id,
+                        current_commit,
+                        delete_rows_present
+                 from staging.rates__us_treasury__snapshot
+                 limit 1",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .expect("staging metadata query should succeed");
+        assert_eq!(loaded_row.0, "post-no-preference/rates");
+        assert_eq!(loaded_row.1, "us_treasury");
+        assert_eq!(loaded_row.2, "c0ffee");
+        assert_eq!(loaded_row.3, "c0ffee");
+        assert!(!loaded_row.4);
+
+        let _ = fs::remove_dir_all(&workflow_root);
+    }
+
+    #[test]
     fn load_to_duckdb_preserves_merge_metadata_from_diff_bundle() {
         let registry = builtin_node_definitions();
         let source_definition = registry
@@ -8334,6 +8912,8 @@ mod tests {
             .expect("table_merge definition");
         let workflow_root = unique_test_workflow_root("table_merge_missing_target_key");
         let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        fs::create_dir_all(duckdb_path.parent().expect("duckdb parent should exist"))
+            .expect("duckdb parent directory should be created");
         let connection = DuckDbConnection::open(&duckdb_path).expect("duckdb should open");
         connection
             .execute_batch(
@@ -8424,6 +9004,8 @@ mod tests {
             .expect("sql_transform definition");
         let workflow_root = unique_test_workflow_root("sql_transform_view_output");
         let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        fs::create_dir_all(duckdb_path.parent().expect("duckdb parent should exist"))
+            .expect("duckdb parent directory should be created");
         let connection = DuckDbConnection::open(&duckdb_path).expect("duckdb should open");
         connection
             .execute_batch(
@@ -8522,6 +9104,147 @@ mod tests {
         assert_eq!(row.0, "2026-06-11");
         assert_eq!(row.1, "2Y");
         assert_eq!(row.2, 4.75);
+
+        let _ = fs::remove_dir_all(&workflow_root);
+    }
+
+    #[test]
+    fn table_merge_bootstraps_from_sql_transform_unpivot_view() {
+        let registry = builtin_node_definitions();
+        let sql_transform_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "sql_transform")
+            .expect("sql_transform definition");
+        let table_merge_definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "table_merge")
+            .expect("table_merge definition");
+        let workflow_root = unique_test_workflow_root("table_merge_unpivot_view");
+        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        fs::create_dir_all(duckdb_path.parent().expect("duckdb parent should exist"))
+            .expect("duckdb parent directory should be created");
+        let connection = DuckDbConnection::open(&duckdb_path).expect("duckdb should open");
+        connection
+            .execute_batch(
+                "create schema staging;
+                 create table staging.rates__us_treasury__snapshot (
+                   date date,
+                   \"1_month\" double,
+                   \"2_month\" double,
+                   source_repo varchar,
+                   source_table varchar,
+                   batch_id varchar,
+                   ingested_at timestamp,
+                   current_commit varchar
+                 );
+                 insert into staging.rates__us_treasury__snapshot values
+                   ('2026-06-11', 4.42, 4.45, 'post-no-preference/rates', 'us_treasury', 'batch-1', '2026-06-14 12:00:00', 'abc123'),
+                   ('2026-06-12', 4.41, 4.44, 'post-no-preference/rates', 'us_treasury', 'batch-1', '2026-06-14 12:00:00', 'abc123');",
+            )
+            .expect("source table should be created");
+        drop(connection);
+
+        let context = AdapterExecutionContext {
+            workflow_duckdb_path: Some(duckdb_path.clone()),
+            ..AdapterExecutionContext::default()
+        };
+        let sql_transform_node = WorkflowNode {
+            node_id: "sql_transform".to_string(),
+            type_id: "sql_transform".to_string(),
+            definition_version: 1,
+            label: None,
+            config: json!({
+                "target_schema": "staging",
+                "output_table_name": "us_treasury",
+                "materialization_mode": "view",
+                "sql_text": "select
+  date as curve_date,
+  tenor,
+  yield_pct,
+  source_repo,
+  source_table,
+  batch_id,
+  ingested_at,
+  current_commit
+from {{source}}
+unpivot (
+  yield_pct for tenor in (\"1_month\", \"2_month\")
+)"
+            }),
+            position: NodePosition::default(),
+        };
+        let mut sql_inputs = PortValues::new();
+        sql_inputs.insert(
+            "table".to_string(),
+            TypedValue {
+                data_type: DataType::TableRef,
+                value: json!({
+                    "kind": "table_reference",
+                    "catalog": "workflow.duckdb",
+                    "schema_name": "staging",
+                    "table_name": "rates__us_treasury__snapshot",
+                    "output_alias": "rates__us_treasury__snapshot",
+                    "selected_columns": [],
+                    "row_filter": Value::Null,
+                    "row_limit": Value::Null,
+                    "refresh_schema": true,
+                    "open_in_catalog": false,
+                    "schema_definition": {
+                        "columns": [],
+                        "primary_key": [],
+                        "checks": []
+                    }
+                }),
+            },
+        );
+        let sql_result = RuntimeAdapters::default()
+            .execute_with_context(
+                sql_transform_definition,
+                &sql_transform_node,
+                &sql_inputs,
+                &context,
+            )
+            .expect("sql transform should materialize unpivot output");
+
+        let table_merge_node = WorkflowNode {
+            node_id: "table_merge".to_string(),
+            type_id: "table_merge".to_string(),
+            definition_version: 1,
+            label: None,
+            config: json!({
+                "target_schema": "tables",
+                "write_policy": "upsert",
+                "merge_key_columns": ["curve_date", "tenor"],
+                "delete_handling": "apply_delete_markers",
+                "schema_drift_behavior": "fail_and_require_review"
+            }),
+            position: NodePosition::default(),
+        };
+        let mut merge_inputs = PortValues::new();
+        merge_inputs.insert(
+            "table".to_string(),
+            sql_result
+                .outputs
+                .get("table")
+                .expect("sql transform table output")
+                .clone(),
+        );
+        RuntimeAdapters::default()
+            .execute_with_context(
+                table_merge_definition,
+                &table_merge_node,
+                &merge_inputs,
+                &context,
+            )
+            .expect("table merge should bootstrap from unpivot transform output");
+
+        let connection = DuckDbConnection::open(&duckdb_path).expect("duckdb should reopen");
+        let row_count: i64 = connection
+            .query_row("select count(*) from tables.us_treasury", [], |row| {
+                row.get(0)
+            })
+            .expect("merged table row count");
+        assert_eq!(row_count, 4);
 
         let _ = fs::remove_dir_all(&workflow_root);
     }

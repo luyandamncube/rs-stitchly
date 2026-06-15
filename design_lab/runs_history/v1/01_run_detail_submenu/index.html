@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Run Detail Submenu</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../shared.css" />
+  </head>
+  <body>
+    <main class="runs-history-lab">
+      <section class="runs-history-lab__note">
+        <span class="runs-history-lab__eyebrow">Runs History</span>
+        <h1 class="runs-history-lab__title">Selected run detail inside the canvas popup</h1>
+        <p class="runs-history-lab__caption">
+          A denser submenu state for inspecting node states, persisted events, and logs without leaving the left-rail popup.
+        </p>
+      </section>
+
+      <section class="runs-history-shell">
+        <div class="runs-history-control">
+          <div class="runs-history-control__dock" aria-label="Canvas menu">
+            <button class="runs-history-control__button runs-history-control__button--brand" type="button" aria-label="Stitchly">
+              <img
+                class="runs-history-control__brand-image"
+                src="../../../../apps/web/public/brand/symbol/stitchly-symbol-mark-white.svg"
+                alt=""
+              />
+            </button>
+
+            <button class="runs-history-control__button" type="button" aria-label="Workspaces">
+              <span class="runs-history-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                  <path d="M4 7.5h6l1.6 2H20v8.8H4z" />
+                </svg>
+              </span>
+            </button>
+
+            <button class="runs-history-control__button" type="button" aria-label="Workflows">
+              <span class="runs-history-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                  <path d="M5 6.5h14M5 12h14M5 17.5h14" />
+                </svg>
+              </span>
+            </button>
+
+            <button class="runs-history-control__button is-active" type="button" aria-label="Runs">
+              <span class="runs-history-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                  <rect x="5" y="6.5" width="14" height="11" rx="1.5" />
+                  <path d="M8 10.5h8M8 13.5h5" />
+                </svg>
+              </span>
+            </button>
+
+            <div class="runs-history-control__divider" aria-hidden="true"></div>
+
+            <button class="runs-history-control__button" type="button" aria-label="Exit">
+              <span class="runs-history-control__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                  <path d="M9 7h9v10H9" />
+                  <path d="M6 12h8" />
+                  <path d="M10.5 8.5 14 12l-3.5 3.5" />
+                </svg>
+              </span>
+            </button>
+          </div>
+
+          <section class="runs-history-control__panel runs-history-control__panel--detail" aria-label="Run detail popup">
+            <div class="runs-history-panel__top">
+              <div class="runs-history-panel__heading">
+                <button class="runs-history-panel__back" type="button" aria-label="Back to runs">
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true">
+                    <path d="m15 6-6 6 6 6" />
+                  </svg>
+                  Back
+                </button>
+
+                <span class="runs-history-panel__badge" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+                    <rect x="5" y="6.5" width="14" height="11" rx="1.5"></rect>
+                    <path d="M8 10.5h8M8 13.5h5"></path>
+                  </svg>
+                </span>
+                <div>
+                  <h2>Run Detail</h2>
+                  <p>run_6734 · Product Catalog Sync</p>
+                </div>
+              </div>
+
+              <div class="runs-history-panel__actions">
+                <button class="runs-history-button runs-history-button--danger" type="button">Force stop</button>
+                <button class="runs-history-button" type="button">
+                  Export detail
+                  <span aria-hidden="true">▾</span>
+                </button>
+              </div>
+            </div>
+
+            <section class="runs-detail-summary" aria-label="Run summary">
+              <div class="runs-detail-summary__identity">
+                <span class="runs-history-status runs-history-status--running"><span class="runs-history-status__dot"></span>Running</span>
+                <strong>Supplier API timeout while preview output waited for upstream text.</strong>
+                <span>Started 22 Jun 2025, 11:02:48 · running for 45.2s · manual trigger</span>
+              </div>
+
+              <div class="runs-detail-summary__metrics">
+                <div class="runs-detail-metric">
+                  <span>Nodes</span>
+                  <strong>3 / 5</strong>
+                </div>
+                <div class="runs-detail-metric">
+                  <span>Errors</span>
+                  <strong>1</strong>
+                </div>
+                <div class="runs-detail-metric">
+                  <span>Retries</span>
+                  <strong>2</strong>
+                </div>
+                <div class="runs-detail-metric">
+                  <span>Logs</span>
+                  <strong>18</strong>
+                </div>
+              </div>
+            </section>
+
+            <section class="runs-detail-layout" aria-label="Run detail">
+              <div class="runs-detail-column runs-detail-column--facts">
+                <section class="runs-detail-section">
+                  <div class="runs-detail-section__heading">
+                    <span>Run Facts</span>
+                    <span>current</span>
+                  </div>
+                  <div class="runs-detail-kv">
+                    <span>Run ID</span>
+                    <strong>run_6734</strong>
+                  </div>
+                  <div class="runs-detail-kv">
+                    <span>Workflow</span>
+                    <strong>Product Catalog Sync</strong>
+                  </div>
+                  <div class="runs-detail-kv">
+                    <span>Version</span>
+                    <strong>v14</strong>
+                  </div>
+                  <div class="runs-detail-kv">
+                    <span>Started</span>
+                    <strong>11:02:48</strong>
+                  </div>
+                  <div class="runs-detail-kv">
+                    <span>Finished</span>
+                    <strong>—</strong>
+                  </div>
+                </section>
+
+                <section class="runs-detail-section">
+                  <div class="runs-detail-section__heading">
+                    <span>Node States</span>
+                    <span>5 nodes</span>
+                  </div>
+
+                  <div class="runs-detail-node is-success">
+                    <span class="runs-detail-node__marker"></span>
+                    <span>
+                      <strong>catalog_source</strong>
+                      <small>table_input · 1 attempt · 4 logs</small>
+                    </span>
+                    <em>Succeeded</em>
+                  </div>
+
+                  <div class="runs-detail-node is-success">
+                    <span class="runs-detail-node__marker"></span>
+                    <span>
+                      <strong>normalize_products</strong>
+                      <small>sql_transform · 1 attempt · 6 logs</small>
+                    </span>
+                    <em>Succeeded</em>
+                  </div>
+
+                  <div class="runs-detail-node is-running">
+                    <span class="runs-detail-node__marker"></span>
+                    <span>
+                      <strong>supplier_enrichment</strong>
+                      <small>http_api_request · 3 attempts · 8 logs</small>
+                    </span>
+                    <em>Running</em>
+                  </div>
+
+                  <div class="runs-detail-node">
+                    <span class="runs-detail-node__marker"></span>
+                    <span>
+                      <strong>preview_output</strong>
+                      <small>preview_output · waiting on upstream</small>
+                    </span>
+                    <em>Queued</em>
+                  </div>
+
+                  <div class="runs-detail-node">
+                    <span class="runs-detail-node__marker"></span>
+                    <span>
+                      <strong>table_output</strong>
+                      <small>table_output · not started</small>
+                    </span>
+                    <em>Queued</em>
+                  </div>
+                </section>
+              </div>
+
+              <div class="runs-detail-column runs-detail-column--events">
+                <section class="runs-detail-section runs-detail-section--fill">
+                  <div class="runs-detail-section__heading">
+                    <span>Recent Events</span>
+                    <span>seq 12-18</span>
+                  </div>
+
+                  <div class="runs-detail-timeline">
+                    <div class="runs-detail-event is-warning">
+                      <span class="runs-detail-event__line"></span>
+                      <span class="runs-detail-event__dot"></span>
+                      <div>
+                        <strong>supplier_enrichment retry scheduled</strong>
+                        <p>11:03:22 · attempt 3 · timeout after 15s</p>
+                      </div>
+                      <em>18</em>
+                    </div>
+
+                    <div class="runs-detail-event">
+                      <span class="runs-detail-event__line"></span>
+                      <span class="runs-detail-event__dot"></span>
+                      <div>
+                        <strong>node log persisted</strong>
+                        <p>11:03:21 · supplier_enrichment · warn</p>
+                      </div>
+                      <em>17</em>
+                    </div>
+
+                    <div class="runs-detail-event is-success">
+                      <span class="runs-detail-event__line"></span>
+                      <span class="runs-detail-event__dot"></span>
+                      <div>
+                        <strong>normalize_products succeeded</strong>
+                        <p>11:03:05 · 14,203 rows materialized</p>
+                      </div>
+                      <em>16</em>
+                    </div>
+
+                    <div class="runs-detail-event">
+                      <span class="runs-detail-event__line"></span>
+                      <span class="runs-detail-event__dot"></span>
+                      <div>
+                        <strong>supplier_enrichment started</strong>
+                        <p>11:03:03 · http_api_request · attempt 2</p>
+                      </div>
+                      <em>15</em>
+                    </div>
+
+                    <div class="runs-detail-event is-success">
+                      <span class="runs-detail-event__line"></span>
+                      <span class="runs-detail-event__dot"></span>
+                      <div>
+                        <strong>catalog_source succeeded</strong>
+                        <p>11:02:56 · workflow-local DuckDB read complete</p>
+                      </div>
+                      <em>14</em>
+                    </div>
+                  </div>
+                </section>
+              </div>
+
+              <div class="runs-detail-column runs-detail-column--logs">
+                <section class="runs-detail-section runs-detail-section--alert">
+                  <div class="runs-detail-section__heading">
+                    <span>Failure Context</span>
+                    <span>warning</span>
+                  </div>
+                  <p class="runs-detail-callout">
+                    <strong>TimeoutError</strong>
+                    Supplier API timed out while enriching product rows. The run is still cancellable and has one retry remaining.
+                  </p>
+                </section>
+
+                <section class="runs-detail-section runs-detail-section--fill">
+                  <div class="runs-detail-section__heading">
+                    <span>Recent Logs</span>
+                    <span>18 logs</span>
+                  </div>
+
+                  <div class="runs-detail-log-list">
+                    <div class="runs-detail-log is-warning">
+                      <span>W</span>
+                      <div>
+                        <strong>Supplier API timed out after 15s.</strong>
+                        <p>supplier_enrichment · 11:03:21</p>
+                      </div>
+                    </div>
+
+                    <div class="runs-detail-log">
+                      <span>L</span>
+                      <div>
+                        <strong>Retrying request with exponential backoff.</strong>
+                        <p>supplier_enrichment · 11:03:21</p>
+                      </div>
+                    </div>
+
+                    <div class="runs-detail-log">
+                      <span>L</span>
+                      <div>
+                        <strong>Prepared 14,203 product rows for enrichment.</strong>
+                        <p>normalize_products · 11:03:05</p>
+                      </div>
+                    </div>
+
+                    <div class="runs-detail-log">
+                      <span>L</span>
+                      <div>
+                        <strong>Loaded workflow-local table products_clean.</strong>
+                        <p>catalog_source · 11:02:56</p>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </section>
+          </section>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

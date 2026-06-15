@@ -4231,6 +4231,26 @@ function CanvasRunsHistoryPanel({
   const selectedRun = runDetailState.run ?? selectedRunSummary ?? null;
   const isRunDetailOpen = Boolean(selectedRunId);
   const canCancelSelectedRun = isWorkspaceRunCancellable(selectedRun);
+  const selectedWorkflowName = selectedRun
+    ? selectedRun.workflow_name_at_run ??
+      workflowNameById[selectedRun.workflow_id] ??
+      selectedRun.workflow_id
+    : '';
+  const selectedRunEvents = runDetailState.events.slice(-5).reverse();
+  const selectedRunLogs = runDetailState.logs.slice(-6).reverse();
+  const selectedRunEventSequences = selectedRunEvents
+    .map((event) => event.sequence)
+    .filter((sequence) => Number.isFinite(sequence));
+  const selectedRunEventRange = selectedRunEventSequences.length
+    ? `seq ${Math.min(...selectedRunEventSequences)}-${Math.max(...selectedRunEventSequences)}`
+    : 'no events';
+  const selectedRunNodeTotal = selectedRun?.node_runs?.length ?? 0;
+  const selectedRunCompletedNodes =
+    selectedRun?.node_runs?.filter((nodeRun) =>
+      ['succeeded', 'failed', 'skipped', 'cancelled'].includes(String(nodeRun.status ?? '').toLowerCase())
+    ).length ?? 0;
+  const selectedRunLogCount = runDetailState.logs.length;
+  const selectedRunStatusTone = dashboardStatusTone(selectedRun?.status);
 
   function handleExport() {
     if (typeof window === 'undefined' || !filteredRuns.length) {
@@ -4341,7 +4361,7 @@ function CanvasRunsHistoryPanel({
       </header>
 
       {isRunDetailOpen ? (
-        <div className="canvas-runs-panel__detail card-stack">
+        <div className="canvas-runs-panel__detail">
           {selectedRun ? (
             <div className="canvas-runs-panel__detail-actions">
               <button
@@ -4369,126 +4389,163 @@ function CanvasRunsHistoryPanel({
 
           {selectedRun ? (
             <>
-              <div className="card-metric-grid">
-                <div className="card-metric">
-                  <span>Status</span>
-                  <strong>{humanizeRunStatus(selectedRun.status)}</strong>
+              <section className="runs-detail-summary" aria-label="Run summary">
+                <div className="runs-detail-summary__identity">
+                  <span className={`canvas-runs-panel__status canvas-runs-panel__status--${selectedRunStatusTone}`}>
+                    <span className="canvas-runs-panel__status-dot" aria-hidden="true" />
+                    {humanizeRunStatus(selectedRun.status)}
+                  </span>
+                  <strong>{summarizeRunDetailHeadline(selectedRun)}</strong>
+                  <span>{summarizeRunDetailSubline(selectedRun)}</span>
                 </div>
-                <div className="card-metric">
-                  <span>Workflow</span>
-                  <strong>
-                    {selectedRun.workflow_name_at_run ??
-                      workflowNameById[selectedRun.workflow_id] ??
-                      selectedRun.workflow_id}
-                  </strong>
-                </div>
-                <div className="card-metric">
-                  <span>Duration</span>
-                  <strong>{formatRunDuration(selectedRun)}</strong>
-                </div>
-                <div className="card-metric">
-                  <span>Retries</span>
-                  <strong>{countRunRetries(selectedRun)}</strong>
-                </div>
-              </div>
 
-              {selectedRun.error?.message ? (
-                <section className="canvas-runs-panel__detail-callout">
-                  <p>
-                    <strong>{humanizeRunStatus(selectedRun.error.category)}</strong>
-                    {' · '}
-                    {selectedRun.error.message}
-                  </p>
-                </section>
-              ) : null}
-
-              <section className="drawer-section">
-                <div className="drawer-section__heading">
-                  <span>Run Facts</span>
-                </div>
-                <div className="drawer-kv-list">
-                  <div className="drawer-kv">
-                    <span>Run ID</span>
-                    <strong>{selectedRun.run_id}</strong>
+                <div className="runs-detail-summary__metrics">
+                  <div className="runs-detail-metric">
+                    <span>Nodes</span>
+                    <strong>
+                      {selectedRunCompletedNodes} / {selectedRunNodeTotal}
+                    </strong>
                   </div>
-                  <div className="drawer-kv">
-                    <span>Started</span>
-                    <strong>{formatRunTimestamp(selectedRun.started_at)}</strong>
-                  </div>
-                  <div className="drawer-kv">
-                    <span>Finished</span>
-                    <strong>{formatRunTimestamp(selectedRun.finished_at)}</strong>
-                  </div>
-                  <div className="drawer-kv">
+                  <div className="runs-detail-metric">
                     <span>Errors</span>
                     <strong>{countRunErrors(selectedRun)}</strong>
                   </div>
+                  <div className="runs-detail-metric">
+                    <span>Retries</span>
+                    <strong>{countRunRetries(selectedRun)}</strong>
+                  </div>
+                  <div className="runs-detail-metric">
+                    <span>Logs</span>
+                    <strong>{selectedRunLogCount}</strong>
+                  </div>
                 </div>
               </section>
 
-              <section className="drawer-section">
-                <div className="drawer-section__heading">
-                  <span>Node States</span>
-                </div>
-                {selectedRun.node_runs?.length ? (
-                  <div className="drawer-list">
-                    {selectedRun.node_runs.map((nodeRun) => (
-                      <div className="drawer-item" key={nodeRun.node_id}>
-                        <span className="drawer-item__icon">N</span>
-                        <span className="drawer-item__content">
-                          <strong>{nodeRun.node_id}</strong>
-                          <span>{summarizeRunNodeDetail(nodeRun)}</span>
-                        </span>
-                        <span className="drawer-item__badge">{humanizeRunStatus(nodeRun.status)}</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="drawer-empty">No node state has been captured for this run yet.</p>
-                )}
-              </section>
+              <section className="runs-detail-layout" aria-label="Run detail">
+                <div className="runs-detail-column runs-detail-column--facts">
+                  <section className="runs-detail-section">
+                    <div className="runs-detail-section__heading">
+                      <span>Run Facts</span>
+                      <span>current</span>
+                    </div>
+                    <div className="runs-detail-kv">
+                      <span>Run ID</span>
+                      <strong>{selectedRun.run_id}</strong>
+                    </div>
+                    <div className="runs-detail-kv">
+                      <span>Workflow</span>
+                      <strong>{selectedWorkflowName}</strong>
+                    </div>
+                    <div className="runs-detail-kv">
+                      <span>Version</span>
+                      <strong>v{selectedRun.workflow_version ?? '—'}</strong>
+                    </div>
+                    <div className="runs-detail-kv">
+                      <span>Started</span>
+                      <strong>{formatRunTimestamp(selectedRun.started_at)}</strong>
+                    </div>
+                    <div className="runs-detail-kv">
+                      <span>Finished</span>
+                      <strong>{formatRunTimestamp(selectedRun.finished_at)}</strong>
+                    </div>
+                  </section>
 
-              <section className="drawer-section">
-                <div className="drawer-section__heading">
-                  <span>Recent Events</span>
-                </div>
-                {runDetailState.events.length ? (
-                  <div className="drawer-list">
-                    {runDetailState.events.slice().reverse().map((event) => (
-                      <div className="drawer-item" key={event.event_id}>
-                        <span className="drawer-item__icon">&gt;</span>
-                        <span className="drawer-item__content">
-                          <strong>{summarizeRunEventTitle(event)}</strong>
-                          <span>{summarizeRunEventDetail(event)}</span>
-                        </span>
-                        <span className="drawer-item__badge">{event.sequence}</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="drawer-empty">No persisted events are available for this run yet.</p>
-                )}
-              </section>
+                  <section className="runs-detail-section runs-detail-section--fill">
+                    <div className="runs-detail-section__heading">
+                      <span>Node States</span>
+                      <span>{selectedRunNodeTotal} nodes</span>
+                    </div>
 
-              <section className="drawer-section">
-                <div className="drawer-section__heading">
-                  <span>Recent Logs</span>
-                </div>
-                {runDetailState.logs.length ? (
-                  <div className="drawer-list">
-                    {runDetailState.logs.slice().reverse().map((entry, index) => (
-                      <div className="drawer-item" key={`${entry.timestamp}-${index}`}>
-                        <span className="drawer-item__icon">{formatRunLogLevel(entry.level)}</span>
-                        <span className="drawer-item__content">
-                          <strong>{entry.message}</strong>
-                          <span>{summarizeRunLogDetail(entry)}</span>
-                        </span>
+                    {selectedRun.node_runs?.length ? (
+                      <div className="runs-detail-node-list">
+                        {selectedRun.node_runs.map((nodeRun) => (
+                          <div
+                            className={`runs-detail-node ${runNodeStatusClass(nodeRun.status)}`}
+                            key={nodeRun.node_id}
+                          >
+                            <span className="runs-detail-node__marker" aria-hidden="true" />
+                            <span>
+                              <strong>{nodeRun.node_id}</strong>
+                              <small>{summarizeRunNodeDetail(nodeRun)}</small>
+                            </span>
+                            <em>{humanizeRunStatus(nodeRun.status)}</em>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="drawer-empty">No persisted logs are available for this run yet.</p>
-                )}
+                    ) : (
+                      <p className="runs-detail-empty">No node state has been captured for this run yet.</p>
+                    )}
+                  </section>
+                </div>
+
+                <div className="runs-detail-column runs-detail-column--events">
+                  <section className="runs-detail-section runs-detail-section--fill">
+                    <div className="runs-detail-section__heading">
+                      <span>Recent Events</span>
+                      <span>{selectedRunEventRange}</span>
+                    </div>
+
+                    {selectedRunEvents.length ? (
+                      <div className="runs-detail-timeline">
+                        {selectedRunEvents.map((event) => (
+                          <div className={`runs-detail-event ${runEventToneClass(event)}`} key={event.event_id}>
+                            <span className="runs-detail-event__line" aria-hidden="true" />
+                            <span className="runs-detail-event__dot" aria-hidden="true" />
+                            <div>
+                              <strong>{summarizeRunEventTitle(event)}</strong>
+                              <p>{summarizeRunEventDetail(event)}</p>
+                            </div>
+                            <em>{event.sequence}</em>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="runs-detail-empty">No persisted events are available for this run yet.</p>
+                    )}
+                  </section>
+                </div>
+
+                <div className="runs-detail-column runs-detail-column--logs">
+                  {selectedRun.error?.message ? (
+                    <section className="runs-detail-section runs-detail-section--alert">
+                      <div className="runs-detail-section__heading">
+                        <span>Failure Context</span>
+                        <span>{humanizeRunStatus(selectedRun.error.category)}</span>
+                      </div>
+                      <p className="runs-detail-callout">
+                        <strong>{humanizeRunStatus(selectedRun.error.category)}</strong>
+                        {' '}
+                        {selectedRun.error.message}
+                      </p>
+                    </section>
+                  ) : null}
+
+                  <section className="runs-detail-section runs-detail-section--fill">
+                    <div className="runs-detail-section__heading">
+                      <span>Recent Logs</span>
+                      <span>{selectedRunLogCount} logs</span>
+                    </div>
+
+                    {selectedRunLogs.length ? (
+                      <div className="runs-detail-log-list">
+                        {selectedRunLogs.map((entry, index) => (
+                          <div
+                            className={`runs-detail-log ${runLogToneClass(entry.level)}`}
+                            key={`${entry.timestamp}-${index}`}
+                          >
+                            <span>{formatRunLogLevel(entry.level)}</span>
+                            <div>
+                              <strong>{summarizeRunLogTitle(entry, selectedRun)}</strong>
+                              <p>{summarizeRunLogDetail(entry)}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="runs-detail-empty">No persisted logs are available for this run yet.</p>
+                    )}
+                  </section>
+                </div>
               </section>
             </>
           ) : null}
@@ -6516,18 +6573,95 @@ function sortRunsByMostRecent(runs = []) {
   });
 }
 
+function summarizeRunDetailHeadline(run) {
+  const status = humanizeRunStatus(run?.status);
+  const workflowName = run?.workflow_name_at_run ?? run?.workflow_id;
+  if (workflowName) {
+    return `${status} run for ${workflowName}`;
+  }
+
+  return `${status} run`;
+}
+
+function summarizeRunDetailSubline(run) {
+  const detailParts = [];
+
+  if (run?.started_at) {
+    detailParts.push(`Started ${formatRunTimestamp(run.started_at)}`);
+  }
+
+  const duration = formatRunDuration(run);
+  if (duration !== '—') {
+    detailParts.push(run?.finished_at ? `duration ${duration}` : `running for ${duration}`);
+  }
+
+  if (run?.trigger?.kind) {
+    detailParts.push(`${humanizeRunStatus(run.trigger.kind)} trigger`);
+  }
+
+  return detailParts.join(' · ') || 'Run timing has not been recorded yet.';
+}
+
 function summarizeRunNodeDetail(nodeRun) {
   const detailParts = [];
 
-  if (nodeRun.error?.message) {
-    detailParts.push(nodeRun.error.message);
+  if (nodeRun?.type_id) {
+    detailParts.push(humanizeRunStatus(nodeRun.type_id));
   }
 
-  if (Number.isFinite(nodeRun.attempt) && nodeRun.attempt > 1) {
-    detailParts.push(`Attempt ${nodeRun.attempt}`);
+  const attempt = Number.isFinite(nodeRun?.attempt) ? nodeRun.attempt : 0;
+  if (attempt > 0) {
+    detailParts.push(attempt === 1 ? '1 attempt' : `${attempt} attempts`);
   }
+
+  detailParts.push(`${nodeRun?.log_count ?? 0} logs`);
 
   return detailParts.join(' · ') || 'No additional detail';
+}
+
+function runNodeStatusClass(status) {
+  const normalizedStatus = String(status ?? '').toLowerCase();
+  if (normalizedStatus === 'succeeded') {
+    return 'is-success';
+  }
+  if (normalizedStatus === 'failed' || normalizedStatus === 'cancelled') {
+    return 'is-warning';
+  }
+  if (['running', 'planning', 'cancelling'].includes(normalizedStatus)) {
+    return 'is-running';
+  }
+  return '';
+}
+
+function runEventToneClass(event) {
+  const eventType = String(event?.event_type ?? '').toLowerCase();
+  const level = String(event?.payload?.level ?? '').toLowerCase();
+  const status = String(event?.payload?.status ?? '').toLowerCase();
+
+  if (
+    eventType.includes('failed') ||
+    eventType.includes('cancel') ||
+    status === 'failed' ||
+    status === 'cancelled' ||
+    level === 'warn' ||
+    level === 'error'
+  ) {
+    return 'is-warning';
+  }
+
+  if (eventType.includes('succeeded') || status === 'succeeded') {
+    return 'is-success';
+  }
+
+  return '';
+}
+
+function runLogToneClass(level) {
+  const normalizedLevel = String(level ?? '').toLowerCase();
+  if (normalizedLevel === 'warn' || normalizedLevel === 'error') {
+    return 'is-warning';
+  }
+  return '';
 }
 
 function summarizeRunEventTitle(event) {
@@ -6548,10 +6682,7 @@ function summarizeRunEventDetail(event) {
   }
 
   if (event?.payload && typeof event.payload === 'object') {
-    const payloadSummary = Object.entries(event.payload)
-      .slice(0, 2)
-      .map(([key, value]) => `${key}: ${String(value)}`)
-      .join(' · ');
+    const payloadSummary = summarizeRunEventPayloadForDetail(event.payload);
 
     if (payloadSummary) {
       detailParts.push(payloadSummary);
@@ -6559,6 +6690,40 @@ function summarizeRunEventDetail(event) {
   }
 
   return detailParts.join(' · ') || 'No additional detail';
+}
+
+function summarizeRunEventPayloadForDetail(payload) {
+  const summaryParts = [];
+
+  if (payload.status) {
+    summaryParts.push(humanizeRunStatus(payload.status));
+  }
+
+  if (payload.category) {
+    summaryParts.push(humanizeRunStatus(payload.category));
+  }
+
+  if (payload.level) {
+    summaryParts.push(humanizeRunStatus(payload.level));
+  }
+
+  if (payload.type_id) {
+    summaryParts.push(humanizeRunStatus(payload.type_id));
+  }
+
+  if (Number.isFinite(payload.attempt)) {
+    summaryParts.push(payload.attempt === 1 ? '1 attempt' : `${payload.attempt} attempts`);
+  }
+
+  if (Number.isFinite(payload.planned_nodes)) {
+    summaryParts.push(`${payload.planned_nodes} planned`);
+  }
+
+  if (Number.isFinite(payload.completed_nodes)) {
+    summaryParts.push(`${payload.completed_nodes} completed`);
+  }
+
+  return summaryParts.slice(0, 2).join(' · ');
 }
 
 function formatRunLogLevel(level) {
@@ -6578,6 +6743,26 @@ function formatRunLogLevel(level) {
   }
 
   return 'I';
+}
+
+function summarizeRunLogTitle(entry, run) {
+  const normalizedLevel = String(entry?.level ?? '').toLowerCase();
+  const message = String(entry?.message ?? '');
+  const runErrorMessage = String(run?.error?.message ?? '');
+
+  if (runErrorMessage && message.includes(runErrorMessage)) {
+    return 'Failed';
+  }
+
+  if (normalizedLevel === 'error') {
+    return 'Error';
+  }
+
+  if (normalizedLevel === 'warn') {
+    return 'Warning';
+  }
+
+  return message || 'Log entry';
 }
 
 function summarizeRunLogDetail(entry) {

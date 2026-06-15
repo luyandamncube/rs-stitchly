@@ -34,6 +34,63 @@ const DEMO_EMAIL: &str = "builder@stitchly.dev";
 const DEMO_PASSWORD: &str = "stitchly";
 const DEMO_DISPLAY_NAME: &str = "Builder";
 const SESSION_TTL_DAYS: i64 = 30;
+const WORKFLOW_DUCKDB_MIRROR_TABLE_SQL: &str = "
+        create table if not exists runs.workflow_runs (
+            run_id varchar not null,
+            workspace_id varchar not null,
+            workflow_id varchar not null,
+            workflow_version integer not null,
+            status varchar not null,
+            trigger_kind varchar,
+            started_at varchar,
+            finished_at varchar,
+            duration_ms bigint,
+            error_category varchar,
+            error_message varchar,
+            error_count bigint not null default 0,
+            retry_count bigint not null default 0,
+            node_count integer not null default 0,
+            completed_node_count integer not null default 0,
+            snapshot_json text not null,
+            created_at varchar not null,
+            updated_at varchar not null
+        );
+
+        create table if not exists runs.node_runs (
+            run_id varchar not null,
+            node_id varchar not null,
+            type_id varchar not null,
+            status varchar not null,
+            attempt integer not null default 0,
+            started_at varchar,
+            finished_at varchar,
+            duration_ms bigint,
+            log_count bigint not null default 0,
+            error_category varchar,
+            error_message varchar,
+            last_output_json text,
+            created_at varchar not null,
+            updated_at varchar not null
+        );
+
+        create table if not exists outputs.node_outputs (
+            run_id varchar not null,
+            node_id varchar not null,
+            output_data_type varchar not null,
+            output_json text not null,
+            output_text_preview varchar,
+            produced_at varchar not null
+        );
+
+        create table if not exists runs.table_output_materializations (
+            run_id varchar not null,
+            node_id varchar not null,
+            target_schema varchar not null,
+            target_table varchar not null,
+            write_mode varchar not null,
+            materialized_at varchar not null
+        );
+";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1897,7 +1954,7 @@ impl PlatformStore {
         })?;
 
         let duckdb_path = db_dir.join("workflow.duckdb");
-        initialize_workflow_duckdb(&duckdb_path)?;
+        initialize_workflow_duckdb_if_absent(&duckdb_path)?;
 
         Ok(())
     }
@@ -3058,6 +3115,10 @@ fn persist_workflow_duckdb_run_snapshot(
 
     connection.execute("begin transaction", [])?;
     connection.execute(
+        "delete from runs.workflow_runs where run_id = ?1",
+        [snapshot.run_id.as_str()],
+    )?;
+    connection.execute(
         "delete from runs.node_runs where run_id = ?1",
         [snapshot.run_id.as_str()],
     )?;
@@ -3065,9 +3126,13 @@ fn persist_workflow_duckdb_run_snapshot(
         "delete from outputs.node_outputs where run_id = ?1",
         [snapshot.run_id.as_str()],
     )?;
+    connection.execute(
+        "delete from runs.table_output_materializations where run_id = ?1",
+        [snapshot.run_id.as_str()],
+    )?;
 
     connection.execute(
-        "insert or replace into runs.workflow_runs (
+        "insert into runs.workflow_runs (
             run_id,
             workspace_id,
             workflow_id,
@@ -3130,7 +3195,7 @@ fn persist_workflow_duckdb_run_snapshot(
             .map(|(started_at, finished_at)| (*finished_at - *started_at).num_milliseconds());
 
         connection.execute(
-            "insert or replace into runs.node_runs (
+            "insert into runs.node_runs (
                 run_id,
                 node_id,
                 type_id,
@@ -3176,7 +3241,7 @@ fn persist_workflow_duckdb_run_snapshot(
                 .context("failed to serialize duckdb workflow output")?;
             let output_text_preview = summarize_typed_value_preview(last_output);
             connection.execute(
-                "insert or replace into outputs.node_outputs (
+                "insert into outputs.node_outputs (
                     run_id,
                     node_id,
                     output_data_type,
@@ -3741,7 +3806,7 @@ fn materialize_mirrored_table_output(
         .unwrap_or(payload.table_name.as_str());
 
     connection.execute(
-        "insert or replace into runs.table_output_materializations (
+        "insert into runs.table_output_materializations (
             run_id,
             node_id,
             target_schema,
@@ -3788,13 +3853,25 @@ fn warn_workflow_duckdb_run_sync_failure(
 }
 
 fn workflow_duckdb_run_sync_enabled() -> bool {
-    !matches!(
+    #[cfg(test)]
+    if let Some(enabled) = WORKFLOW_DUCKDB_RUN_SYNC_ENABLED_TEST_OVERRIDE.with(std::cell::Cell::get)
+    {
+        return enabled;
+    }
+
+    matches!(
         env::var("STITCHLY_ENABLE_WORKFLOW_RUN_DUCKDB_SYNC")
             .ok()
             .as_deref()
             .map(|value| value.trim().to_ascii_lowercase()),
-        Some(value) if matches!(value.as_str(), "0" | "false" | "no" | "off")
+        Some(value) if matches!(value.as_str(), "1" | "true" | "yes" | "on")
     )
+}
+
+#[cfg(test)]
+thread_local! {
+    static WORKFLOW_DUCKDB_RUN_SYNC_ENABLED_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
 }
 
 fn truncate_for_preview(value: &str, max_chars: usize) -> String {
@@ -4313,69 +4390,115 @@ fn initialize_workflow_duckdb(database_path: &Path) -> anyhow::Result<()> {
         create schema if not exists staging;
         create schema if not exists tables;
         create schema if not exists outputs;
-
-        create table if not exists runs.workflow_runs (
-            run_id varchar primary key,
-            workspace_id varchar not null,
-            workflow_id varchar not null,
-            workflow_version integer not null,
-            status varchar not null,
-            trigger_kind varchar,
-            started_at varchar,
-            finished_at varchar,
-            duration_ms bigint,
-            error_category varchar,
-            error_message varchar,
-            error_count bigint not null default 0,
-            retry_count bigint not null default 0,
-            node_count integer not null default 0,
-            completed_node_count integer not null default 0,
-            snapshot_json text not null,
-            created_at varchar not null,
-            updated_at varchar not null
-        );
-
-        create table if not exists runs.node_runs (
-            run_id varchar not null,
-            node_id varchar not null,
-            type_id varchar not null,
-            status varchar not null,
-            attempt integer not null default 0,
-            started_at varchar,
-            finished_at varchar,
-            duration_ms bigint,
-            log_count bigint not null default 0,
-            error_category varchar,
-            error_message varchar,
-            last_output_json text,
-            created_at varchar not null,
-            updated_at varchar not null,
-            primary key (run_id, node_id)
-        );
-
-        create table if not exists outputs.node_outputs (
-            run_id varchar not null,
-            node_id varchar not null,
-            output_data_type varchar not null,
-            output_json text not null,
-            output_text_preview varchar,
-            produced_at varchar not null,
-            primary key (run_id, node_id)
-        );
-
-        create table if not exists runs.table_output_materializations (
-            run_id varchar not null,
-            node_id varchar not null,
-            target_schema varchar not null,
-            target_table varchar not null,
-            write_mode varchar not null,
-            materialized_at varchar not null,
-            primary key (run_id, node_id)
-        );
         ",
     )?;
+    connection.execute_batch(WORKFLOW_DUCKDB_MIRROR_TABLE_SQL)?;
 
     Ok(())
+}
+
+fn initialize_workflow_duckdb_if_absent(database_path: &Path) -> anyhow::Result<()> {
+    if database_path.exists() {
+        return Ok(());
+    }
+
+    initialize_workflow_duckdb(database_path)
+}
+
+fn reset_workflow_duckdb_run_mirror_tables(database_path: &Path) -> anyhow::Result<()> {
+    let connection = DuckDbConnection::open(database_path).with_context(|| {
+        format!(
+            "failed to open workflow duckdb for run mirror repair at `{}`",
+            database_path.display()
+        )
+    })?;
+    connection.execute_batch(
+        "
+        create schema if not exists runs;
+        create schema if not exists outputs;
+
+        drop table if exists outputs.node_outputs;
+        drop table if exists runs.node_runs;
+        drop table if exists runs.workflow_runs;
+        drop table if exists runs.table_output_materializations;
+        ",
+    )?;
+    connection.execute_batch(WORKFLOW_DUCKDB_MIRROR_TABLE_SQL)?;
+    Ok(())
+}
+
+fn workflow_duckdb_run_mirror_tables_have_primary_keys(
+    database_path: &Path,
+) -> anyhow::Result<bool> {
+    let connection = DuckDbConnection::open(database_path).with_context(|| {
+        format!(
+            "failed to open workflow duckdb for run mirror schema inspection at `{}`",
+            database_path.display()
+        )
+    })?;
+    let primary_key_count: i64 = connection.query_row(
+        "select count(*)
+         from information_schema.table_constraints
+         where constraint_type = 'PRIMARY KEY'
+           and (
+             (table_schema = 'runs' and table_name in ('workflow_runs', 'node_runs', 'table_output_materializations'))
+             or (table_schema = 'outputs' and table_name = 'node_outputs')
+           )",
+        [],
+        |row| row.get(0),
+    )?;
+
+    Ok(primary_key_count > 0)
+}
+
+fn quarantine_workflow_duckdb_file(
+    database_path: &Path,
+    reason: &str,
+) -> anyhow::Result<Option<PathBuf>> {
+    if !database_path.exists() {
+        return Ok(None);
+    }
+
+    let quarantine_suffix = format!("corrupt.{}", Utc::now().format("%Y%m%d%H%M%S"));
+    let quarantine_path = database_path.with_extension(format!(
+        "{}.{quarantine_suffix}",
+        database_path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or("duckdb")
+    ));
+
+    fs::rename(database_path, &quarantine_path).with_context(|| {
+        format!(
+            "workflow DuckDB at `{}` failed initialization and could not be quarantined at `{}`. Failure reason: {reason}",
+            database_path.display(),
+            quarantine_path.display()
+        )
+    })?;
+
+    for sidecar_extension in ["wal", "tmp"] {
+        let sidecar_path = database_path.with_extension(format!(
+            "{}.{sidecar_extension}",
+            database_path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .unwrap_or("duckdb")
+        ));
+        if sidecar_path.exists() {
+            let sidecar_quarantine_path =
+                sidecar_path.with_extension(format!("{sidecar_extension}.{quarantine_suffix}"));
+            fs::rename(&sidecar_path, &sidecar_quarantine_path).with_context(|| {
+                format!(
+                    "workflow DuckDB sidecar `{}` could not be quarantined at `{}` after `{}` failed initialization",
+                    sidecar_path.display(),
+                    sidecar_quarantine_path.display(),
+                    database_path.display()
+                )
+            })?;
+        }
+    }
+
+    Ok(Some(quarantine_path))
 }
 
 impl PlatformStore {
@@ -4408,8 +4531,46 @@ impl PlatformStore {
                 )
             })?;
         }
-        initialize_workflow_duckdb(&duckdb_path)?;
-        persist_workflow_duckdb_run_snapshot(&duckdb_path, workspace_id, snapshot)
+        if let Err(error) = initialize_workflow_duckdb(&duckdb_path) {
+            let reason = error.to_string();
+            quarantine_workflow_duckdb_file(&duckdb_path, &reason)?;
+            initialize_workflow_duckdb(&duckdb_path).with_context(|| {
+                format!(
+                    "failed to recreate workflow DuckDB at `{}` after initialization failure: {reason}",
+                    duckdb_path.display()
+                )
+            })?;
+        }
+        let mirror_tables_have_primary_keys =
+            workflow_duckdb_run_mirror_tables_have_primary_keys(&duckdb_path).unwrap_or(true);
+        if mirror_tables_have_primary_keys {
+            reset_workflow_duckdb_run_mirror_tables(&duckdb_path).with_context(|| {
+                format!(
+                    "failed to rebuild indexed workflow DuckDB run mirror tables at `{}` before persistence",
+                    duckdb_path.display()
+                )
+            })?;
+        }
+
+        match persist_workflow_duckdb_run_snapshot(&duckdb_path, workspace_id, snapshot) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let first_failure = error.to_string();
+                reset_workflow_duckdb_run_mirror_tables(&duckdb_path).with_context(|| {
+                    format!(
+                        "failed to repair workflow DuckDB run mirror tables at `{}` after persistence failure: {first_failure}",
+                        duckdb_path.display()
+                    )
+                })?;
+                persist_workflow_duckdb_run_snapshot(&duckdb_path, workspace_id, snapshot)
+                    .with_context(|| {
+                        format!(
+                            "failed to persist workflow DuckDB run mirror after repairing mirror tables at `{}`. Original failure: {first_failure}",
+                            duckdb_path.display()
+                        )
+                    })
+            }
+        }
     }
 }
 
@@ -4475,11 +4636,28 @@ mod tests {
 
     use super::{
         normalize_workspace_catalog_query, resolve_duckdb_cli_path, GoogleConnectionTokens,
-        GoogleIdentityProfile, PlatformStore,
+        GoogleIdentityProfile, PlatformStore, WORKFLOW_DUCKDB_RUN_SYNC_ENABLED_TEST_OVERRIDE,
     };
     use workflow_schema::{
         NodePosition, TypedValue, WorkflowDefinition, WorkflowEdge, WorkflowNode,
     };
+
+    struct WorkflowDuckDbRunSyncOverrideGuard {
+        previous: Option<bool>,
+    }
+
+    impl Drop for WorkflowDuckDbRunSyncOverrideGuard {
+        fn drop(&mut self) {
+            WORKFLOW_DUCKDB_RUN_SYNC_ENABLED_TEST_OVERRIDE
+                .with(|override_value| override_value.set(self.previous));
+        }
+    }
+
+    fn enable_workflow_duckdb_run_sync_for_test() -> WorkflowDuckDbRunSyncOverrideGuard {
+        let previous = WORKFLOW_DUCKDB_RUN_SYNC_ENABLED_TEST_OVERRIDE
+            .with(|override_value| override_value.replace(Some(true)));
+        WorkflowDuckDbRunSyncOverrideGuard { previous }
+    }
 
     fn table_output_payload(
         target_schema: &str,
@@ -5605,7 +5783,54 @@ mod tests {
     }
 
     #[test]
-    fn run_snapshot_mirrors_into_workflow_duckdb_by_default() {
+    fn workflow_update_does_not_open_existing_workflow_duckdb() {
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Existing DuckDB Bootstrap Workspace")
+            .expect("workspace");
+        let mut workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+        workflow.name = "Existing DuckDB Bootstrap Flow".to_string();
+
+        let created = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
+            .expect("workflow creates");
+        let duckdb_path = store
+            .workflow_root_path(
+                "usr_builder",
+                &workspace.workspace_id,
+                created.workflow.workflow_id.as_str(),
+            )
+            .join("db")
+            .join("workflow.duckdb");
+        fs::write(&duckdb_path, b"not a duckdb file").expect("replace workflow duckdb");
+
+        workflow.name = "Updated Existing DuckDB Bootstrap Flow".to_string();
+        let updated = store
+            .update_workflow(
+                "usr_builder",
+                &workspace.workspace_id,
+                created.workflow.workflow_id.as_str(),
+                &workflow,
+            )
+            .expect("workflow update should not open existing duckdb")
+            .expect("workflow exists");
+
+        assert_eq!(
+            updated.workflow.name,
+            "Updated Existing DuckDB Bootstrap Flow"
+        );
+        assert_eq!(
+            fs::read(&duckdb_path).expect("workflow duckdb remains"),
+            b"not a duckdb file"
+        );
+    }
+
+    #[test]
+    fn run_snapshot_mirrors_into_workflow_duckdb_when_enabled() {
+        let _sync_guard = enable_workflow_duckdb_run_sync_for_test();
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
             .create_workspace("usr_builder", "Workflow Mirror Workspace")
@@ -5711,6 +5936,7 @@ mod tests {
 
     #[test]
     fn run_snapshot_persists_even_when_workflow_duckdb_mirroring_fails() {
+        let _sync_guard = enable_workflow_duckdb_run_sync_for_test();
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
             .create_workspace("usr_builder", "Mirror Failure Workspace")
@@ -5777,7 +6003,92 @@ mod tests {
     }
 
     #[test]
+    fn run_snapshot_repairs_workflow_duckdb_mirror_tables_without_dropping_staging_data() {
+        let _sync_guard = enable_workflow_duckdb_run_sync_for_test();
+        let store = PlatformStore::for_tests().expect("platform store");
+        let workspace = store
+            .create_workspace("usr_builder", "Mirror Repair Workspace")
+            .expect("workspace");
+        let mut workflow: WorkflowDefinition = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/workflows/basic_text_preview.json"
+        ))
+        .expect("fixture parses");
+        workflow.name = "Mirror Repair Flow".to_string();
+
+        let created = store
+            .create_workflow("usr_builder", &workspace.workspace_id, &workflow)
+            .expect("workflow creates");
+        let workflow_root = store.workflow_root_path(
+            "usr_builder",
+            &workspace.workspace_id,
+            created.workflow.workflow_id.as_str(),
+        );
+        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb opens");
+        duckdb
+            .execute_batch(
+                "create schema if not exists staging;
+                 create table staging.keep_me (id integer);
+                 insert into staging.keep_me values (1);
+                 drop table runs.node_runs;
+                 create table runs.node_runs (run_id varchar primary key);",
+            )
+            .expect("test data and damaged mirror table should be created");
+        drop(duckdb);
+
+        let started_at = Utc
+            .with_ymd_and_hms(2026, 6, 14, 12, 30, 0)
+            .single()
+            .expect("valid datetime");
+        let finished_at = started_at + Duration::seconds(2);
+        let snapshot = RunSnapshot {
+            run_id: "run_duckdb_mirror_repair".to_string(),
+            workflow_id: created.workflow.workflow_id.clone(),
+            workflow_version: created.workflow.version,
+            status: RunStatus::Succeeded,
+            trigger: RunTrigger {
+                kind: TriggerKind::Manual,
+            },
+            started_at: Some(started_at),
+            finished_at: Some(finished_at),
+            node_runs: vec![NodeRunSnapshot {
+                node_id: "input_text".to_string(),
+                type_id: "text_input".to_string(),
+                status: NodeRunStatus::Succeeded,
+                attempt: 1,
+                started_at: Some(started_at),
+                finished_at: Some(finished_at),
+                last_output: Some(TypedValue::text("mirror repair output")),
+                log_count: 1,
+                error: None,
+            }],
+            logs: vec![],
+            error: None,
+        };
+
+        store
+            .persist_run_snapshot(&workspace.workspace_id, Some("usr_builder"), &snapshot)
+            .expect("run snapshot persists after repairing mirror tables");
+
+        let duckdb = DuckDbConnection::open(&duckdb_path).expect("duckdb reopens");
+        let staging_rows: i64 = duckdb
+            .query_row("select count(*) from staging.keep_me", [], |row| row.get(0))
+            .expect("staging table should remain");
+        assert_eq!(staging_rows, 1);
+
+        let mirrored_node_rows: i64 = duckdb
+            .query_row(
+                "select count(*) from runs.node_runs where run_id = ?1",
+                [snapshot.run_id.as_str()],
+                |row| row.get(0),
+            )
+            .expect("node mirror rows should be repaired and persisted");
+        assert_eq!(mirrored_node_rows, 1);
+    }
+
+    #[test]
     fn cancelled_run_updates_do_not_duplicate_mirrored_rows() {
+        let _sync_guard = enable_workflow_duckdb_run_sync_for_test();
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
             .create_workspace("usr_builder", "DuckDB Idempotent Workspace")
@@ -5870,6 +6181,7 @@ mod tests {
 
     #[test]
     fn table_output_snapshot_writes_to_the_configured_target_table() {
+        let _sync_guard = enable_workflow_duckdb_run_sync_for_test();
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
             .create_workspace("usr_builder", "Table Output Workspace")
@@ -5947,6 +6259,7 @@ mod tests {
 
     #[test]
     fn table_output_replace_mode_overwrites_previous_target_rows() {
+        let _sync_guard = enable_workflow_duckdb_run_sync_for_test();
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
             .create_workspace("usr_builder", "Table Output Replace Workspace")
@@ -6060,6 +6373,7 @@ mod tests {
 
     #[test]
     fn table_output_source_table_materialization_copies_filtered_rows_into_target_table() {
+        let _sync_guard = enable_workflow_duckdb_run_sync_for_test();
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
             .create_workspace("usr_builder", "Table Input Output Workspace")
@@ -6204,6 +6518,7 @@ mod tests {
 
     #[test]
     fn table_output_schema_materialization_bootstraps_target_table() {
+        let _sync_guard = enable_workflow_duckdb_run_sync_for_test();
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
             .create_workspace("usr_builder", "Table Schema Output Workspace")
@@ -6307,6 +6622,7 @@ mod tests {
 
     #[test]
     fn table_output_schema_materialization_bootstraps_multiple_target_tables() {
+        let _sync_guard = enable_workflow_duckdb_run_sync_for_test();
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
             .create_workspace("usr_builder", "Multi Table Schema Output Workspace")
@@ -6402,6 +6718,7 @@ mod tests {
 
     #[test]
     fn table_output_schema_materialization_adds_new_tables_when_primary_already_exists() {
+        let _sync_guard = enable_workflow_duckdb_run_sync_for_test();
         let store = PlatformStore::for_tests().expect("platform store");
         let workspace = store
             .create_workspace("usr_builder", "Existing Primary Schema Output Workspace")

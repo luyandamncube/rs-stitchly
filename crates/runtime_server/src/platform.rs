@@ -7945,6 +7945,7 @@ fn data_type_to_db(data_type: &workflow_schema::DataType) -> &'static str {
         workflow_schema::DataType::FileRef => "file_ref",
         workflow_schema::DataType::DirectoryRef => "directory_ref",
         workflow_schema::DataType::TableRef => "table_ref",
+        workflow_schema::DataType::TableRefCollection => "table_ref_collection",
         workflow_schema::DataType::DatasetRef => "dataset_ref",
     }
 }

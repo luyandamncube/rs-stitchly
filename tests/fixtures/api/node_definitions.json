@@ -1001,6 +1001,136 @@
       }
     },
     {
+      "type_id": "map",
+      "version": 1,
+      "display_name": "Map",
+      "category": "control",
+      "description": "Iterates a table reference collection and emits a mapped collection for downstream collection-aware nodes.",
+      "inputs": [
+        {
+          "port_id": "items",
+          "display_name": "Items",
+          "direction": "input",
+          "data_type": "table_ref_collection",
+          "required": true,
+          "multiple": false,
+          "description": "Ordered collection of table references to filter or remap one by one."
+        }
+      ],
+      "outputs": [
+        {
+          "port_id": "items",
+          "display_name": "Items",
+          "direction": "output",
+          "data_type": "table_ref_collection",
+          "required": false,
+          "multiple": false,
+          "description": "Mapped table reference collection after per-table iteration and renaming."
+        }
+      ],
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "output_schema_name": {
+            "type": "string",
+            "default": ""
+          },
+          "output_table_name_prefix": {
+            "type": "string",
+            "default": ""
+          },
+          "output_table_name_suffix": {
+            "type": "string",
+            "default": ""
+          },
+          "selected_tables": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          }
+        }
+      },
+      "runtime": {
+        "executor_kind": "rust_native",
+        "isolation_mode": "in_process"
+      },
+      "capabilities": {
+        "reads_external_state": false,
+        "writes_external_state": false,
+        "produces_durable_artifacts": false,
+        "supports_preview": true,
+        "requires_connection": false,
+        "may_emit_structured_logs": true
+      },
+      "ui": {
+        "icon": "logic",
+        "color_token": "var(--node-transform)",
+        "default_width": 336,
+        "default_height": 176,
+        "help_text": "Iterate over a table collection and remap each table reference in sequence.",
+        "node_card": {
+          "variant": "compute",
+          "icon_key": "logic",
+          "top_chip": {
+            "visible": false,
+            "text": null
+          },
+          "header": {
+            "title_source": "instance_label_or_display_name",
+            "show_overflow_menu": true
+          },
+          "rows": [
+            {
+              "row_id": "map_item_count",
+              "kind": "kv",
+              "label": "Tables",
+              "value": {
+                "source": "derived",
+                "path": "map_item_count"
+              },
+              "formatter": "text",
+              "icon_key": "metric",
+              "truncate": false
+            },
+            {
+              "row_id": "output_schema_name",
+              "kind": "kv",
+              "label": "Target",
+              "value": {
+                "source": "config",
+                "path": "output_schema_name"
+              },
+              "formatter": "text",
+              "icon_key": "table_output",
+              "truncate": false
+            }
+          ],
+          "footer": {
+            "kind": "metric",
+            "label": "Scope",
+            "value": {
+              "source": "derived",
+              "path": "map_scope"
+            },
+            "formatter": "text",
+            "icon_key": "status"
+          },
+          "handles": {
+            "input_layout": "single_left",
+            "output_layout": "single_right",
+            "show_labels": "never",
+            "align_to_rows": true
+          },
+          "size": {
+            "width": 336,
+            "density": "comfortable"
+          }
+        }
+      }
+    },
+    {
       "type_id": "text_transform",
       "version": 1,
       "display_name": "Text Transform",

@@ -337,6 +337,55 @@ const BUILTIN_NODE_CARD_FALLBACKS = {
       density: 'comfortable'
     }
   },
+  map: {
+    variant: 'compute',
+    icon_key: 'logic',
+    top_chip: {
+      visible: false,
+      text: null
+    },
+    header: {
+      title_source: 'instance_label_or_display_name',
+      show_overflow_menu: true
+    },
+    rows: [
+      {
+        row_id: 'map_item_count',
+        kind: 'kv',
+        label: 'Tables',
+        value: { source: 'derived', path: 'map_item_count' },
+        formatter: 'text',
+        icon_key: 'metric',
+        truncate: false
+      },
+      {
+        row_id: 'output_schema_name',
+        kind: 'kv',
+        label: 'Target',
+        value: { source: 'config', path: 'output_schema_name' },
+        formatter: 'text',
+        icon_key: 'table_output',
+        truncate: false
+      }
+    ],
+    footer: {
+      kind: 'metric',
+      label: 'Scope',
+      value: { source: 'derived', path: 'map_scope' },
+      formatter: 'text',
+      icon_key: 'status'
+    },
+    handles: {
+      input_layout: 'single_left',
+      output_layout: 'single_right',
+      show_labels: 'never',
+      align_to_rows: true
+    },
+    size: {
+      width: 336,
+      density: 'comfortable'
+    }
+  },
   table_output: {
     variant: 'output',
     icon_key: 'table_output',
@@ -757,6 +806,7 @@ function buildNodeCardContext({ workflow, node, nodeDefinitions }) {
     workflow,
     node?.node_id
   )
+  const mapCard = buildMapCardDerivedValues(node?.config ?? {})
 
   return {
     config: node?.config ?? {},
@@ -786,8 +836,20 @@ function buildNodeCardContext({ workflow, node, nodeDefinitions }) {
       dolt_diff_filter: doltDiffExportCard.filter,
       dolt_diff_range: doltDiffExportCard.range,
       load_bundle_mode: loadToDuckDbCard.bundleMode,
-      load_merge_context: loadToDuckDbCard.mergeContext
+      load_merge_context: loadToDuckDbCard.mergeContext,
+      map_item_count: mapCard.itemCount,
+      map_scope: mapCard.scope
     }
+  }
+}
+
+function buildMapCardDerivedValues(config = {}) {
+  const selectedTables = Array.isArray(config.selected_tables) ? config.selected_tables : []
+  const itemCount = selectedTables.length
+
+  return {
+    itemCount,
+    scope: itemCount > 0 ? `${itemCount} selected` : 'all tables'
   }
 }
 

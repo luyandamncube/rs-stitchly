@@ -2028,6 +2028,121 @@ pub fn builtin_node_definitions() -> Vec<NodeDefinition> {
             },
         },
         NodeDefinition {
+            type_id: "map".to_string(),
+            version: 1,
+            display_name: "Map".to_string(),
+            category: "control".to_string(),
+            description:
+                "Iterates a table reference collection and emits a mapped collection for downstream collection-aware nodes."
+                    .to_string(),
+            inputs: vec![PortDefinition {
+                port_id: "items".to_string(),
+                display_name: "Items".to_string(),
+                direction: PortDirection::Input,
+                data_type: DataType::TableRefCollection,
+                required: true,
+                multiple: false,
+                description: Some(
+                    "Ordered collection of table references to filter or remap one by one."
+                        .to_string(),
+                ),
+            }],
+            outputs: vec![PortDefinition {
+                port_id: "items".to_string(),
+                display_name: "Items".to_string(),
+                direction: PortDirection::Output,
+                data_type: DataType::TableRefCollection,
+                required: false,
+                multiple: false,
+                description: Some(
+                    "Mapped table reference collection after per-table iteration and renaming."
+                        .to_string(),
+                ),
+            }],
+            config_schema: json!({
+                "type": "object",
+                "properties": {
+                    "output_schema_name": {
+                        "type": "string",
+                        "default": ""
+                    },
+                    "output_table_name_prefix": {
+                        "type": "string",
+                        "default": ""
+                    },
+                    "output_table_name_suffix": {
+                        "type": "string",
+                        "default": ""
+                    },
+                    "selected_tables": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "default": []
+                    }
+                }
+            }),
+            runtime: RuntimeBinding {
+                executor_kind: ExecutorKind::RustNative,
+                adapter_id: None,
+                isolation_mode: IsolationMode::InProcess,
+            },
+            capabilities: NodeCapabilities {
+                supports_preview: true,
+                may_emit_structured_logs: true,
+                ..NodeCapabilities::default()
+            },
+            ui: NodeUi {
+                icon: "logic".to_string(),
+                color_token: "var(--node-transform)".to_string(),
+                default_width: 336,
+                default_height: 176,
+                help_text: Some(
+                    "Iterate over a table collection and remap each table reference in sequence."
+                        .to_string(),
+                ),
+                node_card: Some(NodeCardUi {
+                    variant: "compute".to_string(),
+                    icon_key: "logic".to_string(),
+                    top_chip: hidden_top_chip(),
+                    header: standard_header(),
+                    rows: vec![
+                        node_card_row(
+                            "map_item_count",
+                            "kv",
+                            "Tables",
+                            "derived",
+                            "map_item_count",
+                            "text",
+                            Some("metric"),
+                            false,
+                        ),
+                        node_card_row(
+                            "output_schema_name",
+                            "kv",
+                            "Target",
+                            "config",
+                            "output_schema_name",
+                            "text",
+                            Some("table_output"),
+                            false,
+                        ),
+                    ],
+                    footer: Some(node_card_footer(
+                        "metric",
+                        "Scope",
+                        "derived",
+                        "map_scope",
+                        "text",
+                        Some("status"),
+                    )),
+                    handles: node_card_handles("single_left", "single_right"),
+                    size: node_card_size(336),
+                }),
+            },
+        },
+        NodeDefinition {
             type_id: "table_schema".to_string(),
             version: 1,
             display_name: "Table Schema".to_string(),

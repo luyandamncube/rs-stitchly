@@ -12,7 +12,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::Utc;
 use duckdb::Connection as DuckDbConnection;
 use node_registry::NodeDefinition;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use thiserror::Error;
 use workflow_schema::{DataType, TypedValue, WorkflowNode};
@@ -99,6 +99,7 @@ impl RuntimeAdapters {
             "dolt_dump" => execute_dolt_dump(node, inputs, context),
             "dolt_diff_export" => execute_dolt_diff_export(node, inputs),
             "load_to_duckdb" => execute_load_to_duckdb(node, inputs, context),
+            "map" => execute_map_table_collection(node, inputs),
             "quality_check" => execute_quality_check(node, inputs),
             "sql_transform" => execute_sql_transform(node, inputs, context),
             "table_merge" => execute_table_merge(node, inputs, context),
@@ -983,7 +984,7 @@ enum TableInputShape {
     TableSchema,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 struct TableReferencePayload {
     kind: String,
     catalog: String,
@@ -1008,6 +1009,29 @@ struct TableReferencePayload {
     load_manifest_ref: Option<Value>,
     #[serde(default)]
     metadata: Option<Value>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+struct TableReferenceCollectionPayload {
+    kind: String,
+    #[serde(default)]
+    table_refs: Vec<TableReferencePayload>,
+    #[serde(default)]
+    manifest_ref: Option<Value>,
+    #[serde(default)]
+    metadata: Option<Value>,
+}
+
+#[derive(Deserialize)]
+struct MapTableCollectionConfig {
+    #[serde(default)]
+    output_schema_name: Option<String>,
+    #[serde(default)]
+    output_table_name_prefix: Option<String>,
+    #[serde(default)]
+    output_table_name_suffix: Option<String>,
+    #[serde(default)]
+    selected_tables: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -4919,6 +4943,169 @@ fn execute_sql_transform(
     })
 }
 
+fn execute_map_table_collection(
+    node: &WorkflowNode,
+    inputs: &PortValues,
+) -> Result<NodeExecutionResult, AdapterError> {
+    let config: MapTableCollectionConfig =
+        serde_json::from_value(node.config.clone()).map_err(|error| {
+            AdapterError::InvalidConfig {
+                node_id: node.node_id.clone(),
+                message: error.to_string(),
+            }
+        })?;
+
+    let collection_input = inputs
+        .get("items")
+        .or_else(|| inputs.get("table_refs"))
+        .ok_or_else(|| AdapterError::MissingInput {
+            node_id: node.node_id.clone(),
+            port: "items".to_string(),
+        })?;
+
+    if collection_input.data_type != DataType::TableRefCollection {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: "map expects a `table_ref_collection` input.".to_string(),
+        });
+    }
+
+    let collection_payload: TableReferenceCollectionPayload =
+        serde_json::from_value(collection_input.value.clone()).map_err(|error| {
+            AdapterError::ExecutionFailed {
+                node_id: node.node_id.clone(),
+                message: format!("invalid table reference collection payload: {error}"),
+            }
+        })?;
+
+    if collection_payload.kind != "table_reference_collection" {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: format!(
+                "unsupported table reference collection kind `{}`",
+                collection_payload.kind
+            ),
+        });
+    }
+
+    let selected_tables = normalize_selected_table_names(Some(config.selected_tables));
+    let target_schema = config
+        .output_schema_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let output_prefix = config
+        .output_table_name_prefix
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default();
+    let output_suffix = config
+        .output_table_name_suffix
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default();
+
+    let mut mapped_tables = Vec::new();
+    let mut skipped_tables = Vec::new();
+
+    for (index, table_payload) in collection_payload.table_refs.iter().cloned().enumerate() {
+        let source_table_name = table_payload.table_name.trim().to_string();
+        let is_selected = selected_tables.is_empty()
+            || selected_tables
+                .iter()
+                .any(|candidate| candidate.eq_ignore_ascii_case(&source_table_name));
+
+        if !is_selected {
+            skipped_tables.push(source_table_name);
+            continue;
+        }
+
+        let mapped_table_name = format!("{output_prefix}{}{output_suffix}", source_table_name);
+        let mapped_schema_name = target_schema
+            .map(str::to_string)
+            .unwrap_or_else(|| table_payload.schema_name.clone());
+        let mut metadata = match table_payload.metadata.clone() {
+            Some(Value::Object(object)) => Value::Object(object),
+            Some(_) | None => json!({}),
+        };
+        if let Some(metadata_object) = metadata.as_object_mut() {
+            metadata_object.insert(
+                "map".to_string(),
+                json!({
+                    "kind": "table_collection_map_item",
+                    "item_index": index,
+                    "source_table": source_table_name,
+                    "mapped_schema": mapped_schema_name,
+                    "mapped_table": mapped_table_name,
+                }),
+            );
+        }
+
+        mapped_tables.push(TableReferencePayload {
+            schema_name: mapped_schema_name,
+            table_name: mapped_table_name.clone(),
+            output_alias: mapped_table_name,
+            metadata: Some(metadata),
+            ..table_payload
+        });
+    }
+
+    let mut output_metadata = match collection_payload.metadata.clone() {
+        Some(Value::Object(object)) => Value::Object(object),
+        Some(_) | None => json!({}),
+    };
+    if let Some(metadata_object) = output_metadata.as_object_mut() {
+        metadata_object.insert(
+            "map".to_string(),
+            json!({
+                "kind": "table_collection_map",
+                "input_count": collection_payload.table_refs.len(),
+                "output_count": mapped_tables.len(),
+                "skipped_tables": skipped_tables,
+                "selected_tables": selected_tables,
+                "output_schema_name": target_schema,
+                "output_table_name_prefix": output_prefix,
+                "output_table_name_suffix": output_suffix,
+            }),
+        );
+    }
+
+    let mapped_collection = TableReferenceCollectionPayload {
+        kind: "table_reference_collection".to_string(),
+        table_refs: mapped_tables,
+        manifest_ref: collection_payload.manifest_ref.clone(),
+        metadata: Some(output_metadata),
+    };
+
+    let mut outputs = PortValues::new();
+    outputs.insert(
+        "items".to_string(),
+        TypedValue {
+            data_type: DataType::TableRefCollection,
+            value: serde_json::to_value(&mapped_collection).map_err(|error| {
+                AdapterError::ExecutionFailed {
+                    node_id: node.node_id.clone(),
+                    message: format!("failed to serialize mapped table collection: {error}"),
+                }
+            })?,
+        },
+    );
+
+    Ok(NodeExecutionResult {
+        outputs,
+        logs: vec![format!(
+            "Mapped {} table reference(s) across `{}` using `map`{}.",
+            mapped_collection.table_refs.len(),
+            node.node_id,
+            if skipped_tables.is_empty() {
+                String::new()
+            } else {
+                format!("; skipped {}", skipped_tables.len())
+            }
+        )],
+    })
+}
+
 fn execute_quality_check(
     node: &WorkflowNode,
     inputs: &PortValues,
@@ -8444,6 +8631,201 @@ mod tests {
         assert_eq!(
             payload.value["load_manifest_ref"]["path"],
             json!("artifacts/load_to_duckdb/earnings/a34ef9c/load_manifest.json")
+        );
+    }
+
+    #[test]
+    fn table_reference_collection_payload_serializes_table_refs() {
+        let payload = TableReferenceCollectionPayload {
+            kind: "table_reference_collection".to_string(),
+            table_refs: vec![
+                TableReferencePayload {
+                    kind: "table_reference".to_string(),
+                    catalog: "workflow.duckdb".to_string(),
+                    schema_name: "staging".to_string(),
+                    table_name: "rates__us_treasury__snapshot".to_string(),
+                    output_alias: "rates__us_treasury__snapshot".to_string(),
+                    selected_columns: vec!["trade_date".to_string(), "rate".to_string()],
+                    row_filter: Some("rate > 0".to_string()),
+                    row_limit: Some(100),
+                    _refresh_schema: true,
+                    open_in_catalog: false,
+                    schema_definition: None,
+                    schema_definitions: None,
+                    load_manifest_ref: Some(json!({
+                        "kind": "load_manifest_ref",
+                        "path": "artifacts/load_to_duckdb/rates/load_manifest.json"
+                    })),
+                    metadata: Some(json!({
+                        "source_table": "us_treasury"
+                    })),
+                },
+                TableReferencePayload {
+                    kind: "table_reference".to_string(),
+                    catalog: "workflow.duckdb".to_string(),
+                    schema_name: "staging".to_string(),
+                    table_name: "rates__benchmarks__snapshot".to_string(),
+                    output_alias: "rates__benchmarks__snapshot".to_string(),
+                    selected_columns: vec![],
+                    row_filter: None,
+                    row_limit: None,
+                    _refresh_schema: false,
+                    open_in_catalog: true,
+                    schema_definition: None,
+                    schema_definitions: None,
+                    load_manifest_ref: None,
+                    metadata: None,
+                },
+            ],
+            manifest_ref: Some(json!({
+                "kind": "table_reference_collection_manifest",
+                "table_count": 2
+            })),
+            metadata: Some(json!({
+                "repository": "post-no-preference/rates"
+            })),
+        };
+
+        let encoded = serde_json::to_value(&payload).expect("collection should serialize");
+
+        assert_eq!(encoded["kind"], json!("table_reference_collection"));
+        assert_eq!(encoded["table_refs"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            encoded["table_refs"][0]["table_name"],
+            json!("rates__us_treasury__snapshot")
+        );
+        assert_eq!(encoded["table_refs"][1]["open_in_catalog"], json!(true));
+        assert_eq!(encoded["manifest_ref"]["table_count"], json!(2));
+    }
+
+    #[test]
+    fn map_table_collection_filters_and_renames_tables() {
+        let registry = builtin_node_definitions();
+        let definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "map")
+            .expect("map definition");
+
+        let node = WorkflowNode {
+            node_id: "map".to_string(),
+            type_id: "map".to_string(),
+            definition_version: 1,
+            label: Some("Map".to_string()),
+            config: json!({
+                "output_schema_name": "staging",
+                "output_table_name_prefix": "mapped__",
+                "output_table_name_suffix": "__v1",
+                "selected_tables": ["us_treasury", "libor"]
+            }),
+            position: NodePosition::default(),
+        };
+
+        let input_payload = TableReferenceCollectionPayload {
+            kind: "table_reference_collection".to_string(),
+            table_refs: vec![
+                TableReferencePayload {
+                    kind: "table_reference".to_string(),
+                    catalog: "workflow.duckdb".to_string(),
+                    schema_name: "raw".to_string(),
+                    table_name: "us_treasury".to_string(),
+                    output_alias: "us_treasury".to_string(),
+                    selected_columns: vec![],
+                    row_filter: None,
+                    row_limit: None,
+                    _refresh_schema: false,
+                    open_in_catalog: false,
+                    schema_definition: None,
+                    schema_definitions: None,
+                    load_manifest_ref: None,
+                    metadata: Some(json!({
+                        "source_table": "us_treasury"
+                    })),
+                },
+                TableReferencePayload {
+                    kind: "table_reference".to_string(),
+                    catalog: "workflow.duckdb".to_string(),
+                    schema_name: "raw".to_string(),
+                    table_name: "unrelated".to_string(),
+                    output_alias: "unrelated".to_string(),
+                    selected_columns: vec![],
+                    row_filter: None,
+                    row_limit: None,
+                    _refresh_schema: false,
+                    open_in_catalog: false,
+                    schema_definition: None,
+                    schema_definitions: None,
+                    load_manifest_ref: None,
+                    metadata: None,
+                },
+                TableReferencePayload {
+                    kind: "table_reference".to_string(),
+                    catalog: "workflow.duckdb".to_string(),
+                    schema_name: "raw".to_string(),
+                    table_name: "libor".to_string(),
+                    output_alias: "libor".to_string(),
+                    selected_columns: vec![],
+                    row_filter: None,
+                    row_limit: None,
+                    _refresh_schema: false,
+                    open_in_catalog: true,
+                    schema_definition: None,
+                    schema_definitions: None,
+                    load_manifest_ref: None,
+                    metadata: None,
+                },
+            ],
+            manifest_ref: Some(json!({
+                "kind": "table_reference_collection_manifest"
+            })),
+            metadata: Some(json!({
+                "repository": "post-no-preference/rates"
+            })),
+        };
+
+        let mut inputs = PortValues::new();
+        inputs.insert(
+            "items".to_string(),
+            TypedValue {
+                data_type: DataType::TableRefCollection,
+                value: serde_json::to_value(&input_payload).expect("collection should serialize"),
+            },
+        );
+
+        let result = RuntimeAdapters::default()
+            .execute(definition, &node, &inputs)
+            .expect("map should succeed");
+
+        let output = result
+            .outputs
+            .get("items")
+            .expect("mapped collection output should exist");
+
+        assert_eq!(output.data_type, DataType::TableRefCollection);
+        assert_eq!(output.value["kind"], json!("table_reference_collection"));
+        assert_eq!(output.value["table_refs"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            output.value["table_refs"][0]["table_name"],
+            json!("mapped__us_treasury__v1")
+        );
+        assert_eq!(
+            output.value["table_refs"][0]["schema_name"],
+            json!("staging")
+        );
+        assert_eq!(
+            output.value["table_refs"][0]["metadata"]["map"]["source_table"],
+            json!("us_treasury")
+        );
+        assert_eq!(
+            output.value["table_refs"][1]["table_name"],
+            json!("mapped__libor__v1")
+        );
+        assert_eq!(output.value["metadata"]["map"]["output_count"], json!(2));
+        assert_eq!(
+            output.value["metadata"]["map"]["skipped_tables"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
         );
     }
 

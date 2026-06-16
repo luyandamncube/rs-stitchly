@@ -15,6 +15,7 @@ pub enum DataType {
     FileRef,
     DirectoryRef,
     TableRef,
+    TableRefCollection,
     DatasetRef,
 }
 
@@ -109,7 +110,7 @@ fn default_zoom() -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::WorkflowDefinition;
+    use super::{DataType, WorkflowDefinition};
 
     #[test]
     fn fixture_workflow_parses() {
@@ -120,5 +121,13 @@ mod tests {
         assert_eq!(workflow.workflow_id, "ScJUvQ7dgxHqu7tXtsekiL");
         assert_eq!(workflow.nodes.len(), 2);
         assert_eq!(workflow.edges.len(), 1);
+    }
+
+    #[test]
+    fn table_ref_collection_serializes_as_snake_case() {
+        let data_type = DataType::TableRefCollection;
+        let encoded = serde_json::to_string(&data_type).expect("data type should serialize");
+
+        assert_eq!(encoded, "\"table_ref_collection\"");
     }
 }

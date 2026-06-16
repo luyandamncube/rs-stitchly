@@ -768,6 +768,28 @@ const FALLBACK_NODE_DEFINITIONS = {
     },
     type_id: 'sql_transform'
   },
+  map: {
+    display_name: 'Map',
+    inputs: [
+      {
+        data_type: 'table_ref_collection',
+        multiple: false,
+        port_id: 'items',
+        required: true
+      }
+    ],
+    outputs: [
+      {
+        data_type: 'table_ref_collection',
+        multiple: false,
+        port_id: 'items'
+      }
+    ],
+    ui: {
+      default_width: 336
+    },
+    type_id: 'map'
+  },
   table_merge: {
     display_name: 'Table Merge',
     inputs: [

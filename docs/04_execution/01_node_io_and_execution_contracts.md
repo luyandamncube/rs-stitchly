@@ -227,6 +227,17 @@ This means `send_email` already shows the pattern we should follow:
 - some values come from node config
 - the node contract must state both clearly
 
+### `map`
+
+`map` is the first collection-aware control node in the built-in set.
+
+Its current runtime contract is:
+
+- upstream `items` must provide a `table_ref_collection`
+- the node iterates each table reference in order
+- config may filter or remap each item before emitting the mapped collection
+- the output is a `table_ref_collection` with ordered per-table entries
+
 ## Node Implementation Definition Of Done
 
 When a node becomes real, implementation work should usually include:
@@ -273,4 +284,5 @@ Later additions should probably extend this doc with:
 
 - per-node output payload examples
 - artifact-ref and dataset-ref rules
+- collection-shaped outputs such as `table_ref_collection`
 - richer executor-specific runtime context

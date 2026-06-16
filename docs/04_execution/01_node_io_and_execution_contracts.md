@@ -238,6 +238,17 @@ Its current runtime contract is:
 - config may filter or remap each item before emitting the mapped collection
 - the output is a `table_ref_collection` with ordered per-table entries
 
+### `dolt_dump`
+
+`dolt_dump` exports Dolt tables into a bundle directory and now exposes the exported table list as a first-class manifest.
+
+Its current runtime contract is:
+
+- upstream `repo` must provide a Dolt repo dataset or Dolt change manifest dataset
+- output `bundle` is a `directory_ref` with bundle location, repo metadata, and embedded table manifest
+- output `manifest` is a `dataset_ref` with `kind: dolt_dump_table_manifest`
+- manifest `tables` entries include `source_table`, bundle-relative `file_path`, and optional `row_count`
+
 ## Node Implementation Definition Of Done
 
 When a node becomes real, implementation work should usually include:

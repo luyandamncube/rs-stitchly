@@ -1441,18 +1441,32 @@ pub fn builtin_node_definitions() -> Vec<NodeDefinition> {
                         .to_string(),
                 ),
             }],
-            outputs: vec![PortDefinition {
-                port_id: "bundle".to_string(),
-                display_name: "Bundle".to_string(),
-                direction: PortDirection::Output,
-                data_type: DataType::DirectoryRef,
-                required: false,
-                multiple: false,
-                description: Some(
-                    "Directory reference for the exported file bundle and manifest metadata."
-                        .to_string(),
-                ),
-            }],
+            outputs: vec![
+                PortDefinition {
+                    port_id: "bundle".to_string(),
+                    display_name: "Bundle".to_string(),
+                    direction: PortDirection::Output,
+                    data_type: DataType::DirectoryRef,
+                    required: false,
+                    multiple: false,
+                    description: Some(
+                        "Directory reference for the exported file bundle and manifest metadata."
+                            .to_string(),
+                    ),
+                },
+                PortDefinition {
+                    port_id: "manifest".to_string(),
+                    display_name: "Manifest".to_string(),
+                    direction: PortDirection::Output,
+                    data_type: DataType::DatasetRef,
+                    required: false,
+                    multiple: false,
+                    description: Some(
+                        "Table manifest with exported source tables and bundle-relative file paths."
+                            .to_string(),
+                    ),
+                },
+            ],
             config_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1687,18 +1701,32 @@ pub fn builtin_node_definitions() -> Vec<NodeDefinition> {
                         .to_string(),
                 ),
             }],
-            outputs: vec![PortDefinition {
-                port_id: "table".to_string(),
-                display_name: "Table".to_string(),
-                direction: PortDirection::Output,
-                data_type: DataType::TableRef,
-                required: false,
-                multiple: false,
-                description: Some(
-                    "Workflow-local staging table reference plus load manifest metadata for downstream merge steps."
-                        .to_string(),
-                ),
-            }],
+            outputs: vec![
+                PortDefinition {
+                    port_id: "table".to_string(),
+                    display_name: "Table".to_string(),
+                    direction: PortDirection::Output,
+                    data_type: DataType::TableRef,
+                    required: false,
+                    multiple: false,
+                    description: Some(
+                        "Primary workflow-local staging table reference plus load manifest metadata for legacy downstream merge steps."
+                            .to_string(),
+                    ),
+                },
+                PortDefinition {
+                    port_id: "tables".to_string(),
+                    display_name: "Tables".to_string(),
+                    direction: PortDirection::Output,
+                    data_type: DataType::TableRefCollection,
+                    required: false,
+                    multiple: false,
+                    description: Some(
+                        "Ordered collection of workflow-local staging table references, one per loaded Dolt table."
+                            .to_string(),
+                    ),
+                },
+            ],
             config_schema: json!({
                 "type": "object",
                 "required": ["target_schema"],
@@ -1794,33 +1822,61 @@ pub fn builtin_node_definitions() -> Vec<NodeDefinition> {
             description:
                 "Creates a workflow-local DuckDB view that reshapes staged tables into merge-ready outputs."
                     .to_string(),
-            inputs: vec![PortDefinition {
-                port_id: "table".to_string(),
-                display_name: "Table".to_string(),
-                direction: PortDirection::Input,
-                data_type: DataType::TableRef,
-                required: true,
-                multiple: false,
-                description: Some(
-                    "Workflow-local staging table reference that will be queried by inline SQL."
-                        .to_string(),
-                ),
-            }],
-            outputs: vec![PortDefinition {
-                port_id: "table".to_string(),
-                display_name: "Table".to_string(),
-                direction: PortDirection::Output,
-                data_type: DataType::TableRef,
-                required: false,
-                multiple: false,
-                description: Some(
-                    "Workflow-local transformed table reference backed by a DuckDB view."
-                        .to_string(),
-                ),
-            }],
+            inputs: vec![
+                PortDefinition {
+                    port_id: "table".to_string(),
+                    display_name: "Table".to_string(),
+                    direction: PortDirection::Input,
+                    data_type: DataType::TableRef,
+                    required: false,
+                    multiple: false,
+                    description: Some(
+                        "Workflow-local staging table reference that will be queried by inline SQL."
+                            .to_string(),
+                    ),
+                },
+                PortDefinition {
+                    port_id: "items".to_string(),
+                    display_name: "Tables".to_string(),
+                    direction: PortDirection::Input,
+                    data_type: DataType::TableRefCollection,
+                    required: false,
+                    multiple: false,
+                    description: Some(
+                        "Collection of workflow-local table references to transform one table at a time."
+                            .to_string(),
+                    ),
+                },
+            ],
+            outputs: vec![
+                PortDefinition {
+                    port_id: "table".to_string(),
+                    display_name: "Table".to_string(),
+                    direction: PortDirection::Output,
+                    data_type: DataType::TableRef,
+                    required: false,
+                    multiple: false,
+                    description: Some(
+                        "Workflow-local transformed table reference backed by a DuckDB view."
+                            .to_string(),
+                    ),
+                },
+                PortDefinition {
+                    port_id: "items".to_string(),
+                    display_name: "Tables".to_string(),
+                    direction: PortDirection::Output,
+                    data_type: DataType::TableRefCollection,
+                    required: false,
+                    multiple: false,
+                    description: Some(
+                        "Collection of transformed table references, preserving one output per input table."
+                            .to_string(),
+                    ),
+                },
+            ],
             config_schema: json!({
                 "type": "object",
-                "required": ["target_schema", "output_table_name", "sql_text"],
+                "required": ["target_schema", "sql_text"],
                 "properties": {
                     "target_schema": {
                         "type": "string",
@@ -1829,6 +1885,10 @@ pub fn builtin_node_definitions() -> Vec<NodeDefinition> {
                     "output_table_name": {
                         "type": "string",
                         "default": "normalized_view"
+                    },
+                    "output_table_name_template": {
+                        "type": "string",
+                        "default": "{{table_name}}"
                     },
                     "source_table_name": {
                         "type": "string",
@@ -2539,6 +2599,7 @@ impl Default for NodeCapabilities {
 #[cfg(test)]
 mod tests {
     use super::builtin_node_definitions;
+    use workflow_schema::DataType;
 
     #[test]
     fn builtin_definitions_have_unique_ports() {
@@ -2571,6 +2632,71 @@ mod tests {
                 definition.type_id
             );
         }
+    }
+
+    #[test]
+    fn load_to_duckdb_exposes_legacy_and_collection_outputs() {
+        let definitions = builtin_node_definitions();
+        let definition = definitions
+            .iter()
+            .find(|candidate| candidate.type_id == "load_to_duckdb")
+            .expect("load_to_duckdb definition should exist");
+
+        let table_output = definition
+            .outputs
+            .iter()
+            .find(|port| port.port_id == "table")
+            .expect("legacy table output should remain available");
+        assert_eq!(table_output.data_type, DataType::TableRef);
+
+        let tables_output = definition
+            .outputs
+            .iter()
+            .find(|port| port.port_id == "tables")
+            .expect("tables collection output should be available");
+        assert_eq!(tables_output.data_type, DataType::TableRefCollection);
+        assert!(!tables_output.multiple);
+    }
+
+
+    #[test]
+    fn sql_transform_exposes_legacy_and_collection_ports() {
+        let definitions = builtin_node_definitions();
+        let definition = definitions
+            .iter()
+            .find(|candidate| candidate.type_id == "sql_transform")
+            .expect("sql_transform definition should exist");
+
+        let table_input = definition
+            .inputs
+            .iter()
+            .find(|port| port.port_id == "table")
+            .expect("legacy table input should remain available");
+        assert_eq!(table_input.data_type, DataType::TableRef);
+        assert!(!table_input.required);
+
+        let items_input = definition
+            .inputs
+            .iter()
+            .find(|port| port.port_id == "items")
+            .expect("items collection input should be available");
+        assert_eq!(items_input.data_type, DataType::TableRefCollection);
+        assert!(!items_input.required);
+
+        let table_output = definition
+            .outputs
+            .iter()
+            .find(|port| port.port_id == "table")
+            .expect("legacy table output should remain available");
+        assert_eq!(table_output.data_type, DataType::TableRef);
+
+        let items_output = definition
+            .outputs
+            .iter()
+            .find(|port| port.port_id == "items")
+            .expect("items collection output should be available");
+        assert_eq!(items_output.data_type, DataType::TableRefCollection);
+        assert!(!items_output.multiple);
     }
 
     #[test]

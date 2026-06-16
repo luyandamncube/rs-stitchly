@@ -873,9 +873,18 @@
           "display_name": "Table",
           "direction": "input",
           "data_type": "table_ref",
-          "required": true,
+          "required": false,
           "multiple": false,
           "description": "Workflow-local staging table reference that will be queried by inline SQL."
+        },
+        {
+          "port_id": "items",
+          "display_name": "Tables",
+          "direction": "input",
+          "data_type": "table_ref_collection",
+          "required": false,
+          "multiple": false,
+          "description": "Collection of workflow-local table references to transform one table at a time."
         }
       ],
       "outputs": [
@@ -887,13 +896,21 @@
           "required": false,
           "multiple": false,
           "description": "Workflow-local transformed table reference backed by a DuckDB view."
+        },
+        {
+          "port_id": "items",
+          "display_name": "Tables",
+          "direction": "output",
+          "data_type": "table_ref_collection",
+          "required": false,
+          "multiple": false,
+          "description": "Collection of transformed table references, preserving one output per input table."
         }
       ],
       "config_schema": {
         "type": "object",
         "required": [
           "target_schema",
-          "output_table_name",
           "sql_text"
         ],
         "properties": {
@@ -919,6 +936,10 @@
           "sql_text": {
             "type": "string",
             "default": "select *\nfrom {{source}}"
+          },
+          "output_table_name_template": {
+            "type": "string",
+            "default": "{{table_name}}"
           }
         }
       },

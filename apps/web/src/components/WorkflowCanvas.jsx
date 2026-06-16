@@ -1781,6 +1781,15 @@ function LoadToDuckDbNode({ data, dragging, selected }) {
         className="schema-node__handle workflow-node-card__handle"
         id="table"
         position={Position.Right}
+        style={{ top: '40%' }}
+        type="source"
+      />
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="tables"
+        position={Position.Right}
+        style={{ top: '70%' }}
         type="source"
       />
     </div>
@@ -1858,6 +1867,15 @@ function SqlTransformNode({ data, dragging, selected }) {
         className="schema-node__handle workflow-node-card__handle"
         id="table"
         position={Position.Left}
+        style={{ top: '40%' }}
+        type="target"
+      />
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="items"
+        position={Position.Left}
+        style={{ top: '70%' }}
         type="target"
       />
 
@@ -1865,6 +1883,15 @@ function SqlTransformNode({ data, dragging, selected }) {
         className="schema-node__handle workflow-node-card__handle"
         id="table"
         position={Position.Right}
+        style={{ top: '40%' }}
+        type="source"
+      />
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="items"
+        position={Position.Right}
+        style={{ top: '70%' }}
         type="source"
       />
     </div>
@@ -2569,13 +2596,19 @@ function normalizeSqlTransformNodeConfig(config = {}, workflow = null, nodeId = 
   const outputTableName =
     typeof config?.output_table_name === 'string' && config.output_table_name.trim()
       ? config.output_table_name.trim()
-      : 'normalized_view'
+      : null
+  const outputTableNameTemplate =
+    typeof config?.output_table_name_template === 'string' &&
+    config.output_table_name_template.trim()
+      ? config.output_table_name_template.trim()
+      : '{{table_name}}'
+  const targetName = outputTableName ?? outputTableNameTemplate
 
   return {
     materialization_mode_label:
       config?.materialization_mode === 'view' ? 'view' : 'view only',
     source_table_label: sourceContext?.sourceTable ?? '{{source}}',
-    target_label: `${targetSchema}.${outputTableName}`
+    target_label: `${targetSchema}.${targetName}`
   }
 }
 

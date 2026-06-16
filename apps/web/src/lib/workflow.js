@@ -695,6 +695,11 @@ const FALLBACK_NODE_DEFINITIONS = {
         data_type: 'directory_ref',
         multiple: false,
         port_id: 'bundle'
+      },
+      {
+        data_type: 'dataset_ref',
+        multiple: false,
+        port_id: 'manifest'
       }
     ],
     ui: {
@@ -739,6 +744,11 @@ const FALLBACK_NODE_DEFINITIONS = {
         data_type: 'table_ref',
         multiple: false,
         port_id: 'table'
+      },
+      {
+        data_type: 'table_ref_collection',
+        multiple: false,
+        port_id: 'tables'
       }
     ],
     ui: {
@@ -753,7 +763,13 @@ const FALLBACK_NODE_DEFINITIONS = {
         data_type: 'table_ref',
         multiple: false,
         port_id: 'table',
-        required: true
+        required: false
+      },
+      {
+        data_type: 'table_ref_collection',
+        multiple: false,
+        port_id: 'items',
+        required: false
       }
     ],
     outputs: [
@@ -761,6 +777,11 @@ const FALLBACK_NODE_DEFINITIONS = {
         data_type: 'table_ref',
         multiple: false,
         port_id: 'table'
+      },
+      {
+        data_type: 'table_ref_collection',
+        multiple: false,
+        port_id: 'items'
       }
     ],
     ui: {

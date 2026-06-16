@@ -3535,7 +3535,7 @@ function CanvasDoltDumpManagementPanel({
 
         <div className="canvas-node-panel__footer-row">
           <span>Output</span>
-          <strong>directory_ref + export metadata</strong>
+          <strong>directory_ref + table manifest</strong>
         </div>
 
         <button className="canvas-node-panel__action" type="button">

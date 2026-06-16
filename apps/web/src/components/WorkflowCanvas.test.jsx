@@ -134,6 +134,15 @@ function getLoadToDuckDbNode() {
   return node
 }
 
+
+function getSqlTransformNode() {
+  const node = screen.getByText('SQL Transform').closest('.workflow-node-card')
+
+  expect(node).not.toBeNull()
+
+  return node
+}
+
 function getTableMergeNode() {
   const node = screen.getByText('Table Merge').closest('.workflow-node-card')
 
@@ -583,6 +592,34 @@ function buildLoadToDuckDbFromDiffWorkflow() {
   return workflow
 }
 
+
+function buildSqlTransformCollectionWorkflow() {
+  const workflow = buildLoadToDuckDbFromDumpWorkflow()
+
+  workflow.nodes.push({
+    node_id: 'sql_transform',
+    type_id: 'sql_transform',
+    definition_version: 1,
+    label: 'SQL Transform',
+    config: {
+      materialization_mode: 'view',
+      output_table_name_template: '{{table_name}}__normalized',
+      sql_text: 'select * from {{source}}',
+      target_schema: 'staging_curated'
+    },
+    position: { x: 2120, y: 320 }
+  })
+  workflow.edges.push({
+    edge_id: 'edge_load_to_duckdb_tables_to_sql_transform_items',
+    source_node_id: 'load_to_duckdb',
+    source_port_id: 'tables',
+    target_node_id: 'sql_transform',
+    target_port_id: 'items'
+  })
+
+  return workflow
+}
+
 function buildTableMergeWorkflow() {
   const workflow = buildLoadToDuckDbFromDumpWorkflow()
 
@@ -1025,7 +1062,26 @@ describe('WorkflowCanvas', () => {
     expect(within(loadToDuckDbNode).getByText('snapshot bundle')).toBeInTheDocument()
     expect(within(loadToDuckDbNode).getByText('Merge context')).toBeInTheDocument()
     expect(within(loadToDuckDbNode).getByText('a34ef9c')).toBeInTheDocument()
+    expect(container.querySelector('[data-id="load_to_duckdb"] [data-handleid="table"]')).not.toBeNull()
+    expect(container.querySelector('[data-id="load_to_duckdb"] [data-handleid="tables"]')).not.toBeNull()
     expect(container.querySelector('[data-id="load_to_duckdb"] .schema-node')).toBeNull()
+  })
+
+
+  it('renders the sql transform node with legacy and collection handles', () => {
+    const { container } = render(
+      <CanvasHarness workflowOverride={buildSqlTransformCollectionWorkflow()} />
+    )
+
+    const sqlTransformNode = getSqlTransformNode()
+
+    expect(sqlTransformNode).toHaveClass('workflow-node-card--sql-transform')
+    expect(within(sqlTransformNode).getByText('view')).toBeInTheDocument()
+    expect(within(sqlTransformNode).getByText('Target')).toBeInTheDocument()
+    expect(within(sqlTransformNode).getByText('staging_curated.{{table_name}}__normalized')).toBeInTheDocument()
+    expect(container.querySelectorAll('[data-id="sql_transform"] [data-handleid="table"]')).toHaveLength(2)
+    expect(container.querySelectorAll('[data-id="sql_transform"] [data-handleid="items"]')).toHaveLength(2)
+    expect(container.querySelector('[data-id="sql_transform"] .schema-node')).toBeNull()
   })
 
   it('renders the table merge node with durable reconcile details instead of the generic schema fallback', () => {

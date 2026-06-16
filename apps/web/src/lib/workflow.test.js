@@ -442,6 +442,47 @@ function buildLoadToDuckDbFromDiffWorkflow() {
   return workflow
 }
 
+
+function buildSqlTransformCollectionWorkflow() {
+  const workflow = buildLoadToDuckDbFromDumpWorkflow()
+
+  workflow.nodes.push({
+    node_id: 'map_tables',
+    type_id: 'map',
+    definition_version: 1,
+    label: 'Map Tables',
+    config: {
+      output_schema_name: 'staging',
+      selected_tables: [],
+      table_mappings: []
+    },
+    position: { x: 2120, y: 320 }
+  })
+  workflow.edges.push({
+    edge_id: 'edge_load_to_duckdb_tables_to_map_items',
+    source_node_id: 'load_to_duckdb',
+    source_port_id: 'tables',
+    target_node_id: 'map_tables',
+    target_port_id: 'items'
+  })
+
+  workflow.nodes.push({
+    node_id: 'sql_transform',
+    type_id: 'sql_transform',
+    definition_version: 1,
+    label: 'SQL Transform',
+    config: {
+      materialization_mode: 'view',
+      output_table_name_template: '{{table_name}}__normalized',
+      sql_text: 'select * from {{source}}',
+      target_schema: 'staging_curated'
+    },
+    position: { x: 2520, y: 320 }
+  })
+
+  return workflow
+}
+
 function buildTableMergeWorkflow() {
   const workflow = buildLoadToDuckDbFromDumpWorkflow()
 
@@ -681,6 +722,65 @@ describe('createCanvasElements', () => {
     expect(
       graph.nodes.find((node) => node.id === 'load_to_duckdb')?.type
     ).toBe('load_to_duckdb')
+  })
+
+  it('exposes load to duckdb legacy and collection outputs in the canvas definition', () => {
+    const workflow = buildLoadToDuckDbFromDumpWorkflow()
+    const graph = createCanvasElements(
+      workflow,
+      nodeDefinitionFixture.node_definitions,
+      'load_to_duckdb',
+      null
+    )
+
+    const loadNode = graph.nodes.find((node) => node.id === 'load_to_duckdb')
+    const outputs = Object.fromEntries(
+      loadNode.data.definition.outputs.map((port) => [port.port_id, port.data_type])
+    )
+
+    expect(outputs.table).toBe('table_ref')
+    expect(outputs.tables).toBe('table_ref_collection')
+  })
+
+
+  it('exposes sql transform legacy and collection ports in the canvas definition', () => {
+    const workflow = buildSqlTransformCollectionWorkflow()
+    const graph = createCanvasElements(
+      workflow,
+      nodeDefinitionFixture.node_definitions,
+      'sql_transform',
+      null
+    )
+
+    const sqlNode = graph.nodes.find((node) => node.id === 'sql_transform')
+    const inputs = Object.fromEntries(
+      sqlNode.data.definition.inputs.map((port) => [port.port_id, port.data_type])
+    )
+    const outputs = Object.fromEntries(
+      sqlNode.data.definition.outputs.map((port) => [port.port_id, port.data_type])
+    )
+
+    expect(inputs.table).toBe('table_ref')
+    expect(inputs.items).toBe('table_ref_collection')
+    expect(outputs.table).toBe('table_ref')
+    expect(outputs.items).toBe('table_ref_collection')
+  })
+
+  it('allows map collection output to connect into sql transform collection input', () => {
+    const workflow = buildSqlTransformCollectionWorkflow()
+
+    expect(
+      canConnect(
+        {
+          source: 'map_tables',
+          sourceHandle: 'items',
+          target: 'sql_transform',
+          targetHandle: 'items'
+        },
+        workflow,
+        nodeDefinitionFixture.node_definitions
+      )
+    ).toBe(true)
   })
 
   it('maps table merge nodes onto their dedicated canvas node type', () => {

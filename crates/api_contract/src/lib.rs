@@ -324,6 +324,27 @@ pub enum TestingDoltRepoDumpTableSelectionMode {
                 "path": "artifacts/dolt_dump/rates/48puq5af61vq4d92l68du7bee0tu9u0v/parquet",
                 "format": "parquet"
             },
+            "manifest_ref": {
+                "kind": "dolt_dump_table_manifest_ref",
+                "bundle_path": "artifacts/dolt_dump/rates/48puq5af61vq4d92l68du7bee0tu9u0v/parquet",
+                "file_format": "parquet",
+                "table_count": 1
+            },
+            "table_manifest": {
+                "kind": "dolt_dump_table_manifest",
+                "manifest_ref": {
+                    "bundle_path": "artifacts/dolt_dump/rates/48puq5af61vq4d92l68du7bee0tu9u0v/parquet",
+                    "file_format": "parquet",
+                    "table_count": 1
+                },
+                "tables": [
+                    {
+                        "source_table": "us_treasury",
+                        "file_path": "artifacts/dolt_dump/rates/48puq5af61vq4d92l68du7bee0tu9u0v/parquet/us_treasury.parquet",
+                        "row_count": null
+                    }
+                ]
+            },
             "repo_ref": {
                 "connection_ref": "dolthub_public",
                 "repository": "post-no-preference/rates",
@@ -418,6 +439,27 @@ pub struct TestingDoltDumpRequest {
             "directory_ref": {
                 "path": "artifacts/dolt_dump/rates/d0f61b4/parquet",
                 "format": "parquet"
+            },
+            "manifest_ref": {
+                "kind": "dolt_dump_table_manifest_ref",
+                "bundle_path": "artifacts/dolt_dump/rates/d0f61b4/parquet",
+                "file_format": "parquet",
+                "table_count": 1
+            },
+            "table_manifest": {
+                "kind": "dolt_dump_table_manifest",
+                "manifest_ref": {
+                    "bundle_path": "artifacts/dolt_dump/rates/d0f61b4/parquet",
+                    "file_format": "parquet",
+                    "table_count": 1
+                },
+                "tables": [
+                    {
+                        "source_table": "us_treasury",
+                        "file_path": "artifacts/dolt_dump/rates/d0f61b4/parquet/us_treasury.parquet",
+                        "row_count": null
+                    }
+                ]
             },
             "repo_ref": {
                 "connection_ref": "dolthub_public",

@@ -1338,6 +1338,15 @@ function CheckpointWriteNode({ data, dragging, selected }) {
         className="schema-node__handle workflow-node-card__handle"
         id="table"
         position={Position.Left}
+        style={{ top: '40%' }}
+        type="target"
+      />
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="items"
+        position={Position.Left}
+        style={{ top: '70%' }}
         type="target"
       />
 
@@ -1345,6 +1354,15 @@ function CheckpointWriteNode({ data, dragging, selected }) {
         className="schema-node__handle workflow-node-card__handle"
         id="table"
         position={Position.Right}
+        style={{ top: '40%' }}
+        type="source"
+      />
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="items"
+        position={Position.Right}
+        style={{ top: '70%' }}
         type="source"
       />
     </div>
@@ -1423,6 +1441,15 @@ function QualityCheckNode({ data, dragging, selected }) {
         className="schema-node__handle workflow-node-card__handle"
         id="table"
         position={Position.Left}
+        style={{ top: '40%' }}
+        type="target"
+      />
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="items"
+        position={Position.Left}
+        style={{ top: '70%' }}
         type="target"
       />
 
@@ -1430,6 +1457,15 @@ function QualityCheckNode({ data, dragging, selected }) {
         className="schema-node__handle workflow-node-card__handle"
         id="table"
         position={Position.Right}
+        style={{ top: '40%' }}
+        type="source"
+      />
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="items"
+        position={Position.Right}
+        style={{ top: '70%' }}
         type="source"
       />
     </div>
@@ -1973,6 +2009,15 @@ function TableMergeNode({ data, dragging, selected }) {
         className="schema-node__handle workflow-node-card__handle"
         id="table"
         position={Position.Left}
+        style={{ top: '40%' }}
+        type="target"
+      />
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="items"
+        position={Position.Left}
+        style={{ top: '70%' }}
         type="target"
       />
 
@@ -1980,6 +2025,15 @@ function TableMergeNode({ data, dragging, selected }) {
         className="schema-node__handle workflow-node-card__handle"
         id="table"
         position={Position.Right}
+        style={{ top: '40%' }}
+        type="source"
+      />
+
+      <Handle
+        className="schema-node__handle workflow-node-card__handle"
+        id="items"
+        position={Position.Right}
+        style={{ top: '70%' }}
         type="source"
       />
     </div>

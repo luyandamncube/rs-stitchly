@@ -526,8 +526,8 @@ const BUILTIN_NODE_CARD_FALLBACKS = {
     ],
     footer: {
       kind: 'metric',
-      label: 'Output',
-      value: { source: 'config', path: 'output_table_name' },
+      label: 'Output template',
+      value: { source: 'config', path: 'output_table_name_template' },
       formatter: 'text',
       icon_key: 'status'
     },

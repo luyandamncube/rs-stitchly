@@ -655,6 +655,42 @@ function buildTableMergeWorkflow() {
   return workflow
 }
 
+
+function buildTableMergeCollectionWorkflow() {
+  const workflow = buildSqlTransformCollectionWorkflow()
+
+  workflow.nodes.push({
+    node_id: 'table_merge',
+    type_id: 'table_merge',
+    definition_version: 1,
+    label: 'Table Merge',
+    config: {
+      delete_handling: 'apply_delete_markers',
+      execution: {
+        wait_after_seconds: 0,
+        wait_before_seconds: 0
+      },
+      merge_key_columns: ['symbol', 'report_date'],
+      schema_drift_behavior: 'fail_and_require_review',
+      target_schema: 'tables',
+      write_policy: 'upsert'
+    },
+    position: {
+      x: 2520,
+      y: 320
+    }
+  })
+  workflow.edges.push({
+    edge_id: 'edge_sql_transform_items_to_table_merge_items',
+    source_node_id: 'sql_transform',
+    source_port_id: 'items',
+    target_node_id: 'table_merge',
+    target_port_id: 'items'
+  })
+
+  return workflow
+}
+
 function buildCheckpointWriteWorkflow() {
   const workflow = buildTableMergeWorkflow()
 
@@ -721,6 +757,78 @@ function buildQualityCheckWorkflow() {
     source_port_id: 'table',
     target_node_id: 'quality_check',
     target_port_id: 'table'
+  })
+
+  return workflow
+}
+
+
+function buildQualityCheckCollectionWorkflow() {
+  const workflow = buildTableMergeCollectionWorkflow()
+
+  workflow.nodes.push({
+    node_id: 'quality_check',
+    type_id: 'quality_check',
+    definition_version: 1,
+    label: 'Quality Check',
+    config: {
+      allow_warning_only_runs_to_continue: true,
+      block_checkpoint_write_on_failure: true,
+      execution: {
+        wait_after_seconds: 0,
+        wait_before_seconds: 0
+      },
+      null_key_policy: 'block_on_primary_key_nulls',
+      schema_drift_rule: 'fail_on_required_column_drift',
+      suite_preset: 'post_merge_ingest_gate',
+      warning_budget: 2
+    },
+    position: {
+      x: 2920,
+      y: 320
+    }
+  })
+  workflow.edges.push({
+    edge_id: 'edge_table_merge_items_to_quality_check_items',
+    source_node_id: 'table_merge',
+    source_port_id: 'items',
+    target_node_id: 'quality_check',
+    target_port_id: 'items'
+  })
+
+  return workflow
+}
+
+function buildCheckpointWriteCollectionWorkflow() {
+  const workflow = buildQualityCheckCollectionWorkflow()
+
+  workflow.nodes.push({
+    node_id: 'checkpoint_write',
+    type_id: 'checkpoint_write',
+    definition_version: 1,
+    label: 'Checkpoint Write',
+    config: {
+      advance_on_partial_success: false,
+      checkpoint_table: 'tables.ingest_checkpoints',
+      commit_source: 'metadata.current_commit',
+      execution: {
+        wait_after_seconds: 0,
+        wait_before_seconds: 0
+      },
+      only_persist_on_full_success: true,
+      write_timing: 'after_quality_gate'
+    },
+    position: {
+      x: 3320,
+      y: 320
+    }
+  })
+  workflow.edges.push({
+    edge_id: 'edge_quality_check_items_to_checkpoint_write_items',
+    source_node_id: 'quality_check',
+    source_port_id: 'items',
+    target_node_id: 'checkpoint_write',
+    target_port_id: 'items'
   })
 
   return workflow
@@ -1098,6 +1206,23 @@ describe('WorkflowCanvas', () => {
     expect(container.querySelector('[data-id="table_merge"] .schema-node')).toBeNull()
   })
 
+
+
+  it('renders the table merge node with legacy and collection handles', () => {
+    const { container } = render(
+      <CanvasHarness workflowOverride={buildTableMergeCollectionWorkflow()} />
+    )
+
+    const tableMergeNode = getTableMergeNode()
+
+    expect(tableMergeNode).toHaveClass('workflow-node-card--table-merge')
+    expect(within(tableMergeNode).getByText('upsert')).toBeInTheDocument()
+    expect(within(tableMergeNode).getByText('Target')).toBeInTheDocument()
+    expect(container.querySelectorAll('[data-id="table_merge"] [data-handleid="table"]')).toHaveLength(2)
+    expect(container.querySelectorAll('[data-id="table_merge"] [data-handleid="items"]')).toHaveLength(2)
+    expect(container.querySelector('[data-id="table_merge"] .schema-node')).toBeNull()
+  })
+
   it('renders the checkpoint write node with checkpoint persistence details instead of the generic schema fallback', () => {
     const { container } = render(
       <CanvasHarness workflowOverride={buildCheckpointWriteWorkflow()} />
@@ -1123,5 +1248,32 @@ describe('WorkflowCanvas', () => {
     expect(within(qualityCheckNode).getByText('checkpoint + publish')).toBeInTheDocument()
     expect(within(qualityCheckNode).getByText('2 warnings')).toBeInTheDocument()
     expect(container.querySelector('[data-id="quality_check"] .schema-node')).toBeNull()
+  })
+
+
+  it('renders the quality check node with legacy and collection handles', () => {
+    const { container } = render(
+      <CanvasHarness workflowOverride={buildQualityCheckCollectionWorkflow()} />
+    )
+
+    const qualityCheckNode = getQualityCheckNode()
+
+    expect(qualityCheckNode).toHaveClass('workflow-node-card--quality-check')
+    expect(container.querySelectorAll('[data-id="quality_check"] [data-handleid="table"]')).toHaveLength(2)
+    expect(container.querySelectorAll('[data-id="quality_check"] [data-handleid="items"]')).toHaveLength(2)
+    expect(container.querySelector('[data-id="quality_check"] .schema-node')).toBeNull()
+  })
+
+  it('renders the checkpoint write node with legacy and collection handles', () => {
+    const { container } = render(
+      <CanvasHarness workflowOverride={buildCheckpointWriteCollectionWorkflow()} />
+    )
+
+    const checkpointWriteNode = getCheckpointWriteNode()
+
+    expect(checkpointWriteNode).toHaveClass('workflow-node-card--checkpoint-write')
+    expect(container.querySelectorAll('[data-id="checkpoint_write"] [data-handleid="table"]')).toHaveLength(2)
+    expect(container.querySelectorAll('[data-id="checkpoint_write"] [data-handleid="items"]')).toHaveLength(2)
+    expect(container.querySelector('[data-id="checkpoint_write"] .schema-node')).toBeNull()
   })
 })

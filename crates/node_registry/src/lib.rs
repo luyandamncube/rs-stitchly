@@ -943,30 +943,58 @@ pub fn builtin_node_definitions() -> Vec<NodeDefinition> {
             description:
                 "Persists the new ingest checkpoint only after upstream durable table work is safe to acknowledge."
                     .to_string(),
-            inputs: vec![PortDefinition {
-                port_id: "table".to_string(),
-                display_name: "Table".to_string(),
-                direction: PortDirection::Input,
-                data_type: DataType::TableRef,
-                required: true,
-                multiple: false,
-                description: Some(
-                    "Durable workflow table reference carrying upstream commit and merge metadata."
-                        .to_string(),
-                ),
-            }],
-            outputs: vec![PortDefinition {
-                port_id: "table".to_string(),
-                display_name: "Table".to_string(),
-                direction: PortDirection::Output,
-                data_type: DataType::TableRef,
-                required: false,
-                multiple: false,
-                description: Some(
-                    "The same durable table reference enriched with checkpoint persistence metadata."
-                        .to_string(),
-                ),
-            }],
+            inputs: vec![
+                PortDefinition {
+                    port_id: "table".to_string(),
+                    display_name: "Table".to_string(),
+                    direction: PortDirection::Input,
+                    data_type: DataType::TableRef,
+                    required: false,
+                    multiple: false,
+                    description: Some(
+                        "Legacy single durable table reference carrying upstream commit and merge metadata."
+                            .to_string(),
+                    ),
+                },
+                PortDefinition {
+                    port_id: "items".to_string(),
+                    display_name: "Tables".to_string(),
+                    direction: PortDirection::Input,
+                    data_type: DataType::TableRefCollection,
+                    required: false,
+                    multiple: false,
+                    description: Some(
+                        "Collection of durable table references carrying upstream commit and merge metadata."
+                            .to_string(),
+                    ),
+                },
+            ],
+            outputs: vec![
+                PortDefinition {
+                    port_id: "table".to_string(),
+                    display_name: "Table".to_string(),
+                    direction: PortDirection::Output,
+                    data_type: DataType::TableRef,
+                    required: false,
+                    multiple: false,
+                    description: Some(
+                        "The same durable table reference enriched with checkpoint persistence metadata."
+                            .to_string(),
+                    ),
+                },
+                PortDefinition {
+                    port_id: "items".to_string(),
+                    display_name: "Tables".to_string(),
+                    direction: PortDirection::Output,
+                    data_type: DataType::TableRefCollection,
+                    required: false,
+                    multiple: false,
+                    description: Some(
+                        "The same durable table collection enriched with checkpoint persistence metadata."
+                            .to_string(),
+                    ),
+                },
+            ],
             config_schema: json!({
                 "type": "object",
                 "required": ["checkpoint_table"],
@@ -1064,29 +1092,58 @@ pub fn builtin_node_definitions() -> Vec<NodeDefinition> {
             description:
                 "Applies post-merge validation rules and gates whether checkpoint advancement may continue."
                     .to_string(),
-            inputs: vec![PortDefinition {
-                port_id: "table".to_string(),
-                display_name: "Table".to_string(),
-                direction: PortDirection::Input,
-                data_type: DataType::TableRef,
-                required: true,
-                multiple: false,
-                description: Some(
-                    "Durable workflow table reference ready for post-merge validation.".to_string(),
-                ),
-            }],
-            outputs: vec![PortDefinition {
-                port_id: "table".to_string(),
-                display_name: "Table".to_string(),
-                direction: PortDirection::Output,
-                data_type: DataType::TableRef,
-                required: false,
-                multiple: false,
-                description: Some(
-                    "The same durable table reference enriched with quality gate metadata."
-                        .to_string(),
-                ),
-            }],
+            inputs: vec![
+                PortDefinition {
+                    port_id: "table".to_string(),
+                    display_name: "Table".to_string(),
+                    direction: PortDirection::Input,
+                    data_type: DataType::TableRef,
+                    required: false,
+                    multiple: false,
+                    description: Some(
+                        "Legacy single durable table reference ready for post-merge validation."
+                            .to_string(),
+                    ),
+                },
+                PortDefinition {
+                    port_id: "items".to_string(),
+                    display_name: "Tables".to_string(),
+                    direction: PortDirection::Input,
+                    data_type: DataType::TableRefCollection,
+                    required: false,
+                    multiple: false,
+                    description: Some(
+                        "Collection of durable table references ready for post-merge validation."
+                            .to_string(),
+                    ),
+                },
+            ],
+            outputs: vec![
+                PortDefinition {
+                    port_id: "table".to_string(),
+                    display_name: "Table".to_string(),
+                    direction: PortDirection::Output,
+                    data_type: DataType::TableRef,
+                    required: false,
+                    multiple: false,
+                    description: Some(
+                        "The same durable table reference enriched with quality gate metadata."
+                            .to_string(),
+                    ),
+                },
+                PortDefinition {
+                    port_id: "items".to_string(),
+                    display_name: "Tables".to_string(),
+                    direction: PortDirection::Output,
+                    data_type: DataType::TableRefCollection,
+                    required: false,
+                    multiple: false,
+                    description: Some(
+                        "The same durable table collection enriched with quality gate metadata."
+                            .to_string(),
+                    ),
+                },
+            ],
             config_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1820,7 +1877,7 @@ pub fn builtin_node_definitions() -> Vec<NodeDefinition> {
             display_name: "SQL Transform".to_string(),
             category: "compute".to_string(),
             description:
-                "Creates a workflow-local DuckDB view that reshapes staged tables into merge-ready outputs."
+                "Creates workflow-local DuckDB views from a SQL template, either for one table or once per table in a collection."
                     .to_string(),
             inputs: vec![
                 PortDefinition {
@@ -1884,11 +1941,15 @@ pub fn builtin_node_definitions() -> Vec<NodeDefinition> {
                     },
                     "output_table_name": {
                         "type": "string",
-                        "default": "normalized_view"
+                        "default": "",
+                        "title": "Legacy single-table output name",
+                        "description": "Optional legacy override for single-table workflows. Collection workflows use output_table_name_template."
                     },
                     "output_table_name_template": {
                         "type": "string",
-                        "default": "{{table_name}}"
+                        "default": "{{table_name}}",
+                        "title": "Output table name template",
+                        "description": "Per-table output naming template. Supports {{table_name}} for preserving table identity."
                     },
                     "source_table_name": {
                         "type": "string",
@@ -1901,7 +1962,9 @@ pub fn builtin_node_definitions() -> Vec<NodeDefinition> {
                     },
                     "sql_text": {
                         "type": "string",
-                        "default": "select *\nfrom {{source}}"
+                        "default": "select *\nfrom {{source}}",
+                        "title": "SQL template",
+                        "description": "SQL template rendered once per input table. Use {{source}} for the fully-qualified current source table."
                     }
                 }
             }),
@@ -1921,7 +1984,7 @@ pub fn builtin_node_definitions() -> Vec<NodeDefinition> {
                 default_width: 336,
                 default_height: 176,
                 help_text: Some(
-                    "Use inline DuckDB SQL to reshape staging tables into merge-ready workflow views."
+                    "Use a DuckDB SQL template to reshape one table or every table in a collection."
                         .to_string(),
                 ),
                 node_card: Some(NodeCardUi {
@@ -1953,9 +2016,9 @@ pub fn builtin_node_definitions() -> Vec<NodeDefinition> {
                     ],
                     footer: Some(node_card_footer(
                         "metric",
-                        "Output",
+                        "Output template",
                         "config",
-                        "output_table_name",
+                        "output_table_name_template",
                         "text",
                         Some("status"),
                     )),
@@ -1972,30 +2035,58 @@ pub fn builtin_node_definitions() -> Vec<NodeDefinition> {
             description:
                 "Reconciles staged table batches into durable workflow-owned tables using an explicit merge policy."
                     .to_string(),
-            inputs: vec![PortDefinition {
-                port_id: "table".to_string(),
-                display_name: "Table".to_string(),
-                direction: PortDirection::Input,
-                data_type: DataType::TableRef,
-                required: true,
-                multiple: false,
-                description: Some(
-                    "Workflow-local staged table reference plus merge metadata from upstream landing steps."
-                        .to_string(),
-                ),
-            }],
-            outputs: vec![PortDefinition {
-                port_id: "table".to_string(),
-                display_name: "Table".to_string(),
-                direction: PortDirection::Output,
-                data_type: DataType::TableRef,
-                required: false,
-                multiple: false,
-                description: Some(
-                    "Durable workflow table reference after merge policy has been applied."
-                        .to_string(),
-                ),
-            }],
+            inputs: vec![
+                PortDefinition {
+                    port_id: "table".to_string(),
+                    display_name: "Table".to_string(),
+                    direction: PortDirection::Input,
+                    data_type: DataType::TableRef,
+                    required: false,
+                    multiple: false,
+                    description: Some(
+                        "Workflow-local staged table reference plus merge metadata from upstream landing steps."
+                            .to_string(),
+                    ),
+                },
+                PortDefinition {
+                    port_id: "items".to_string(),
+                    display_name: "Tables".to_string(),
+                    direction: PortDirection::Input,
+                    data_type: DataType::TableRefCollection,
+                    required: false,
+                    multiple: false,
+                    description: Some(
+                        "Collection of staged table references to merge one table at a time."
+                            .to_string(),
+                    ),
+                },
+            ],
+            outputs: vec![
+                PortDefinition {
+                    port_id: "table".to_string(),
+                    display_name: "Table".to_string(),
+                    direction: PortDirection::Output,
+                    data_type: DataType::TableRef,
+                    required: false,
+                    multiple: false,
+                    description: Some(
+                        "Durable workflow table reference after merge policy has been applied."
+                            .to_string(),
+                    ),
+                },
+                PortDefinition {
+                    port_id: "items".to_string(),
+                    display_name: "Tables".to_string(),
+                    direction: PortDirection::Output,
+                    data_type: DataType::TableRefCollection,
+                    required: false,
+                    multiple: false,
+                    description: Some(
+                        "Collection of durable workflow table references after merge policy has been applied per table."
+                            .to_string(),
+                    ),
+                },
+            ],
             config_schema: json!({
                 "type": "object",
                 "required": ["target_schema"],
@@ -2666,6 +2757,128 @@ mod tests {
             .iter()
             .find(|candidate| candidate.type_id == "sql_transform")
             .expect("sql_transform definition should exist");
+
+        let table_input = definition
+            .inputs
+            .iter()
+            .find(|port| port.port_id == "table")
+            .expect("legacy table input should remain available");
+        assert_eq!(table_input.data_type, DataType::TableRef);
+        assert!(!table_input.required);
+
+        let items_input = definition
+            .inputs
+            .iter()
+            .find(|port| port.port_id == "items")
+            .expect("items collection input should be available");
+        assert_eq!(items_input.data_type, DataType::TableRefCollection);
+        assert!(!items_input.required);
+
+        let table_output = definition
+            .outputs
+            .iter()
+            .find(|port| port.port_id == "table")
+            .expect("legacy table output should remain available");
+        assert_eq!(table_output.data_type, DataType::TableRef);
+
+        let items_output = definition
+            .outputs
+            .iter()
+            .find(|port| port.port_id == "items")
+            .expect("items collection output should be available");
+        assert_eq!(items_output.data_type, DataType::TableRefCollection);
+        assert!(!items_output.multiple);
+    }
+
+
+
+    #[test]
+    fn table_merge_exposes_legacy_and_collection_ports() {
+        let definitions = builtin_node_definitions();
+        let definition = definitions
+            .iter()
+            .find(|candidate| candidate.type_id == "table_merge")
+            .expect("table_merge definition should exist");
+
+        let table_input = definition
+            .inputs
+            .iter()
+            .find(|port| port.port_id == "table")
+            .expect("legacy table input should remain available");
+        assert_eq!(table_input.data_type, DataType::TableRef);
+        assert!(!table_input.required);
+
+        let items_input = definition
+            .inputs
+            .iter()
+            .find(|port| port.port_id == "items")
+            .expect("items collection input should be available");
+        assert_eq!(items_input.data_type, DataType::TableRefCollection);
+        assert!(!items_input.required);
+
+        let table_output = definition
+            .outputs
+            .iter()
+            .find(|port| port.port_id == "table")
+            .expect("legacy table output should remain available");
+        assert_eq!(table_output.data_type, DataType::TableRef);
+
+        let items_output = definition
+            .outputs
+            .iter()
+            .find(|port| port.port_id == "items")
+            .expect("items collection output should be available");
+        assert_eq!(items_output.data_type, DataType::TableRefCollection);
+        assert!(!items_output.multiple);
+    }
+
+    #[test]
+    fn checkpoint_write_exposes_legacy_and_collection_ports() {
+        let definitions = builtin_node_definitions();
+        let definition = definitions
+            .iter()
+            .find(|candidate| candidate.type_id == "checkpoint_write")
+            .expect("checkpoint_write definition should exist");
+
+        let table_input = definition
+            .inputs
+            .iter()
+            .find(|port| port.port_id == "table")
+            .expect("legacy table input should remain available");
+        assert_eq!(table_input.data_type, DataType::TableRef);
+        assert!(!table_input.required);
+
+        let items_input = definition
+            .inputs
+            .iter()
+            .find(|port| port.port_id == "items")
+            .expect("items collection input should be available");
+        assert_eq!(items_input.data_type, DataType::TableRefCollection);
+        assert!(!items_input.required);
+
+        let table_output = definition
+            .outputs
+            .iter()
+            .find(|port| port.port_id == "table")
+            .expect("legacy table output should remain available");
+        assert_eq!(table_output.data_type, DataType::TableRef);
+
+        let items_output = definition
+            .outputs
+            .iter()
+            .find(|port| port.port_id == "items")
+            .expect("items collection output should be available");
+        assert_eq!(items_output.data_type, DataType::TableRefCollection);
+        assert!(!items_output.multiple);
+    }
+
+    #[test]
+    fn quality_check_exposes_legacy_and_collection_ports() {
+        let definitions = builtin_node_definitions();
+        let definition = definitions
+            .iter()
+            .find(|candidate| candidate.type_id == "quality_check")
+            .expect("quality_check definition should exist");
 
         let table_input = definition
             .inputs

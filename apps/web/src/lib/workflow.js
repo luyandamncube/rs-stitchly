@@ -349,10 +349,21 @@ function arePortTypesCompatible(sourceNode, sourcePort, targetNode, targetPort) 
     return sourceNode?.type_id === 'table_merge' && sourceDataType === 'table_ref'
   }
 
+  if (targetNode?.type_id === 'quality_check' && targetPort?.port_id === 'items') {
+    return sourceNode?.type_id === 'table_merge' && sourceDataType === 'table_ref_collection'
+  }
+
   if (targetNode?.type_id === 'checkpoint_write' && targetPort?.port_id === 'table') {
     return (
       (sourceNode?.type_id === 'table_merge' || sourceNode?.type_id === 'quality_check') &&
       sourceDataType === 'table_ref'
+    )
+  }
+
+  if (targetNode?.type_id === 'checkpoint_write' && targetPort?.port_id === 'items') {
+    return (
+      (sourceNode?.type_id === 'table_merge' || sourceNode?.type_id === 'quality_check') &&
+      sourceDataType === 'table_ref_collection'
     )
   }
 
@@ -593,7 +604,13 @@ const FALLBACK_NODE_DEFINITIONS = {
         data_type: 'table_ref',
         multiple: false,
         port_id: 'table',
-        required: true
+        required: false
+      },
+      {
+        data_type: 'table_ref_collection',
+        multiple: false,
+        port_id: 'items',
+        required: false
       }
     ],
     outputs: [
@@ -601,6 +618,11 @@ const FALLBACK_NODE_DEFINITIONS = {
         data_type: 'table_ref',
         multiple: false,
         port_id: 'table'
+      },
+      {
+        data_type: 'table_ref_collection',
+        multiple: false,
+        port_id: 'items'
       }
     ],
     ui: {
@@ -615,7 +637,13 @@ const FALLBACK_NODE_DEFINITIONS = {
         data_type: 'table_ref',
         multiple: false,
         port_id: 'table',
-        required: true
+        required: false
+      },
+      {
+        data_type: 'table_ref_collection',
+        multiple: false,
+        port_id: 'items',
+        required: false
       }
     ],
     outputs: [
@@ -623,6 +651,11 @@ const FALLBACK_NODE_DEFINITIONS = {
         data_type: 'table_ref',
         multiple: false,
         port_id: 'table'
+      },
+      {
+        data_type: 'table_ref_collection',
+        multiple: false,
+        port_id: 'items'
       }
     ],
     ui: {
@@ -784,6 +817,37 @@ const FALLBACK_NODE_DEFINITIONS = {
         port_id: 'items'
       }
     ],
+    config_schema: {
+      type: 'object',
+      required: ['target_schema', 'sql_text'],
+      properties: {
+        target_schema: {
+          type: 'string',
+          default: 'staging_curated'
+        },
+        output_table_name: {
+          type: 'string',
+          default: ''
+        },
+        output_table_name_template: {
+          type: 'string',
+          default: '{{table_name}}'
+        },
+        source_table_name: {
+          type: 'string',
+          default: ''
+        },
+        materialization_mode: {
+          type: 'string',
+          enum: ['view'],
+          default: 'view'
+        },
+        sql_text: {
+          type: 'string',
+          default: 'select *\nfrom {{source}}'
+        }
+      }
+    },
     ui: {
       default_width: 336
     },
@@ -818,7 +882,13 @@ const FALLBACK_NODE_DEFINITIONS = {
         data_type: 'table_ref',
         multiple: false,
         port_id: 'table',
-        required: true
+        required: false
+      },
+      {
+        data_type: 'table_ref_collection',
+        multiple: false,
+        port_id: 'items',
+        required: false
       }
     ],
     outputs: [
@@ -826,6 +896,11 @@ const FALLBACK_NODE_DEFINITIONS = {
         data_type: 'table_ref',
         multiple: false,
         port_id: 'table'
+      },
+      {
+        data_type: 'table_ref_collection',
+        multiple: false,
+        port_id: 'items'
       }
     ],
     ui: {

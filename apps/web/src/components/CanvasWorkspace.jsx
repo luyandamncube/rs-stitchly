@@ -560,11 +560,11 @@ export default function CanvasWorkspace({
       setRunDetailState((current) =>
         current.runId === nextRun.run_id
           ? {
-              ...current,
-              runId: nextRun.run_id,
-              run: nextRun,
-              status: current.status === 'idle' ? 'ready' : current.status
-            }
+            ...current,
+            runId: nextRun.run_id,
+            run: nextRun,
+            status: current.status === 'idle' ? 'ready' : current.status
+          }
           : current
       );
     }
@@ -1842,13 +1842,13 @@ function CanvasNodePanelSelect({
     options.find((option) => option.value === value) ??
     (value
       ? {
-          label: value,
-          value
-        }
+        label: value,
+        value
+      }
       : options[0] ?? {
-          label: 'Select',
-          value: ''
-        });
+        label: 'Select',
+        value: ''
+      });
 
   useEffect(() => {
     if (!isOpen) {
@@ -1910,9 +1910,8 @@ function CanvasNodePanelSelect({
             return (
               <button
                 aria-selected={isSelected}
-                className={`canvas-node-panel__select-option${
-                  isSelected ? ' is-selected' : ''
-                }`}
+                className={`canvas-node-panel__select-option${isSelected ? ' is-selected' : ''
+                  }`}
                 key={option.value}
                 onClick={() => {
                   onChange?.(option.value);
@@ -2872,9 +2871,8 @@ function CanvasSendEmailManagementPanel({
           </div>
           <div className="canvas-node-panel__segmented" aria-label="Message format">
             <button
-              className={`canvas-node-panel__segment${
-                config.content_type === 'text/plain' ? ' is-active' : ''
-              }`}
+              className={`canvas-node-panel__segment${config.content_type === 'text/plain' ? ' is-active' : ''
+                }`}
               onClick={() =>
                 onNodeConfigChange?.((currentConfig) =>
                   applySendEmailConfigUpdate(currentConfig, {
@@ -2887,9 +2885,8 @@ function CanvasSendEmailManagementPanel({
               Plain text
             </button>
             <button
-              className={`canvas-node-panel__segment${
-                config.content_type === 'text/html' ? ' is-active' : ''
-              }`}
+              className={`canvas-node-panel__segment${config.content_type === 'text/html' ? ' is-active' : ''
+                }`}
               onClick={() =>
                 onNodeConfigChange?.((currentConfig) =>
                   applySendEmailConfigUpdate(currentConfig, {
@@ -3115,7 +3112,7 @@ function CanvasDoltChangeManifestManagementPanel({
     node?.node_id
   );
   const outputCount = definition?.outputs?.length ?? 1;
-
+  const inputCount = definition?.inputs?.length ?? 1;
   return (
     <aside className="canvas-node-panel" aria-label="Node management panel">
       <header className="canvas-node-panel__header">
@@ -3133,7 +3130,7 @@ function CanvasDoltChangeManifestManagementPanel({
 
         <div className="canvas-node-panel__header-meta">
           <span className="canvas-node-panel__meta-dot" aria-hidden="true" />
-          <span>{`1 input · ${outputCount} output${outputCount === 1 ? '' : 's'}`}</span>
+          <span>{`${inputCount} input${inputCount === 1 ? '' : 's'} · ${outputCount} output${outputCount === 1 ? '' : 's'}`}</span>
         </div>
       </header>
 
@@ -4289,6 +4286,7 @@ function CanvasLoadToDuckDbManagementPanel({
 }) {
   const config = normalizeLoadToDuckDbPanelConfig(node);
   const runtimeSummary = buildLoadToDuckDbRuntimeSummary(config, workflow, node?.node_id);
+  const inputCount = definition?.inputs?.length ?? 1;
   const outputCount = definition?.outputs?.length ?? 1;
   const targetSchemaOptions = buildLoadToDuckDbSchemaOptions(config.target_schema);
 
@@ -4512,8 +4510,10 @@ function CanvasSqlTransformManagementPanel({
 }) {
   const config = normalizeSqlTransformPanelConfig(node);
   const runtimeSummary = buildSqlTransformRuntimeSummary(config, workflow, node?.node_id);
+  const inputCount = definition?.inputs?.length ?? 1;
   const outputCount = definition?.outputs?.length ?? 1;
   const targetSchemaOptions = buildSqlTransformSchemaOptions(config.target_schema);
+  const isCollectionMode = runtimeSummary.inputMode === 'collection';
 
   return (
     <aside className="canvas-node-panel" aria-label="Node management panel">
@@ -4532,7 +4532,7 @@ function CanvasSqlTransformManagementPanel({
 
         <div className="canvas-node-panel__header-meta">
           <span className="canvas-node-panel__meta-dot" aria-hidden="true" />
-          <span>{`1 input · ${outputCount} output${outputCount === 1 ? '' : 's'}`}</span>
+          <span>{`${inputCount} input${inputCount === 1 ? '' : 's'} · ${outputCount} output${outputCount === 1 ? '' : 's'}`}</span>
         </div>
       </header>
 
@@ -4548,15 +4548,15 @@ function CanvasSqlTransformManagementPanel({
             </div>
             <div className="canvas-node-panel__code-line">
               <span>mode</span>
-              <strong>{runtimeSummary.materializationModeLabel}</strong>
+              <strong>{runtimeSummary.sqlModeLabel}</strong>
             </div>
             <div className="canvas-node-panel__code-line">
-              <span>source_table</span>
+              <span>input</span>
               <strong>{runtimeSummary.sourceTableLabel}</strong>
             </div>
             <div className="canvas-node-panel__code-line">
-              <span>target</span>
-              <strong>{runtimeSummary.targetLocationLabel}</strong>
+              <span>output pattern</span>
+              <strong>{runtimeSummary.outputTemplateLabel}</strong>
             </div>
           </div>
         </div>
@@ -4576,47 +4576,68 @@ function CanvasSqlTransformManagementPanel({
 
         <div className="canvas-node-panel__field">
           <div className="canvas-node-panel__field-head">
-            <label>Input table</label>
+            <label>Input</label>
           </div>
-          <div className="canvas-node-panel__code" aria-label="Input table">
+          <div className="canvas-node-panel__code" aria-label="SQL transform input summary">
             <div className="canvas-node-panel__code-line">
-              <span>resolved source</span>
-              <strong>{runtimeSummary.sourceTableLabel}</strong>
+              <span>input mode</span>
+              <strong>{runtimeSummary.inputModeLabel}</strong>
             </div>
             <div className="canvas-node-panel__code-line">
-              <span>source type</span>
+              <span>connected source</span>
               <strong>{runtimeSummary.sourceTypeLabel}</strong>
             </div>
             <div className="canvas-node-panel__code-line">
-              <span>override</span>
-              <strong>
-                {config.source_table_name?.trim()
-                  ? config.source_table_name.trim()
-                  : 'auto-resolve single upstream table'}
-              </strong>
+              <span>{isCollectionMode ? 'table collection' : 'source table'}</span>
+              <strong>{runtimeSummary.sourceTableLabel}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>preview source</span>
+              <strong>{runtimeSummary.previewSourceLabel}</strong>
             </div>
           </div>
         </div>
 
-        <div className="canvas-node-panel__field">
-          <div className="canvas-node-panel__field-head">
-            <label htmlFor="canvas-sql-transform-source-table">Source table override</label>
+        {isCollectionMode ? (
+          <div className="canvas-node-panel__field">
+            <div className="canvas-node-panel__field-head">
+              <label>Single-table source override</label>
+            </div>
+            <div className="canvas-node-panel__code" aria-label="Single-table source override status">
+              <div className="canvas-node-panel__code-line">
+                <span>status</span>
+                <strong>disabled for table collections</strong>
+              </div>
+              <div className="canvas-node-panel__code-line">
+                <span>runtime source</span>
+                <strong>{'{{source}}'} is resolved once per input table</strong>
+              </div>
+            </div>
           </div>
-          <input
-            id="canvas-sql-transform-source-table"
-            className="canvas-node-panel__input"
-            onChange={(event) =>
-              onNodeConfigChange?.((currentConfig) =>
-                applySqlTransformConfigUpdate(currentConfig, {
-                  source_table_name: event.target.value
-                })
-              )
-            }
-            placeholder="Leave blank to auto-resolve"
-            type="text"
-            value={config.source_table_name}
-          />
-        </div>
+        ) : (
+          <div className="canvas-node-panel__field">
+            <div className="canvas-node-panel__field-head">
+              <label htmlFor="canvas-sql-transform-source-table">Single-table source override</label>
+            </div>
+            <input
+              id="canvas-sql-transform-source-table"
+              className="canvas-node-panel__input"
+              onChange={(event) =>
+                onNodeConfigChange?.((currentConfig) =>
+                  applySqlTransformConfigUpdate(currentConfig, {
+                    source_table_name: event.target.value
+                  })
+                )
+              }
+              placeholder="Leave blank to auto-resolve single-table input"
+              type="text"
+              value={config.source_table_name}
+            />
+            {/* <p className="canvas-node-panel__hint">
+              Use this only for a legacy single-table transform. Collection workflows resolve {'{{source}}'} per table.
+            </p> */}
+          </div>
+        )}
 
         <div className="canvas-node-panel__field">
           <div className="canvas-node-panel__field-head">
@@ -4638,22 +4659,28 @@ function CanvasSqlTransformManagementPanel({
 
         <div className="canvas-node-panel__field">
           <div className="canvas-node-panel__field-head">
-            <label htmlFor="canvas-sql-transform-output-table">Output table name</label>
+            <label htmlFor="canvas-sql-transform-output-table-template">Output table name template</label>
           </div>
           <input
-            id="canvas-sql-transform-output-table"
+            id="canvas-sql-transform-output-table-template"
             className="canvas-node-panel__input"
             onChange={(event) =>
               onNodeConfigChange?.((currentConfig) =>
                 applySqlTransformConfigUpdate(currentConfig, {
-                  output_table_name: event.target.value
+                  output_table_name_template: event.target.value
                 })
               )
             }
-            placeholder="rates__us_treasury__snapshot_normalized"
+            placeholder="{{table_name}}__transformed"
             type="text"
-            value={config.output_table_name}
+            value={config.output_table_name_template}
           />
+          {/* <p className="canvas-node-panel__hint">
+            {isCollectionMode
+              ? `Produces one output view per input table. Use {{table_name}} to preserve per-table identity.`
+              : `Used as the output name template. Legacy single-table overrides can still be handled at runtime.`}{' '}
+            Example: {'{{table_name}}'}__transformed.
+          </p> */}
         </div>
 
         <div className="canvas-node-panel__field">
@@ -4676,7 +4703,7 @@ function CanvasSqlTransformManagementPanel({
 
         <div className="canvas-node-panel__field">
           <div className="canvas-node-panel__field-head">
-            <label htmlFor="canvas-sql-transform-sql-text">SQL</label>
+            <label htmlFor="canvas-sql-transform-sql-text">SQL template</label>
           </div>
           <textarea
             id="canvas-sql-transform-sql-text"
@@ -4691,6 +4718,44 @@ function CanvasSqlTransformManagementPanel({
             spellCheck={false}
             value={config.sql_text}
           />
+          {/* <p className="canvas-node-panel__hint">
+            This template runs {isCollectionMode ? 'once per input table' : 'for the selected input table'}.
+            Use {'{{source}}'} for the fully-qualified current table, {'{{schema_name}}'} for its schema,
+            and {'{{table_name}}'} for its table name.
+          </p> */}
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label>Preview context</label>
+          </div>
+          <div className="canvas-node-panel__code" aria-label="SQL transform preview context">
+            <div className="canvas-node-panel__code-line">
+              <span>preview source</span>
+              <strong>{runtimeSummary.previewSourceLabel}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>{isCollectionMode ? 'output pattern' : 'preview output'}</span>
+              <strong>
+                {isCollectionMode
+                  ? `${config.target_schema}.${config.output_table_name_template}`
+                  : runtimeSummary.previewOutputLabel}
+              </strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
+              <span>template output</span>
+              <strong>{runtimeSummary.outputTemplateLabel}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label>Rendered SQL preview</label>
+          </div>
+          <pre className="canvas-node-panel__code" aria-label="Rendered SQL preview">
+            {runtimeSummary.renderedSqlPreview}
+          </pre>
         </div>
       </section>
 
@@ -4712,17 +4777,21 @@ function CanvasSqlTransformManagementPanel({
 
         <div className="canvas-node-panel__footer-row">
           <span>Mode</span>
-          <strong>{runtimeSummary.materializationModeLabel}</strong>
+          <strong>{runtimeSummary.sqlModeLabel}</strong>
         </div>
 
         <div className="canvas-node-panel__footer-row">
-          <span>Target</span>
-          <strong>{runtimeSummary.targetLocationLabel}</strong>
+        <span>{isCollectionMode ? 'Output pattern' : 'Output'}</span>
+        <strong>
+          {isCollectionMode
+            ? `${config.target_schema}.${config.output_table_name_template}`
+            : runtimeSummary.targetLocationLabel}
+        </strong>
         </div>
 
         <div className="canvas-node-panel__footer-row">
           <span>Authoring</span>
-          <strong>{runtimeSummary.sqlModeLabel}</strong>
+          <strong>{runtimeSummary.sqlAuthoringLabel}</strong>
         </div>
 
         <button className="canvas-node-panel__action" type="button">
@@ -4744,6 +4813,7 @@ function CanvasTableMergeManagementPanel({
 }) {
   const config = normalizeTableMergePanelConfig(node);
   const runtimeSummary = buildTableMergeRuntimeSummary(config, workflow, node?.node_id);
+  const inputCount = definition?.inputs?.length ?? 1;
   const outputCount = definition?.outputs?.length ?? 1;
   const targetSchemaOptions = buildTableMergeSchemaOptions(config.target_schema);
 
@@ -5440,10 +5510,10 @@ function CanvasTableOutputManagementPanel({
   const destinationLabel =
     config.input_shape === 'table_schema'
       ? buildTableOutputSchemaBootstrapDestinationLabel(
-          config,
-          workflow,
-          node?.node_id
-        )
+        config,
+        workflow,
+        node?.node_id
+      )
       : destination;
   const schemaBootstrapSummary =
     resultShapeGroups.length > 0
@@ -5877,9 +5947,8 @@ function CanvasWorkflowRunStrip({ onOpenRun, run = null }) {
   return (
     <button
       aria-label="Workflow run status"
-      className={`canvas-workflow-run-strip${
-        run ? ` is-${normalizeRunStatusToken(status)}` : ' is-idle'
-      }`}
+      className={`canvas-workflow-run-strip${run ? ` is-${normalizeRunStatusToken(status)}` : ' is-idle'
+        }`}
       disabled={!run?.run_id}
       onClick={() => {
         if (run?.run_id) {
@@ -6629,9 +6698,8 @@ function countCompletedCanvasNodes(run) {
 }
 
 function summarizeNodeRunDetail(nodeRun) {
-  const statusDetail = `${humanizeToken(nodeRun.type_id)} · ${
-    nodeRun.attempt === 1 ? '1 attempt' : `${nodeRun.attempt} attempts`
-  } · ${nodeRun.log_count ?? 0} logs`;
+  const statusDetail = `${humanizeToken(nodeRun.type_id)} · ${nodeRun.attempt === 1 ? '1 attempt' : `${nodeRun.attempt} attempts`
+    } · ${nodeRun.log_count ?? 0} logs`;
 
   if (nodeRun.error?.message) {
     return `${statusDetail} · ${nodeRun.error.message}`;
@@ -6727,21 +6795,21 @@ function buildCanvasNodeManagementModel(node, definition) {
         ? 'R'
         : nodeTypeId === 'checkpoint_write'
           ? 'W'
-        : nodeTypeId === 'quality_check'
-          ? 'Q'
-        : nodeTypeId === 'dolt_repo_source' || nodeTypeId === 'dolt_repo_sync' || nodeTypeId === 'dolt_change_manifest' || nodeTypeId === 'dolt_dump' || nodeTypeId === 'dolt_diff_export'
-        ? 'd'
-        : nodeTypeId === 'load_to_duckdb'
-          ? 'O'
-        : nodeTypeId === 'sql_transform'
-          ? 'SQL'
-        : nodeTypeId === 'send_email'
-        ? '@'
-        : nodeTypeId === 'table_input' || nodeTypeId === 'table_output' || nodeTypeId === 'table_schema'
-          ? '[]'
-          : nodeTypeId === 'table_merge'
-            ? 'G'
-          : 'T',
+          : nodeTypeId === 'quality_check'
+            ? 'Q'
+            : nodeTypeId === 'dolt_repo_source' || nodeTypeId === 'dolt_repo_sync' || nodeTypeId === 'dolt_change_manifest' || nodeTypeId === 'dolt_dump' || nodeTypeId === 'dolt_diff_export'
+              ? 'd'
+              : nodeTypeId === 'load_to_duckdb'
+                ? 'O'
+                : nodeTypeId === 'sql_transform'
+                  ? 'SQL'
+                  : nodeTypeId === 'send_email'
+                    ? '@'
+                    : nodeTypeId === 'table_input' || nodeTypeId === 'table_output' || nodeTypeId === 'table_schema'
+                      ? '[]'
+                      : nodeTypeId === 'table_merge'
+                        ? 'G'
+                        : 'T',
     footerEyebrow: 'Run selected node',
     footerMetricLabel: 'Estimated load',
     footerMetricValue: '24 units',
@@ -6847,6 +6915,7 @@ const DEFAULT_LOAD_TO_DUCKDB_DELTA_CONTEXT_PRESERVATION =
   'preserve_commit_range_and_delete_flags';
 const DEFAULT_SQL_TRANSFORM_TARGET_SCHEMA = 'staging_curated';
 const DEFAULT_SQL_TRANSFORM_OUTPUT_TABLE_NAME = 'normalized_view';
+const DEFAULT_SQL_TRANSFORM_OUTPUT_TABLE_NAME_TEMPLATE = '{{table_name}}';
 const DEFAULT_SQL_TRANSFORM_MATERIALIZATION_MODE = 'view';
 const DEFAULT_SQL_TRANSFORM_SQL_TEXT = 'select *\nfrom {{source}}';
 const DEFAULT_TABLE_MERGE_TARGET_SCHEMA = 'tables';
@@ -6960,7 +7029,7 @@ function normalizeTextInputPanelConfig(node) {
     trim_mode:
       config.trim_mode === 'trim' || config.trim_mode === 'exact'
         ? config.trim_mode
-      : 'automatic'
+        : 'automatic'
   };
 }
 
@@ -7016,7 +7085,7 @@ function normalizeDoltRepoSyncPanelConfig(node) {
         : DEFAULT_DOLT_REPO_SYNC_NO_CHANGE_BEHAVIOR,
     sync_action:
       config.sync_action === 'fetch_and_checkout' ||
-      config.sync_action === 'refresh_checkout'
+        config.sync_action === 'refresh_checkout'
         ? config.sync_action
         : DEFAULT_DOLT_REPO_SYNC_ACTION
   };
@@ -7048,7 +7117,7 @@ function normalizeDoltDumpPanelConfig(node) {
   return {
     artifact_retention:
       config.artifact_retention === 'ephemeral_per_run' ||
-      config.artifact_retention === 'persist_all'
+        config.artifact_retention === 'persist_all'
         ? config.artifact_retention
         : DEFAULT_DOLT_DUMP_ARTIFACT_RETENTION,
     execution: normalizeNodeExecutionTimingConfig(config),
@@ -7062,7 +7131,7 @@ function normalizeDoltDumpPanelConfig(node) {
     selected_tables_text: selectedTables.join(', '),
     table_selection_mode:
       config.table_selection_mode === 'all_tables' ||
-      config.table_selection_mode === 'manual_tables'
+        config.table_selection_mode === 'manual_tables'
         ? config.table_selection_mode
         : DEFAULT_DOLT_DUMP_TABLE_SELECTION_MODE
   };
@@ -7074,9 +7143,9 @@ function normalizeDoltDiffExportPanelConfig(node) {
   return {
     change_filter:
       config.change_filter === 'non_delete_changes' ||
-      config.change_filter === 'added_only' ||
-      config.change_filter === 'modified_only' ||
-      config.change_filter === 'removed_only'
+        config.change_filter === 'added_only' ||
+        config.change_filter === 'modified_only' ||
+        config.change_filter === 'removed_only'
         ? config.change_filter
         : DEFAULT_DOLT_DIFF_EXPORT_CHANGE_FILTER,
     deleted_row_handling:
@@ -7114,6 +7183,87 @@ function normalizeLoadToDuckDbPanelConfig(node) {
   };
 }
 
+function resolveSqlTransformPreviewSource(sourceSchemaName = '', sourceTableName = '') {
+  const fallbackSchema =
+    typeof sourceSchemaName === 'string' && sourceSchemaName.trim()
+      ? sourceSchemaName.trim()
+      : DEFAULT_LOAD_TO_DUCKDB_TARGET_SCHEMA;
+  const fallbackTable =
+    typeof sourceTableName === 'string' && sourceTableName.trim()
+      ? sourceTableName.trim()
+      : 'table_name';
+  const rawTable = fallbackTable;
+
+  if (rawTable.includes('.')) {
+    const segments = rawTable
+      .split('.')
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+
+    if (segments.length >= 2) {
+      const tableName = segments[segments.length - 1];
+      const schemaName = segments.slice(0, -1).join('.');
+
+      return {
+        label: `${schemaName}.${tableName}`,
+        schemaName,
+        tableName
+      };
+    }
+  }
+
+  return {
+    label: `${fallbackSchema}.${rawTable}`,
+    schemaName: fallbackSchema,
+    tableName: rawTable
+  };
+}
+
+function renderSqlTransformOutputTableName(config = {}, sourceTableName = '', inputMode = 'single') {
+  const legacyOutputName =
+    typeof config?.output_table_name === 'string' && config.output_table_name.trim()
+      ? config.output_table_name.trim()
+      : null;
+  const outputNameTemplate =
+    typeof config?.output_table_name_template === 'string' &&
+      config.output_table_name_template.trim()
+      ? config.output_table_name_template.trim()
+      : DEFAULT_SQL_TRANSFORM_OUTPUT_TABLE_NAME_TEMPLATE;
+  const tableName =
+    typeof sourceTableName === 'string' && sourceTableName.trim()
+      ? sourceTableName.trim()
+      : 'table_name';
+
+  if (inputMode !== 'collection' && legacyOutputName) {
+    return legacyOutputName;
+  }
+
+  return outputNameTemplate
+    .replaceAll('{{table_name}}', tableName)
+    .replaceAll('{{source_table}}', tableName);
+}
+
+function renderSqlTransformSqlPreview(config = {}, sourceSchemaName = '', sourceTableName = '') {
+  const schemaName =
+    typeof sourceSchemaName === 'string' && sourceSchemaName.trim()
+      ? sourceSchemaName.trim()
+      : 'staging';
+  const tableName =
+    typeof sourceTableName === 'string' && sourceTableName.trim()
+      ? sourceTableName.trim()
+      : 'table_name';
+  const qualifiedSource = `${schemaName}.${tableName}`;
+  const sqlTemplate =
+    typeof config?.sql_text === 'string' && config.sql_text.trim()
+      ? config.sql_text
+      : DEFAULT_SQL_TRANSFORM_SQL_TEXT;
+
+  return sqlTemplate
+    .replaceAll('{{source}}', qualifiedSource)
+    .replaceAll('{{schema_name}}', schemaName)
+    .replaceAll('{{table_name}}', tableName);
+}
+
 function normalizeSqlTransformPanelConfig(node) {
   const config = node?.config ?? {};
 
@@ -7127,6 +7277,11 @@ function normalizeSqlTransformPanelConfig(node) {
       config,
       'output_table_name',
       DEFAULT_SQL_TRANSFORM_OUTPUT_TABLE_NAME
+    ),
+    output_table_name_template: normalizeNodeConfigTextField(
+      config,
+      'output_table_name_template',
+      DEFAULT_SQL_TRANSFORM_OUTPUT_TABLE_NAME_TEMPLATE
     ),
     source_table_name:
       typeof config.source_table_name === 'string' ? config.source_table_name : '',
@@ -7402,8 +7557,8 @@ function normalizeTableOutputPanelConfig(node) {
       typeof config.include_written_at === 'boolean' ? config.include_written_at : true,
     input_shape:
       config.input_shape === 'single_text_row' ||
-      config.input_shape === 'source_table' ||
-      config.input_shape === 'table_schema'
+        config.input_shape === 'source_table' ||
+        config.input_shape === 'table_schema'
         ? config.input_shape
         : DEFAULT_TABLE_OUTPUT_INPUT_SHAPE,
     open_in_catalog:
@@ -7480,7 +7635,7 @@ function applyTextInputConfigUpdate(currentConfig = {}, patch = {}) {
     trim_mode:
       next.trim_mode === 'trim' || next.trim_mode === 'exact'
         ? next.trim_mode
-      : 'automatic'
+        : 'automatic'
   };
 }
 
@@ -7646,7 +7801,7 @@ function applyDoltRepoSyncConfigUpdate(currentConfig = {}, patch = {}) {
         : DEFAULT_DOLT_REPO_SYNC_NO_CHANGE_BEHAVIOR,
     sync_action:
       next.sync_action === 'fetch_and_checkout' ||
-      next.sync_action === 'refresh_checkout'
+        next.sync_action === 'refresh_checkout'
         ? next.sync_action
         : DEFAULT_DOLT_REPO_SYNC_ACTION
   };
@@ -7693,7 +7848,7 @@ function applyDoltDumpConfigUpdate(currentConfig = {}, patch = {}) {
     ...rest,
     artifact_retention:
       next.artifact_retention === 'ephemeral_per_run' ||
-      next.artifact_retention === 'persist_all'
+        next.artifact_retention === 'persist_all'
         ? next.artifact_retention
         : DEFAULT_DOLT_DUMP_ARTIFACT_RETENTION,
     execution: normalizeNodeExecutionTimingConfig(next),
@@ -7706,7 +7861,7 @@ function applyDoltDumpConfigUpdate(currentConfig = {}, patch = {}) {
     selected_tables: selectedTables,
     table_selection_mode:
       next.table_selection_mode === 'all_tables' ||
-      next.table_selection_mode === 'manual_tables'
+        next.table_selection_mode === 'manual_tables'
         ? next.table_selection_mode
         : DEFAULT_DOLT_DUMP_TABLE_SELECTION_MODE
   };
@@ -7723,9 +7878,9 @@ function applyDoltDiffExportConfigUpdate(currentConfig = {}, patch = {}) {
     ...next,
     change_filter:
       next.change_filter === 'non_delete_changes' ||
-      next.change_filter === 'added_only' ||
-      next.change_filter === 'modified_only' ||
-      next.change_filter === 'removed_only'
+        next.change_filter === 'added_only' ||
+        next.change_filter === 'modified_only' ||
+        next.change_filter === 'removed_only'
         ? next.change_filter
         : DEFAULT_DOLT_DIFF_EXPORT_CHANGE_FILTER,
     deleted_row_handling:
@@ -7786,6 +7941,11 @@ function applySqlTransformConfigUpdate(currentConfig = {}, patch = {}) {
       next,
       'output_table_name',
       DEFAULT_SQL_TRANSFORM_OUTPUT_TABLE_NAME
+    ),
+    output_table_name_template: normalizeNodeConfigTextField(
+      next,
+      'output_table_name_template',
+      DEFAULT_SQL_TRANSFORM_OUTPUT_TABLE_NAME_TEMPLATE
     ),
     source_table_name:
       typeof next.source_table_name === 'string' ? next.source_table_name : '',
@@ -7906,8 +8066,8 @@ function applyTableOutputConfigUpdate(currentConfig = {}, patch = {}) {
       typeof next.include_written_at === 'boolean' ? next.include_written_at : true,
     input_shape:
       next.input_shape === 'single_text_row' ||
-      next.input_shape === 'source_table' ||
-      next.input_shape === 'table_schema'
+        next.input_shape === 'source_table' ||
+        next.input_shape === 'table_schema'
         ? next.input_shape
         : DEFAULT_TABLE_OUTPUT_INPUT_SHAPE,
     open_in_catalog:
@@ -8363,7 +8523,7 @@ function buildDoltDumpRuntimeSummary(config, workflow, nodeId) {
           ? `${selectedTables.length} selected`
           : 'selected tables'
         : config?.table_selection_mode === 'prefer_manifest_scope' &&
-            sourceContext?.sourceTypeId === 'dolt_change_manifest'
+          sourceContext?.sourceTypeId === 'dolt_change_manifest'
           ? manifestTables.length > 0
             ? `${manifestTables.length} changed`
             : 'changed tables'
@@ -8462,25 +8622,72 @@ function buildSqlTransformRuntimeSummary(config, workflow, nodeId) {
     typeof config?.target_schema === 'string' && config.target_schema.trim()
       ? config.target_schema.trim()
       : DEFAULT_SQL_TRANSFORM_TARGET_SCHEMA;
-  const outputTableName =
-    typeof config?.output_table_name === 'string' && config.output_table_name.trim()
-      ? config.output_table_name.trim()
-      : DEFAULT_SQL_TRANSFORM_OUTPUT_TABLE_NAME;
+  const inputMode = sourceContext?.inputMode === 'collection' ? 'collection' : 'single';
+  const sourceTables = sourceContext?.sourceTables ?? [];
+  const sourceOverride =
+    inputMode !== 'collection' &&
+      typeof config?.source_table_name === 'string' &&
+      config.source_table_name.trim()
+      ? config.source_table_name.trim()
+      : null;
+  const previewSource = resolveSqlTransformPreviewSource(
+    sourceContext?.sourceSchema ?? DEFAULT_LOAD_TO_DUCKDB_TARGET_SCHEMA,
+    sourceOverride ?? sourceContext?.sourceTable ?? sourceTables[0] ?? 'table_name'
+  );
+  const outputTableName = renderSqlTransformOutputTableName(
+    config,
+    previewSource.tableName,
+    inputMode
+  );
+  const outputTemplate =
+    config?.output_table_name_template?.trim() ||
+    DEFAULT_SQL_TRANSFORM_OUTPUT_TABLE_NAME_TEMPLATE;
+  const sourceTableLabel =
+    inputMode === 'collection'
+      ? sourceTables.length > 0
+        ? `${sourceTables.length} table${sourceTables.length === 1 ? '' : 's'}`
+        : 'awaiting table collection'
+      : sourceOverride ?? sourceContext?.sourceTable ?? 'awaiting table';
+  const previewOutputLabel = `${targetSchema}.${outputTableName}`;
 
   return {
+    inputMode,
+    inputModeLabel: inputMode === 'collection' ? 'Table collection' : 'Single table',
     materializationModeLabel:
       config?.materialization_mode === 'view' ? 'View' : 'View only',
-    sourceTableLabel: sourceContext?.sourceTable ?? 'awaiting table',
+    outputTemplateLabel: `${targetSchema}.${outputTemplate}`,
+    previewOutputLabel,
+    previewSourceLabel: previewSource.label,
+    renderedSqlPreview: renderSqlTransformSqlPreview(
+      config,
+      previewSource.schemaName,
+      previewSource.tableName
+    ),
+    sourceTableLabel,
     sourceTypeLabel:
       sourceContext?.sourceTypeId === 'load_to_duckdb'
-        ? 'load_to_duckdb table_ref'
-        : sourceContext?.sourceTypeId === 'table_input'
-          ? 'table_input table_ref'
-          : sourceContext?.sourceTypeId === 'sql_transform'
-            ? 'sql_transform table_ref'
-            : 'table_ref input',
-    sqlModeLabel: 'Inline SQL',
-    targetLocationLabel: `${targetSchema}.${outputTableName}`
+        ? inputMode === 'collection'
+          ? 'load_to_duckdb table_ref_collection'
+          : 'load_to_duckdb table_ref'
+        : sourceContext?.sourceTypeId === 'map'
+          ? 'map table_ref_collection'
+          : sourceContext?.sourceTypeId === 'table_input'
+            ? 'table_input table_ref'
+            : sourceContext?.sourceTypeId === 'sql_transform'
+              ? inputMode === 'collection'
+                ? 'sql_transform table_ref_collection'
+                : 'sql_transform table_ref'
+              : inputMode === 'collection'
+                ? 'table_ref_collection input'
+                : 'table_ref input',
+    sqlAuthoringLabel:
+      inputMode === 'collection' ? 'same SQL template per table' : 'single resolved source',
+    sqlModeLabel:
+      inputMode === 'collection' ? 'Per-table SQL template' : 'Single-table SQL template',
+    targetLocationLabel:
+      inputMode === 'collection'
+        ? `${targetSchema}.${outputTemplate} per table`
+        : previewOutputLabel
   };
 }
 
@@ -8833,7 +9040,7 @@ function resolveConnectedLoadToDuckDbPanelContext(workflow, nodeId) {
     return {
       branch:
         typeof dumpContext?.sourceConfig?.branch === 'string' &&
-        dumpContext.sourceConfig.branch.trim()
+          dumpContext.sourceConfig.branch.trim()
           ? dumpContext.sourceConfig.branch.trim()
           : DEFAULT_DOLT_REPO_SOURCE_BRANCH,
       currentCommit: resolveLoadToDuckDbCurrentCommit(dumpContext?.sourceConfig),
@@ -8848,7 +9055,7 @@ function resolveConnectedLoadToDuckDbPanelContext(workflow, nodeId) {
     return {
       branch:
         typeof diffContext?.sourceConfig?.branch === 'string' &&
-        diffContext.sourceConfig.branch.trim()
+          diffContext.sourceConfig.branch.trim()
           ? diffContext.sourceConfig.branch.trim()
           : DEFAULT_DOLT_REPO_SOURCE_BRANCH,
       currentCommit: resolveLoadToDuckDbCurrentCommit(diffContext?.sourceConfig),
@@ -8883,7 +9090,7 @@ function resolveConnectedLoadToDuckDbPanelTableNames(workflow, nodeId) {
     const dumpContext = resolveConnectedDoltDumpPanelContext(workflow, sourceNode.node_id);
     const repository =
       typeof dumpContext?.sourceConfig?.repository === 'string' &&
-      dumpContext.sourceConfig.repository.trim()
+        dumpContext.sourceConfig.repository.trim()
         ? dumpContext.sourceConfig.repository.trim()
         : DEFAULT_DOLT_REPO_SOURCE_REPOSITORY;
 
@@ -8913,13 +9120,18 @@ function resolveConnectedSqlTransformPanelContext(workflow, nodeId) {
     return null;
   }
 
-  const incomingEdge = workflow.edges?.find(
-    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'table'
-  );
+  const incomingEdge =
+    workflow.edges?.find(
+      (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'items'
+    ) ??
+    workflow.edges?.find(
+      (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'table'
+    );
   if (!incomingEdge) {
     return null;
   }
 
+  const inputMode = incomingEdge.target_port_id === 'items' ? 'collection' : 'single';
   const sourceNode = workflow.nodes?.find((node) => node.node_id === incomingEdge.source_node_id);
   if (!sourceNode) {
     return null;
@@ -8930,8 +9142,22 @@ function resolveConnectedSqlTransformPanelContext(workflow, nodeId) {
     const sourceTables = resolveConnectedLoadToDuckDbPanelTableNames(workflow, sourceNode.node_id);
 
     return {
+      inputMode,
       sourceSchema: sourceConfig.target_schema,
       sourceTable: sourceTables[0] ?? null,
+      sourceTables,
+      sourceTypeId: sourceNode.type_id
+    };
+  }
+
+  if (sourceNode.type_id === 'map') {
+    const mapContext = resolveConnectedMapPanelContext(workflow, sourceNode.node_id);
+
+    return {
+      inputMode: 'collection',
+      sourceSchema: mapContext.sourceSchema,
+      sourceTable: mapContext.sourceTables[0] ?? null,
+      sourceTables: mapContext.sourceTables,
       sourceTypeId: sourceNode.type_id
     };
   }
@@ -8940,23 +9166,111 @@ function resolveConnectedSqlTransformPanelContext(workflow, nodeId) {
     const sourceConfig = normalizeTableInputPanelConfig(sourceNode);
 
     return {
+      inputMode,
       sourceSchema: sourceConfig.schema_name,
       sourceTable: sourceConfig.table_name,
+      sourceTables: [sourceConfig.table_name],
       sourceTypeId: sourceNode.type_id
     };
   }
 
   if (sourceNode.type_id === 'sql_transform') {
     const sourceConfig = normalizeSqlTransformPanelConfig(sourceNode);
+    const upstreamContext = resolveConnectedSqlTransformPanelContext(workflow, sourceNode.node_id);
+    const upstreamTables = upstreamContext?.sourceTables?.length
+      ? upstreamContext.sourceTables
+      : [upstreamContext?.sourceTable ?? 'table_name'];
+    const outputTables =
+      incomingEdge.source_port_id === 'items'
+        ? upstreamTables.map((tableName) =>
+          renderSqlTransformOutputTableName(sourceConfig, tableName, 'collection')
+        )
+        : [renderSqlTransformOutputTableName(sourceConfig, upstreamTables[0], 'single')];
 
     return {
+      inputMode,
       sourceSchema: sourceConfig.target_schema,
-      sourceTable: sourceConfig.output_table_name,
+      sourceTable: outputTables[0] ?? null,
+      sourceTables: outputTables,
       sourceTypeId: sourceNode.type_id
     };
   }
 
   return null;
+}
+
+function resolveConnectedMapPanelContext(workflow, nodeId) {
+  if (!workflow || !nodeId) {
+    return {
+      sourceSchema: DEFAULT_LOAD_TO_DUCKDB_TARGET_SCHEMA,
+      sourceTables: []
+    };
+  }
+
+  const mapNode = workflow.nodes?.find((node) => node.node_id === nodeId);
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'items'
+  );
+  if (!incomingEdge) {
+    return {
+      sourceSchema:
+        typeof mapNode?.config?.output_schema_name === 'string' &&
+          mapNode.config.output_schema_name.trim()
+          ? mapNode.config.output_schema_name.trim()
+          : DEFAULT_LOAD_TO_DUCKDB_TARGET_SCHEMA,
+      sourceTables: []
+    };
+  }
+
+  const sourceNode = workflow.nodes?.find((node) => node.node_id === incomingEdge.source_node_id);
+  let sourceSchema = DEFAULT_LOAD_TO_DUCKDB_TARGET_SCHEMA;
+  let sourceTables = [];
+
+  if (sourceNode?.type_id === 'load_to_duckdb') {
+    const sourceConfig = normalizeLoadToDuckDbPanelConfig(sourceNode);
+    sourceSchema = sourceConfig.target_schema;
+    sourceTables = resolveConnectedLoadToDuckDbPanelTableNames(workflow, sourceNode.node_id);
+  } else if (sourceNode?.type_id === 'sql_transform') {
+    const sourceConfig = normalizeSqlTransformPanelConfig(sourceNode);
+    const upstreamContext = resolveConnectedSqlTransformPanelContext(workflow, sourceNode.node_id);
+    const upstreamTables = upstreamContext?.sourceTables?.length
+      ? upstreamContext.sourceTables
+      : [upstreamContext?.sourceTable ?? 'table_name'];
+    sourceSchema = sourceConfig.target_schema;
+    sourceTables = upstreamTables.map((tableName) =>
+      renderSqlTransformOutputTableName(
+        sourceConfig,
+        tableName,
+        incomingEdge.source_port_id === 'items' ? 'collection' : 'single'
+      )
+    );
+  }
+
+  const selectedTables = normalizeDoltDumpSelectedTables(mapNode?.config?.selected_tables);
+  const selectedSet = new Set(selectedTables);
+  const scopedTables =
+    selectedTables.length > 0
+      ? sourceTables.filter((tableName) => selectedSet.has(tableName))
+      : sourceTables;
+  const prefix =
+    typeof mapNode?.config?.output_table_name_prefix === 'string'
+      ? mapNode.config.output_table_name_prefix
+      : '';
+  const suffix =
+    typeof mapNode?.config?.output_table_name_suffix === 'string'
+      ? mapNode.config.output_table_name_suffix
+      : '';
+  const mappedTables = scopedTables.map((tableName) => `${prefix}${tableName}${suffix}`);
+  const outputSchema =
+    typeof mapNode?.config?.output_schema_name === 'string' &&
+      mapNode.config.output_schema_name.trim()
+      ? mapNode.config.output_schema_name.trim()
+      : sourceSchema;
+
+  return {
+    sourceSchema: outputSchema,
+    sourceTables: mappedTables
+  };
 }
 
 function resolveConnectedLoadToDuckDbPanelContextFromTableNode(workflow, nodeId) {
@@ -9029,7 +9343,7 @@ function resolveConnectedTableMergePanelContext(workflow, nodeId) {
 
     return {
       sourceSchema: sourceConfig.target_schema,
-      sourceTables: [sourceConfig.output_table_name],
+      sourceTables: [renderSqlTransformOutputTableName(sourceConfig)],
       sourceTypeId: sourceNode.type_id
     };
   }
@@ -9068,7 +9382,7 @@ function resolveLoadToDuckDbDumpTableCount(config, sourceContext) {
 
   const repository =
     typeof sourceContext?.sourceConfig?.repository === 'string' &&
-    sourceContext.sourceConfig.repository.trim()
+      sourceContext.sourceConfig.repository.trim()
       ? sourceContext.sourceConfig.repository.trim()
       : DEFAULT_DOLT_REPO_SOURCE_REPOSITORY;
   const selectedTables = normalizeDoltDumpSelectedTables(config?.selected_tables);
@@ -9523,9 +9837,9 @@ function parseTableSchemaAuthoringTableDefinition(
   const tableReference = hasNodeConfigField(value, 'table')
     ? parseTableSchemaReference(value.table)
     : parseCanonicalTableSchemaReference(
-        value,
-        `Schema JSON table ${index + 1}`
-      );
+      value,
+      `Schema JSON table ${index + 1}`
+    );
   const columns = parseTableSchemaAuthoringColumns(value.columns, value.primary_key);
 
   return {
@@ -9765,21 +10079,21 @@ function formatTableSchemaAuthoringConfig(config) {
   const formatted =
     normalizedConfig.tables.length > 1
       ? {
-          ...(normalizedConfig.catalog !== DEFAULT_TABLE_SCHEMA_CATALOG
-            ? { catalog: normalizedConfig.catalog }
-            : {}),
-          tables: normalizedConfig.tables.map((table) =>
-            formatTableSchemaAuthoringTableDefinition(table)
-          ),
-          ...(normalizedConfig.open_in_catalog ? { open_in_catalog: true } : {})
-        }
+        ...(normalizedConfig.catalog !== DEFAULT_TABLE_SCHEMA_CATALOG
+          ? { catalog: normalizedConfig.catalog }
+          : {}),
+        tables: normalizedConfig.tables.map((table) =>
+          formatTableSchemaAuthoringTableDefinition(table)
+        ),
+        ...(normalizedConfig.open_in_catalog ? { open_in_catalog: true } : {})
+      }
       : {
-          ...formatTableSchemaAuthoringTableDefinition(normalizedConfig.tables[0]),
-          ...(normalizedConfig.catalog !== DEFAULT_TABLE_SCHEMA_CATALOG
-            ? { catalog: normalizedConfig.catalog }
-            : {}),
-          ...(normalizedConfig.open_in_catalog ? { open_in_catalog: true } : {})
-        };
+        ...formatTableSchemaAuthoringTableDefinition(normalizedConfig.tables[0]),
+        ...(normalizedConfig.catalog !== DEFAULT_TABLE_SCHEMA_CATALOG
+          ? { catalog: normalizedConfig.catalog }
+          : {}),
+        ...(normalizedConfig.open_in_catalog ? { open_in_catalog: true } : {})
+      };
 
   return JSON.stringify(formatted, null, 2);
 }
@@ -10031,15 +10345,15 @@ function buildTableOutputResultShape(config, workflow = null, nodeId = null) {
 
     return groups.length > 0
       ? groups[0].columns.map((column) => ({
-          name: column.name,
-          type: column.definition
-        }))
+        name: column.name,
+        type: column.definition
+      }))
       : [
-          {
-            name: 'declared tables',
-            type: 'schema bootstrap'
-          }
-        ];
+        {
+          name: 'declared tables',
+          type: 'schema bootstrap'
+        }
+      ];
   }
 
   if (config?.input_shape === 'source_table') {
@@ -10050,19 +10364,19 @@ function buildTableOutputResultShape(config, workflow = null, nodeId = null) {
       },
       ...(config?.include_run_id
         ? [
-            {
-              name: 'run_id',
-              type: 'varchar'
-            }
-          ]
+          {
+            name: 'run_id',
+            type: 'varchar'
+          }
+        ]
         : []),
       ...(config?.include_written_at
         ? [
-            {
-              name: 'written_at',
-              type: 'timestamp'
-            }
-          ]
+          {
+            name: 'written_at',
+            type: 'timestamp'
+          }
+        ]
         : [])
     ];
   }
@@ -10103,20 +10417,20 @@ function buildTableOutputResultShapeGroups(config, workflow = null, nodeId = nul
   const fallbackTables = schemaTables.length > 0
     ? schemaTables
     : [
-        {
-          checks: [],
-          columns: [],
-          create_mode: DEFAULT_TABLE_SCHEMA_CREATE_MODE,
-          if_target_exists: DEFAULT_TABLE_SCHEMA_IF_TARGET_EXISTS,
-          output_alias: 'declared tables',
-          primary_key: [],
-          schema_name: resolveTableOutputDisplayValue(
-            config?.target_schema,
-            DEFAULT_TABLE_OUTPUT_SCHEMA
-          ),
-          table_name: 'declared tables'
-        }
-      ];
+      {
+        checks: [],
+        columns: [],
+        create_mode: DEFAULT_TABLE_SCHEMA_CREATE_MODE,
+        if_target_exists: DEFAULT_TABLE_SCHEMA_IF_TARGET_EXISTS,
+        output_alias: 'declared tables',
+        primary_key: [],
+        schema_name: resolveTableOutputDisplayValue(
+          config?.target_schema,
+          DEFAULT_TABLE_OUTPUT_SCHEMA
+        ),
+        table_name: 'declared tables'
+      }
+    ];
 
   return fallbackTables.map((table) => {
     const schemaColumns = table.columns.map((column) => ({
@@ -10254,60 +10568,60 @@ function appendCanvasNode(workflow, typeId, options = {}) {
         ? 'Text Input'
         : typeId === 'dolt_repo_source'
           ? 'Dolt Repo Source'
-        : typeId === 'checkpoint_read'
-          ? 'Checkpoint Read'
-        : typeId === 'checkpoint_write'
-          ? 'Checkpoint Write'
-        : typeId === 'quality_check'
-          ? 'Quality Check'
-        : typeId === 'dolt_repo_sync'
-          ? 'Dolt Repo Sync'
-        : typeId === 'dolt_change_manifest'
-          ? 'Dolt Change Manifest'
-        : typeId === 'dolt_dump'
-          ? 'Dolt Dump'
-        : typeId === 'dolt_diff_export'
-          ? 'Dolt Diff Export'
-        : typeId === 'load_to_duckdb'
-          ? 'Load to DuckDB'
-        : typeId === 'sql_transform'
-          ? 'SQL Transform'
-        : typeId === 'table_merge'
-          ? 'Table Merge'
-        : typeId === 'table_input'
-          ? 'Table Input'
-        : typeId === 'table_schema'
-          ? 'Table Schema'
-        : typeId === 'table_output'
-          ? 'Table Output'
-          : 'Send Email',
+          : typeId === 'checkpoint_read'
+            ? 'Checkpoint Read'
+            : typeId === 'checkpoint_write'
+              ? 'Checkpoint Write'
+              : typeId === 'quality_check'
+                ? 'Quality Check'
+                : typeId === 'dolt_repo_sync'
+                  ? 'Dolt Repo Sync'
+                  : typeId === 'dolt_change_manifest'
+                    ? 'Dolt Change Manifest'
+                    : typeId === 'dolt_dump'
+                      ? 'Dolt Dump'
+                      : typeId === 'dolt_diff_export'
+                        ? 'Dolt Diff Export'
+                        : typeId === 'load_to_duckdb'
+                          ? 'Load to DuckDB'
+                          : typeId === 'sql_transform'
+                            ? 'SQL Transform'
+                            : typeId === 'table_merge'
+                              ? 'Table Merge'
+                              : typeId === 'table_input'
+                                ? 'Table Input'
+                                : typeId === 'table_schema'
+                                  ? 'Table Schema'
+                                  : typeId === 'table_output'
+                                    ? 'Table Output'
+                                    : 'Send Email',
     config:
       typeId === 'text_input'
         ? {
+          execution: {
+            wait_after_seconds: 0,
+            wait_before_seconds: 0
+          },
+          include_line_breaks: true,
+          preserve_whitespace: true,
+          text: 'Draft the next message body here.',
+          trim_mode: 'automatic'
+        }
+        : typeId === 'dolt_repo_source'
+          ? {
+            branch: DEFAULT_DOLT_REPO_SOURCE_BRANCH,
+            checkout_ref: '',
+            clone_mode: DEFAULT_DOLT_REPO_SOURCE_CLONE_MODE,
+            connection_ref: DEFAULT_DOLT_REPO_SOURCE_CONNECTION_REF,
             execution: {
               wait_after_seconds: 0,
               wait_before_seconds: 0
             },
-            include_line_breaks: true,
-            preserve_whitespace: true,
-            text: 'Draft the next message body here.',
-            trim_mode: 'automatic'
+            repository: DEFAULT_DOLT_REPO_SOURCE_REPOSITORY,
+            sync_strategy: DEFAULT_DOLT_REPO_SOURCE_SYNC_STRATEGY
           }
-        : typeId === 'dolt_repo_source'
-          ? {
-              branch: DEFAULT_DOLT_REPO_SOURCE_BRANCH,
-              checkout_ref: '',
-              clone_mode: DEFAULT_DOLT_REPO_SOURCE_CLONE_MODE,
-              connection_ref: DEFAULT_DOLT_REPO_SOURCE_CONNECTION_REF,
-              execution: {
-                wait_after_seconds: 0,
-                wait_before_seconds: 0
-              },
-              repository: DEFAULT_DOLT_REPO_SOURCE_REPOSITORY,
-              sync_strategy: DEFAULT_DOLT_REPO_SOURCE_SYNC_STRATEGY
-            }
-        : typeId === 'checkpoint_read'
-          ? {
+          : typeId === 'checkpoint_read'
+            ? {
               branch: DEFAULT_CHECKPOINT_READ_BRANCH,
               checkpoint_table: DEFAULT_CHECKPOINT_READ_TABLE,
               emit_bootstrap_marker_if_missing:
@@ -10319,206 +10633,207 @@ function appendCanvasNode(workflow, typeId, options = {}) {
               fail_on_stale_checkpoint: DEFAULT_CHECKPOINT_READ_FAIL_ON_STALE_CHECKPOINT,
               source_repo: DEFAULT_CHECKPOINT_READ_SOURCE_REPO
             }
-        : typeId === 'checkpoint_write'
-          ? {
-              advance_on_partial_success:
-                DEFAULT_CHECKPOINT_WRITE_ADVANCE_ON_PARTIAL_SUCCESS,
-              checkpoint_table: DEFAULT_CHECKPOINT_WRITE_TABLE,
-              commit_source: DEFAULT_CHECKPOINT_WRITE_COMMIT_SOURCE,
-              execution: {
-                wait_after_seconds: 0,
-                wait_before_seconds: 0
-              },
-              only_persist_on_full_success:
-                DEFAULT_CHECKPOINT_WRITE_ONLY_PERSIST_ON_FULL_SUCCESS,
-              write_timing: DEFAULT_CHECKPOINT_WRITE_TIMING
-            }
-        : typeId === 'quality_check'
-          ? {
-              allow_warning_only_runs_to_continue:
-                DEFAULT_QUALITY_CHECK_ALLOW_WARNING_ONLY_RUNS_TO_CONTINUE,
-              block_checkpoint_write_on_failure:
-                DEFAULT_QUALITY_CHECK_BLOCK_CHECKPOINT_WRITE_ON_FAILURE,
-              execution: {
-                wait_after_seconds: 0,
-                wait_before_seconds: 0
-              },
-              null_key_policy: DEFAULT_QUALITY_CHECK_NULL_KEY_POLICY,
-              schema_drift_rule: DEFAULT_QUALITY_CHECK_SCHEMA_DRIFT_RULE,
-              suite_preset: DEFAULT_QUALITY_CHECK_SUITE_PRESET,
-              warning_budget: DEFAULT_QUALITY_CHECK_WARNING_BUDGET
-            }
-        : typeId === 'dolt_repo_sync'
-          ? {
-              branch_guard: DEFAULT_DOLT_REPO_SYNC_BRANCH_GUARD,
-              dirty_working_copy_policy: DEFAULT_DOLT_REPO_SYNC_DIRTY_WORKING_COPY_POLICY,
-              execution: {
-                wait_after_seconds: 0,
-                wait_before_seconds: 0
-              },
-              no_change_behavior: DEFAULT_DOLT_REPO_SYNC_NO_CHANGE_BEHAVIOR,
-              sync_action: DEFAULT_DOLT_REPO_SYNC_ACTION
-            }
-        : typeId === 'dolt_change_manifest'
-          ? {
-              execution: {
-                wait_after_seconds: 0,
-                wait_before_seconds: 0
-              },
-              schema_change_policy: DEFAULT_DOLT_CHANGE_MANIFEST_SCHEMA_CHANGE_POLICY,
-              selected_tables: [],
-              table_scope: DEFAULT_DOLT_CHANGE_MANIFEST_TABLE_SCOPE
-            }
-        : typeId === 'dolt_dump'
-          ? {
-              artifact_retention: DEFAULT_DOLT_DUMP_ARTIFACT_RETENTION,
-              execution: {
-                wait_after_seconds: 0,
-                wait_before_seconds: 0
-              },
-              output_directory_policy: DEFAULT_DOLT_DUMP_OUTPUT_DIRECTORY_POLICY,
-              output_format: DEFAULT_DOLT_DUMP_OUTPUT_FORMAT,
-              selected_tables: [],
-              table_selection_mode: DEFAULT_DOLT_DUMP_TABLE_SELECTION_MODE
-            }
-        : typeId === 'dolt_diff_export'
-          ? {
-              change_filter: DEFAULT_DOLT_DIFF_EXPORT_CHANGE_FILTER,
-              deleted_row_handling: DEFAULT_DOLT_DIFF_EXPORT_DELETED_ROW_HANDLING,
-              execution: {
-                wait_after_seconds: 0,
-                wait_before_seconds: 0
-              },
-              output_format: DEFAULT_DOLT_DIFF_EXPORT_OUTPUT_FORMAT
-            }
-        : typeId === 'load_to_duckdb'
-          ? {
-              delta_context_preservation:
-                DEFAULT_LOAD_TO_DUCKDB_DELTA_CONTEXT_PRESERVATION,
-              execution: {
-                wait_after_seconds: 0,
-                wait_before_seconds: 0
-              },
-              schema_handling: DEFAULT_LOAD_TO_DUCKDB_SCHEMA_HANDLING,
-              table_mapping: DEFAULT_LOAD_TO_DUCKDB_TABLE_MAPPING,
-              target_schema: DEFAULT_LOAD_TO_DUCKDB_TARGET_SCHEMA
-            }
-        : typeId === 'sql_transform'
-          ? {
-              execution: {
-                wait_after_seconds: 0,
-                wait_before_seconds: 0
-              },
-              materialization_mode: DEFAULT_SQL_TRANSFORM_MATERIALIZATION_MODE,
-              output_table_name: DEFAULT_SQL_TRANSFORM_OUTPUT_TABLE_NAME,
-              source_table_name: '',
-              sql_text: DEFAULT_SQL_TRANSFORM_SQL_TEXT,
-              target_schema: DEFAULT_SQL_TRANSFORM_TARGET_SCHEMA
-            }
-        : typeId === 'table_merge'
-          ? {
-              delete_handling: DEFAULT_TABLE_MERGE_DELETE_HANDLING,
-              execution: {
-                wait_after_seconds: 0,
-                wait_before_seconds: 0
-              },
-              merge_key_columns: [...DEFAULT_TABLE_MERGE_KEY_COLUMNS],
-              schema_drift_behavior: DEFAULT_TABLE_MERGE_SCHEMA_DRIFT_BEHAVIOR,
-              target_schema: DEFAULT_TABLE_MERGE_TARGET_SCHEMA,
-              write_policy: DEFAULT_TABLE_MERGE_WRITE_POLICY
-            }
-        : typeId === 'table_input'
-          ? {
-              catalog: DEFAULT_TABLE_INPUT_CATALOG,
-              execution: {
-                wait_after_seconds: 0,
-                wait_before_seconds: 0
-              },
-              open_in_catalog: false,
-              output_alias: DEFAULT_TABLE_INPUT_OUTPUT_ALIAS,
-              refresh_schema: true,
-              row_filter: '',
-              row_limit: null,
-              schema_name: DEFAULT_TABLE_INPUT_SCHEMA,
-              selected_columns: [],
-              table_name: DEFAULT_TABLE_INPUT_TABLE_NAME
-            }
-        : typeId === 'table_schema'
-          ? {
-              catalog: DEFAULT_TABLE_SCHEMA_CATALOG,
-              checks: [],
-              columns: DEFAULT_TABLE_SCHEMA_COLUMNS.map((column) => ({ ...column })),
-              create_mode: DEFAULT_TABLE_SCHEMA_CREATE_MODE,
-              execution: {
-                wait_after_seconds: 0,
-                wait_before_seconds: 0
-              },
-              if_target_exists: DEFAULT_TABLE_SCHEMA_IF_TARGET_EXISTS,
-              open_in_catalog: false,
-              output_alias: DEFAULT_TABLE_SCHEMA_OUTPUT_ALIAS,
-              primary_key: ['order_id'],
-              schema_name: DEFAULT_TABLE_SCHEMA_SCHEMA,
-              table_name: DEFAULT_TABLE_SCHEMA_TABLE_NAME,
-              tables: [
-                {
-                  checks: [],
-                  columns: DEFAULT_TABLE_SCHEMA_COLUMNS.map((column) => ({ ...column })),
-                  create_mode: DEFAULT_TABLE_SCHEMA_CREATE_MODE,
-                  if_target_exists: DEFAULT_TABLE_SCHEMA_IF_TARGET_EXISTS,
-                  output_alias: DEFAULT_TABLE_SCHEMA_OUTPUT_ALIAS,
-                  primary_key: ['order_id'],
-                  schema_name: DEFAULT_TABLE_SCHEMA_SCHEMA,
-                  table_name: DEFAULT_TABLE_SCHEMA_TABLE_NAME
+            : typeId === 'checkpoint_write'
+              ? {
+                advance_on_partial_success:
+                  DEFAULT_CHECKPOINT_WRITE_ADVANCE_ON_PARTIAL_SUCCESS,
+                checkpoint_table: DEFAULT_CHECKPOINT_WRITE_TABLE,
+                commit_source: DEFAULT_CHECKPOINT_WRITE_COMMIT_SOURCE,
+                execution: {
+                  wait_after_seconds: 0,
+                  wait_before_seconds: 0
+                },
+                only_persist_on_full_success:
+                  DEFAULT_CHECKPOINT_WRITE_ONLY_PERSIST_ON_FULL_SUCCESS,
+                write_timing: DEFAULT_CHECKPOINT_WRITE_TIMING
+              }
+              : typeId === 'quality_check'
+                ? {
+                  allow_warning_only_runs_to_continue:
+                    DEFAULT_QUALITY_CHECK_ALLOW_WARNING_ONLY_RUNS_TO_CONTINUE,
+                  block_checkpoint_write_on_failure:
+                    DEFAULT_QUALITY_CHECK_BLOCK_CHECKPOINT_WRITE_ON_FAILURE,
+                  execution: {
+                    wait_after_seconds: 0,
+                    wait_before_seconds: 0
+                  },
+                  null_key_policy: DEFAULT_QUALITY_CHECK_NULL_KEY_POLICY,
+                  schema_drift_rule: DEFAULT_QUALITY_CHECK_SCHEMA_DRIFT_RULE,
+                  suite_preset: DEFAULT_QUALITY_CHECK_SUITE_PRESET,
+                  warning_budget: DEFAULT_QUALITY_CHECK_WARNING_BUDGET
                 }
-              ]
-            }
-        : typeId === 'table_output'
-          ? {
-              execution: {
-                wait_after_seconds: 0,
-                wait_before_seconds: 0
-              },
-              include_run_id: true,
-              include_written_at: true,
-              input_shape: DEFAULT_TABLE_OUTPUT_INPUT_SHAPE,
-              open_in_catalog: false,
-              table_name: DEFAULT_TABLE_OUTPUT_TABLE_NAME,
-              target_schema: DEFAULT_TABLE_OUTPUT_SCHEMA,
-              value_column: DEFAULT_TABLE_OUTPUT_VALUE_COLUMN,
-              write_mode: DEFAULT_TABLE_OUTPUT_WRITE_MODE
-            }
-        : {
-            body: '',
-            body_mode: 'input',
-            body_text: '',
-            connection_id: 'default_mailer',
-            content_type: 'text/plain',
-            execution: {
-              wait_after_seconds: 0,
-              wait_before_seconds: 0
-            },
-            to: 'ops@stitchly.dev',
-            subject: 'New workflow alert'
-          },
+                : typeId === 'dolt_repo_sync'
+                  ? {
+                    branch_guard: DEFAULT_DOLT_REPO_SYNC_BRANCH_GUARD,
+                    dirty_working_copy_policy: DEFAULT_DOLT_REPO_SYNC_DIRTY_WORKING_COPY_POLICY,
+                    execution: {
+                      wait_after_seconds: 0,
+                      wait_before_seconds: 0
+                    },
+                    no_change_behavior: DEFAULT_DOLT_REPO_SYNC_NO_CHANGE_BEHAVIOR,
+                    sync_action: DEFAULT_DOLT_REPO_SYNC_ACTION
+                  }
+                  : typeId === 'dolt_change_manifest'
+                    ? {
+                      execution: {
+                        wait_after_seconds: 0,
+                        wait_before_seconds: 0
+                      },
+                      schema_change_policy: DEFAULT_DOLT_CHANGE_MANIFEST_SCHEMA_CHANGE_POLICY,
+                      selected_tables: [],
+                      table_scope: DEFAULT_DOLT_CHANGE_MANIFEST_TABLE_SCOPE
+                    }
+                    : typeId === 'dolt_dump'
+                      ? {
+                        artifact_retention: DEFAULT_DOLT_DUMP_ARTIFACT_RETENTION,
+                        execution: {
+                          wait_after_seconds: 0,
+                          wait_before_seconds: 0
+                        },
+                        output_directory_policy: DEFAULT_DOLT_DUMP_OUTPUT_DIRECTORY_POLICY,
+                        output_format: DEFAULT_DOLT_DUMP_OUTPUT_FORMAT,
+                        selected_tables: [],
+                        table_selection_mode: DEFAULT_DOLT_DUMP_TABLE_SELECTION_MODE
+                      }
+                      : typeId === 'dolt_diff_export'
+                        ? {
+                          change_filter: DEFAULT_DOLT_DIFF_EXPORT_CHANGE_FILTER,
+                          deleted_row_handling: DEFAULT_DOLT_DIFF_EXPORT_DELETED_ROW_HANDLING,
+                          execution: {
+                            wait_after_seconds: 0,
+                            wait_before_seconds: 0
+                          },
+                          output_format: DEFAULT_DOLT_DIFF_EXPORT_OUTPUT_FORMAT
+                        }
+                        : typeId === 'load_to_duckdb'
+                          ? {
+                            delta_context_preservation:
+                              DEFAULT_LOAD_TO_DUCKDB_DELTA_CONTEXT_PRESERVATION,
+                            execution: {
+                              wait_after_seconds: 0,
+                              wait_before_seconds: 0
+                            },
+                            schema_handling: DEFAULT_LOAD_TO_DUCKDB_SCHEMA_HANDLING,
+                            table_mapping: DEFAULT_LOAD_TO_DUCKDB_TABLE_MAPPING,
+                            target_schema: DEFAULT_LOAD_TO_DUCKDB_TARGET_SCHEMA
+                          }
+                          : typeId === 'sql_transform'
+                            ? {
+                              execution: {
+                                wait_after_seconds: 0,
+                                wait_before_seconds: 0
+                              },
+                              materialization_mode: DEFAULT_SQL_TRANSFORM_MATERIALIZATION_MODE,
+                              output_table_name: DEFAULT_SQL_TRANSFORM_OUTPUT_TABLE_NAME,
+                              output_table_name_template: DEFAULT_SQL_TRANSFORM_OUTPUT_TABLE_NAME_TEMPLATE,
+                              source_table_name: '',
+                              sql_text: DEFAULT_SQL_TRANSFORM_SQL_TEXT,
+                              target_schema: DEFAULT_SQL_TRANSFORM_TARGET_SCHEMA
+                            }
+                            : typeId === 'table_merge'
+                              ? {
+                                delete_handling: DEFAULT_TABLE_MERGE_DELETE_HANDLING,
+                                execution: {
+                                  wait_after_seconds: 0,
+                                  wait_before_seconds: 0
+                                },
+                                merge_key_columns: [...DEFAULT_TABLE_MERGE_KEY_COLUMNS],
+                                schema_drift_behavior: DEFAULT_TABLE_MERGE_SCHEMA_DRIFT_BEHAVIOR,
+                                target_schema: DEFAULT_TABLE_MERGE_TARGET_SCHEMA,
+                                write_policy: DEFAULT_TABLE_MERGE_WRITE_POLICY
+                              }
+                              : typeId === 'table_input'
+                                ? {
+                                  catalog: DEFAULT_TABLE_INPUT_CATALOG,
+                                  execution: {
+                                    wait_after_seconds: 0,
+                                    wait_before_seconds: 0
+                                  },
+                                  open_in_catalog: false,
+                                  output_alias: DEFAULT_TABLE_INPUT_OUTPUT_ALIAS,
+                                  refresh_schema: true,
+                                  row_filter: '',
+                                  row_limit: null,
+                                  schema_name: DEFAULT_TABLE_INPUT_SCHEMA,
+                                  selected_columns: [],
+                                  table_name: DEFAULT_TABLE_INPUT_TABLE_NAME
+                                }
+                                : typeId === 'table_schema'
+                                  ? {
+                                    catalog: DEFAULT_TABLE_SCHEMA_CATALOG,
+                                    checks: [],
+                                    columns: DEFAULT_TABLE_SCHEMA_COLUMNS.map((column) => ({ ...column })),
+                                    create_mode: DEFAULT_TABLE_SCHEMA_CREATE_MODE,
+                                    execution: {
+                                      wait_after_seconds: 0,
+                                      wait_before_seconds: 0
+                                    },
+                                    if_target_exists: DEFAULT_TABLE_SCHEMA_IF_TARGET_EXISTS,
+                                    open_in_catalog: false,
+                                    output_alias: DEFAULT_TABLE_SCHEMA_OUTPUT_ALIAS,
+                                    primary_key: ['order_id'],
+                                    schema_name: DEFAULT_TABLE_SCHEMA_SCHEMA,
+                                    table_name: DEFAULT_TABLE_SCHEMA_TABLE_NAME,
+                                    tables: [
+                                      {
+                                        checks: [],
+                                        columns: DEFAULT_TABLE_SCHEMA_COLUMNS.map((column) => ({ ...column })),
+                                        create_mode: DEFAULT_TABLE_SCHEMA_CREATE_MODE,
+                                        if_target_exists: DEFAULT_TABLE_SCHEMA_IF_TARGET_EXISTS,
+                                        output_alias: DEFAULT_TABLE_SCHEMA_OUTPUT_ALIAS,
+                                        primary_key: ['order_id'],
+                                        schema_name: DEFAULT_TABLE_SCHEMA_SCHEMA,
+                                        table_name: DEFAULT_TABLE_SCHEMA_TABLE_NAME
+                                      }
+                                    ]
+                                  }
+                                  : typeId === 'table_output'
+                                    ? {
+                                      execution: {
+                                        wait_after_seconds: 0,
+                                        wait_before_seconds: 0
+                                      },
+                                      include_run_id: true,
+                                      include_written_at: true,
+                                      input_shape: DEFAULT_TABLE_OUTPUT_INPUT_SHAPE,
+                                      open_in_catalog: false,
+                                      table_name: DEFAULT_TABLE_OUTPUT_TABLE_NAME,
+                                      target_schema: DEFAULT_TABLE_OUTPUT_SCHEMA,
+                                      value_column: DEFAULT_TABLE_OUTPUT_VALUE_COLUMN,
+                                      write_mode: DEFAULT_TABLE_OUTPUT_WRITE_MODE
+                                    }
+                                    : {
+                                      body: '',
+                                      body_mode: 'input',
+                                      body_text: '',
+                                      connection_id: 'default_mailer',
+                                      content_type: 'text/plain',
+                                      execution: {
+                                        wait_after_seconds: 0,
+                                        wait_before_seconds: 0
+                                      },
+                                      to: 'ops@stitchly.dev',
+                                      subject: 'New workflow alert'
+                                    },
     position:
       position != null
         ? {
-            x: Math.max(80, Math.round(position.x)),
-            y: Math.max(80, Math.round(position.y))
-          }
+          x: Math.max(80, Math.round(position.x)),
+          y: Math.max(80, Math.round(position.y))
+        }
         : {
-            x: Math.max(
-              80,
-              selectedNode?.position?.x != null
-                  ? selectedNode.position.x + (typeId === 'text_input' ? -380 : 380)
-                : typeId === 'send_email' || typeId === 'table_output'
-                  ? 520
+          x: Math.max(
+            80,
+            selectedNode?.position?.x != null
+              ? selectedNode.position.x + (typeId === 'text_input' ? -380 : 380)
+              : typeId === 'send_email' || typeId === 'table_output'
+                ? 520
                 : typeId === 'dolt_repo_source' || typeId === 'checkpoint_read' || typeId === 'checkpoint_write' || typeId === 'quality_check' || typeId === 'dolt_repo_sync' || typeId === 'dolt_change_manifest' || typeId === 'dolt_dump' || typeId === 'dolt_diff_export' || typeId === 'load_to_duckdb' || typeId === 'sql_transform' || typeId === 'table_merge' || typeId === 'table_input' || typeId === 'table_schema'
-                    ? 160
+                  ? 160
                   : 120
-            ),
-            y: selectedNode?.position?.y ?? 180
-          }
+          ),
+          y: selectedNode?.position?.y ?? 180
+        }
   };
 
   nextWorkflow.nodes.push(nextNode);
@@ -10555,20 +10870,33 @@ function normalizeKnownCanvasWorkflowConfigs(workflow) {
 
   let changed = false;
   const nextNodes = workflow.nodes.map((node) => {
-    if (node?.type_id !== 'table_merge') {
-      return node;
+    let nextNode = node;
+
+    if (node?.type_id === 'sql_transform') {
+      const normalizedConfig = normalizeSqlTransformPanelConfig(node);
+      if (workflowSignature(normalizedConfig) !== workflowSignature(node.config ?? {})) {
+        changed = true;
+        nextNode = {
+          ...node,
+          config: normalizedConfig
+        };
+      }
+    }
+
+    if (nextNode?.type_id !== 'table_merge') {
+      return nextNode;
     }
 
     const sourceContext = resolveConnectedLoadToDuckDbPanelContextFromTableNode(
       workflow,
-      node.node_id
+      nextNode.node_id
     );
     if (sourceContext?.repository !== 'post-no-preference/rates') {
-      return node;
+      return nextNode;
     }
 
     const mergeKeyColumns = normalizeTableMergeKeyColumns(
-      node?.config?.merge_key_columns_text ?? node?.config?.merge_key_columns
+      nextNode?.config?.merge_key_columns_text ?? nextNode?.config?.merge_key_columns
     );
     if (
       mergeKeyColumns.length === 1 &&
@@ -10576,16 +10904,16 @@ function normalizeKnownCanvasWorkflowConfigs(workflow) {
     ) {
       changed = true;
       return {
-        ...node,
+        ...nextNode,
         config: {
-          ...(node.config ?? {}),
+          ...(nextNode.config ?? {}),
           merge_key_columns: [...DEFAULT_RATES_TABLE_MERGE_KEY_COLUMNS],
           merge_key_columns_text: DEFAULT_RATES_TABLE_MERGE_KEY_COLUMNS.join(', ')
         }
       };
     }
 
-    return node;
+    return nextNode;
   });
 
   return changed ? { ...workflow, nodes: nextNodes } : workflow;

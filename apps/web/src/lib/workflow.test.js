@@ -515,6 +515,39 @@ function buildTableMergeWorkflow() {
   return workflow
 }
 
+
+function buildTableMergeCollectionWorkflow() {
+  const workflow = buildSqlTransformCollectionWorkflow()
+
+  workflow.nodes.push({
+    node_id: 'table_merge',
+    type_id: 'table_merge',
+    definition_version: 1,
+    label: 'Table Merge',
+    config: {
+      delete_handling: 'apply_delete_markers',
+      execution: {
+        wait_after_seconds: 0,
+        wait_before_seconds: 0
+      },
+      merge_key_columns: ['symbol', 'report_date'],
+      schema_drift_behavior: 'fail_and_require_review',
+      target_schema: 'tables',
+      write_policy: 'upsert'
+    },
+    position: { x: 2920, y: 320 }
+  })
+  workflow.edges.push({
+    edge_id: 'edge_sql_transform_items_to_table_merge_items',
+    source_node_id: 'sql_transform',
+    source_port_id: 'items',
+    target_node_id: 'table_merge',
+    target_port_id: 'items'
+  })
+
+  return workflow
+}
+
 function buildCheckpointWriteWorkflow() {
   const workflow = buildTableMergeWorkflow()
 
@@ -542,6 +575,38 @@ function buildCheckpointWriteWorkflow() {
     source_port_id: 'table',
     target_node_id: 'checkpoint_write',
     target_port_id: 'table'
+  })
+
+  return workflow
+}
+
+function buildCheckpointWriteCollectionWorkflow() {
+  const workflow = buildQualityCheckCollectionWorkflow()
+
+  workflow.nodes.push({
+    node_id: 'checkpoint_write',
+    type_id: 'checkpoint_write',
+    definition_version: 1,
+    label: 'Checkpoint Write',
+    config: {
+      advance_on_partial_success: false,
+      checkpoint_table: 'tables.ingest_checkpoints',
+      commit_source: 'metadata.current_commit',
+      execution: {
+        wait_after_seconds: 0,
+        wait_before_seconds: 0
+      },
+      only_persist_on_full_success: true,
+      write_timing: 'after_quality_gate'
+    },
+    position: { x: 3320, y: 320 }
+  })
+  workflow.edges.push({
+    edge_id: 'edge_quality_check_items_to_checkpoint_write_items',
+    source_node_id: 'quality_check',
+    source_port_id: 'items',
+    target_node_id: 'checkpoint_write',
+    target_port_id: 'items'
   })
 
   return workflow
@@ -603,6 +668,39 @@ function buildQualityCheckWorkflow() {
     source_port_id: 'table',
     target_node_id: 'quality_check',
     target_port_id: 'table'
+  })
+
+  return workflow
+}
+
+function buildQualityCheckCollectionWorkflow() {
+  const workflow = buildTableMergeCollectionWorkflow()
+
+  workflow.nodes.push({
+    node_id: 'quality_check',
+    type_id: 'quality_check',
+    definition_version: 1,
+    label: 'Quality Check',
+    config: {
+      allow_warning_only_runs_to_continue: true,
+      block_checkpoint_write_on_failure: true,
+      execution: {
+        wait_after_seconds: 0,
+        wait_before_seconds: 0
+      },
+      null_key_policy: 'block_on_primary_key_nulls',
+      schema_drift_rule: 'fail_on_required_column_drift',
+      suite_preset: 'post_merge_ingest_gate',
+      warning_budget: 2
+    },
+    position: { x: 2920, y: 320 }
+  })
+  workflow.edges.push({
+    edge_id: 'edge_table_merge_items_to_quality_check_items',
+    source_node_id: 'table_merge',
+    source_port_id: 'items',
+    target_node_id: 'quality_check',
+    target_port_id: 'items'
   })
 
   return workflow
@@ -797,6 +895,48 @@ describe('createCanvasElements', () => {
     ).toBe('table_merge')
   })
 
+
+
+  it('exposes table merge legacy and collection ports in the canvas definition', () => {
+    const workflow = buildTableMergeCollectionWorkflow()
+    const graph = createCanvasElements(
+      workflow,
+      nodeDefinitionFixture.node_definitions,
+      'table_merge',
+      null
+    )
+
+    const mergeNode = graph.nodes.find((node) => node.id === 'table_merge')
+    const inputs = Object.fromEntries(
+      mergeNode.data.definition.inputs.map((port) => [port.port_id, port.data_type])
+    )
+    const outputs = Object.fromEntries(
+      mergeNode.data.definition.outputs.map((port) => [port.port_id, port.data_type])
+    )
+
+    expect(inputs.table).toBe('table_ref')
+    expect(inputs.items).toBe('table_ref_collection')
+    expect(outputs.table).toBe('table_ref')
+    expect(outputs.items).toBe('table_ref_collection')
+  })
+
+  it('allows sql transform collection output to connect into table merge collection input', () => {
+    const workflow = buildTableMergeCollectionWorkflow()
+
+    expect(
+      canConnect(
+        {
+          source: 'sql_transform',
+          sourceHandle: 'items',
+          target: 'table_merge',
+          targetHandle: 'items'
+        },
+        workflow,
+        nodeDefinitionFixture.node_definitions
+      )
+    ).toBe(true)
+  })
+
   it('maps checkpoint read nodes onto their dedicated canvas node type', () => {
     const workflow = buildCheckpointReadWorkflow()
     const graph = createCanvasElements(
@@ -823,6 +963,29 @@ describe('createCanvasElements', () => {
     expect(
       graph.nodes.find((node) => node.id === 'checkpoint_write')?.type
     ).toBe('checkpoint_write')
+  })
+
+  it('exposes checkpoint write legacy and collection ports in the canvas definition', () => {
+    const workflow = buildCheckpointWriteCollectionWorkflow()
+    const graph = createCanvasElements(
+      workflow,
+      [],
+      'checkpoint_write',
+      null
+    )
+
+    const checkpointNode = graph.nodes.find((node) => node.id === 'checkpoint_write')
+    const inputs = Object.fromEntries(
+      checkpointNode.data.definition.inputs.map((port) => [port.port_id, port.data_type])
+    )
+    const outputs = Object.fromEntries(
+      checkpointNode.data.definition.outputs.map((port) => [port.port_id, port.data_type])
+    )
+
+    expect(inputs.table).toBe('table_ref')
+    expect(inputs.items).toBe('table_ref_collection')
+    expect(outputs.table).toBe('table_ref')
+    expect(outputs.items).toBe('table_ref_collection')
   })
 
   it('maps quality check nodes onto their dedicated canvas node type', () => {
@@ -890,6 +1053,46 @@ describe('createCanvasElements', () => {
     ).toBe(true)
   })
 
+  it('exposes quality check legacy and collection ports in the canvas definition', () => {
+    const workflow = buildQualityCheckCollectionWorkflow()
+    const graph = createCanvasElements(
+      workflow,
+      nodeDefinitionFixture.node_definitions,
+      'quality_check',
+      null
+    )
+
+    const qualityNode = graph.nodes.find((node) => node.id === 'quality_check')
+    const inputs = Object.fromEntries(
+      qualityNode.data.definition.inputs.map((port) => [port.port_id, port.data_type])
+    )
+    const outputs = Object.fromEntries(
+      qualityNode.data.definition.outputs.map((port) => [port.port_id, port.data_type])
+    )
+
+    expect(inputs.table).toBe('table_ref')
+    expect(inputs.items).toBe('table_ref_collection')
+    expect(outputs.table).toBe('table_ref')
+    expect(outputs.items).toBe('table_ref_collection')
+  })
+
+  it('allows table merge collection output to connect into quality check collection input', () => {
+    const workflow = buildQualityCheckCollectionWorkflow()
+
+    expect(
+      canConnect(
+        {
+          source: 'table_merge',
+          sourceHandle: 'items',
+          target: 'quality_check',
+          targetHandle: 'items'
+        },
+        workflow,
+        nodeDefinitionFixture.node_definitions
+      )
+    ).toBe(true)
+  })
+
   it('allows table merge to connect into quality check', () => {
     const workflow = buildQualityCheckWorkflow()
 
@@ -903,6 +1106,23 @@ describe('createCanvasElements', () => {
         },
         workflow,
         nodeDefinitionFixture.node_definitions
+      )
+    ).toBe(true)
+  })
+
+  it('allows quality check collection output to connect into checkpoint write collection input', () => {
+    const workflow = buildCheckpointWriteCollectionWorkflow()
+
+    expect(
+      canConnect(
+        {
+          source: 'quality_check',
+          sourceHandle: 'items',
+          target: 'checkpoint_write',
+          targetHandle: 'items'
+        },
+        workflow,
+        []
       )
     ).toBe(true)
   })

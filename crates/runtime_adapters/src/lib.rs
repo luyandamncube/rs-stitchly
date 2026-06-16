@@ -4788,6 +4788,123 @@ fn execute_load_to_duckdb(
     Ok(NodeExecutionResult { outputs, logs })
 }
 
+fn execute_table_merge_single_table(
+    node_id: &str,
+    table_payload: TableReferencePayload,
+    target_schema: &str,
+    write_policy: TableMergeWritePolicy,
+    merge_key_columns: &[String],
+    delete_handling: TableMergeDeleteHandling,
+    schema_drift_behavior: TableMergeSchemaDriftBehavior,
+    connection: Option<&DuckDbConnection>,
+) -> Result<(TableReferencePayload, usize, String), AdapterError> {
+    if table_payload.kind != "table_reference" {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
+            message: format!("unsupported table reference kind `{}`", table_payload.kind),
+        });
+    }
+
+    let merged_table_count = table_payload
+        .schema_definitions
+        .as_ref()
+        .and_then(Value::as_array)
+        .map(|entries| entries.len())
+        .unwrap_or(1);
+
+    let write_policy_label = match write_policy {
+        TableMergeWritePolicy::AppendOnly => "append_only",
+        TableMergeWritePolicy::SnapshotReplace => "snapshot_replace",
+        TableMergeWritePolicy::Upsert => "upsert",
+    };
+    let delete_handling_label = match delete_handling {
+        TableMergeDeleteHandling::IgnoreDeleteMarkers => "ignore_delete_markers",
+        TableMergeDeleteHandling::ApplyDeleteMarkers => "apply_delete_markers",
+    };
+    let schema_drift_label = match schema_drift_behavior {
+        TableMergeSchemaDriftBehavior::AllowAdditiveChanges => "allow_additive_changes",
+        TableMergeSchemaDriftBehavior::FailAndRequireReview => "fail_and_require_review",
+    };
+
+    let mut metadata = match table_payload.metadata.clone() {
+        Some(Value::Object(object)) => Value::Object(object),
+        Some(_) | None => json!({}),
+    };
+    if let Some(metadata_object) = metadata.as_object_mut() {
+        metadata_object.insert(
+            "source_schema".to_string(),
+            json!(table_payload.schema_name.clone()),
+        );
+        metadata_object.insert("source_table".to_string(), json!(table_payload.table_name.clone()));
+        metadata_object.insert("target_schema".to_string(), json!(target_schema));
+        metadata_object.insert("target_table".to_string(), json!(table_payload.table_name.clone()));
+        metadata_object.insert("merge_kind".to_string(), json!("table_merge"));
+        metadata_object.insert("write_policy".to_string(), json!(write_policy_label));
+        metadata_object.insert(
+            "merge_key_columns".to_string(),
+            json!(merge_key_columns.to_vec()),
+        );
+        metadata_object.insert("delete_handling".to_string(), json!(delete_handling_label));
+        metadata_object.insert(
+            "schema_drift_behavior".to_string(),
+            json!(schema_drift_label),
+        );
+        metadata_object.insert("merged_table_count".to_string(), json!(merged_table_count));
+        metadata_object.insert(
+            "merge_summary".to_string(),
+            json!({
+                "write_policy": write_policy_label,
+                "merge_key_columns": merge_key_columns,
+                "delete_handling": delete_handling_label,
+                "schema_drift_behavior": schema_drift_label,
+                "merged_table_count": merged_table_count,
+            }),
+        );
+    }
+
+    if let Some(connection) = connection {
+        persist_table_merge_tables(
+            connection,
+            &table_payload,
+            target_schema,
+            write_policy,
+            merge_key_columns,
+            delete_handling,
+            node_id,
+        )?;
+    }
+
+    let log_line = format!(
+        "Prepared {write_policy_label} merge into `{target_schema}` from `{}.{}` across {merged_table_count} table definition(s){}.",
+        table_payload.schema_name,
+        table_payload.table_name,
+        if merge_key_columns.is_empty() {
+            String::new()
+        } else {
+            format!(" using merge key `{}`", merge_key_columns.join(", "))
+        }
+    );
+
+    let output_payload = TableReferencePayload {
+        kind: "table_reference".to_string(),
+        catalog: table_payload.catalog,
+        schema_name: target_schema.to_string(),
+        table_name: table_payload.table_name,
+        output_alias: table_payload.output_alias,
+        selected_columns: table_payload.selected_columns,
+        row_filter: table_payload.row_filter,
+        row_limit: table_payload.row_limit,
+        _refresh_schema: true,
+        open_in_catalog: table_payload.open_in_catalog,
+        schema_definition: table_payload.schema_definition,
+        schema_definitions: table_payload.schema_definitions,
+        load_manifest_ref: table_payload.load_manifest_ref,
+        metadata: Some(metadata),
+    };
+
+    Ok((output_payload, merged_table_count, log_line))
+}
+
 fn execute_table_merge(
     node: &WorkflowNode,
     inputs: &PortValues,
@@ -4801,31 +4918,22 @@ fn execute_table_merge(
             }
         })?;
 
-    let table_input = inputs
-        .get("table")
-        .ok_or_else(|| AdapterError::MissingInput {
-            node_id: node.node_id.clone(),
-            port: "table".to_string(),
-        })?;
-
-    if table_input.data_type != DataType::TableRef {
-        return Err(AdapterError::ExecutionFailed {
-            node_id: node.node_id.clone(),
-            message: "table_merge expects a `table_ref` input.".to_string(),
-        });
-    }
-
-    let table_payload: TableReferencePayload = serde_json::from_value(table_input.value.clone())
-        .map_err(|error| AdapterError::ExecutionFailed {
-            node_id: node.node_id.clone(),
-            message: format!("invalid table reference payload: {error}"),
-        })?;
-
-    if table_payload.kind != "table_reference" {
-        return Err(AdapterError::ExecutionFailed {
-            node_id: node.node_id.clone(),
-            message: format!("unsupported table reference kind `{}`", table_payload.kind),
-        });
+    let table_input = inputs.get("table");
+    let collection_input = inputs.get("items");
+    match (table_input, collection_input) {
+        (Some(_), Some(_)) => {
+            return Err(AdapterError::ExecutionFailed {
+                node_id: node.node_id.clone(),
+                message: "table_merge accepts either `table` or `items`, not both.".to_string(),
+            });
+        }
+        (None, None) => {
+            return Err(AdapterError::MissingInput {
+                node_id: node.node_id.clone(),
+                port: "table".to_string(),
+            });
+        }
+        _ => {}
     }
 
     let target_schema = config.target_schema.trim();
@@ -4850,107 +4958,145 @@ fn execute_table_merge(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .collect::<Vec<_>>();
-    let merged_table_count = table_payload
-        .schema_definitions
-        .as_ref()
-        .and_then(Value::as_array)
-        .map(|entries| entries.len())
-        .unwrap_or(1);
 
-    let write_policy_label = match write_policy {
-        TableMergeWritePolicy::AppendOnly => "append_only",
-        TableMergeWritePolicy::SnapshotReplace => "snapshot_replace",
-        TableMergeWritePolicy::Upsert => "upsert",
-    };
-    let delete_handling_label = match delete_handling {
-        TableMergeDeleteHandling::IgnoreDeleteMarkers => "ignore_delete_markers",
-        TableMergeDeleteHandling::ApplyDeleteMarkers => "apply_delete_markers",
-    };
-    let schema_drift_label = match schema_drift_behavior {
-        TableMergeSchemaDriftBehavior::AllowAdditiveChanges => "allow_additive_changes",
-        TableMergeSchemaDriftBehavior::FailAndRequireReview => "fail_and_require_review",
-    };
-    let mut metadata = match table_payload.metadata.clone() {
-        Some(Value::Object(object)) => Value::Object(object),
-        Some(_) | None => json!({}),
-    };
-    if let Some(metadata_object) = metadata.as_object_mut() {
-        metadata_object.insert(
-            "source_schema".to_string(),
-            json!(table_payload.schema_name.clone()),
-        );
-        metadata_object.insert("write_policy".to_string(), json!(write_policy_label));
-        metadata_object.insert(
-            "merge_key_columns".to_string(),
-            json!(merge_key_columns.clone()),
-        );
-        metadata_object.insert("delete_handling".to_string(), json!(delete_handling_label));
-        metadata_object.insert(
-            "schema_drift_behavior".to_string(),
-            json!(schema_drift_label),
-        );
-        metadata_object.insert("merged_table_count".to_string(), json!(merged_table_count));
-        metadata_object.insert(
-            "merge_summary".to_string(),
-            json!({
-                "write_policy": write_policy_label,
-                "merge_key_columns": merge_key_columns,
-                "delete_handling": delete_handling_label,
-                "schema_drift_behavior": schema_drift_label,
-                "merged_table_count": merged_table_count,
-            }),
-        );
-    }
+    let connection = open_runtime_workflow_duckdb(context, &node.node_id)?;
 
-    if let Some(connection) = open_runtime_workflow_duckdb(context, &node.node_id)? {
-        persist_table_merge_tables(
-            &connection,
-            &table_payload,
+    if let Some(table_input) = table_input {
+        if table_input.data_type != DataType::TableRef {
+            return Err(AdapterError::ExecutionFailed {
+                node_id: node.node_id.clone(),
+                message: "table_merge expects a `table_ref` input on `table`.".to_string(),
+            });
+        }
+
+        let table_payload: TableReferencePayload = serde_json::from_value(table_input.value.clone())
+            .map_err(|error| AdapterError::ExecutionFailed {
+                node_id: node.node_id.clone(),
+                message: format!("invalid table reference payload: {error}"),
+            })?;
+        let (output_payload, _merged_table_count, log_line) = execute_table_merge_single_table(
+            &node.node_id,
+            table_payload,
             target_schema,
             write_policy,
             &merge_key_columns,
             delete_handling,
-            &node.node_id,
+            schema_drift_behavior,
+            connection.as_ref(),
         )?;
+        let output_value = serde_json::to_value(&output_payload).map_err(|error| {
+            AdapterError::ExecutionFailed {
+                node_id: node.node_id.clone(),
+                message: format!("failed to serialize table_merge output: {error}"),
+            }
+        })?;
+
+        let mut outputs = PortValues::new();
+        outputs.insert(
+            "table".to_string(),
+            TypedValue {
+                data_type: DataType::TableRef,
+                value: output_value,
+            },
+        );
+
+        return Ok(NodeExecutionResult {
+            outputs,
+            logs: vec![log_line],
+        });
     }
+
+    let collection_input = collection_input.expect("collection input checked above");
+    if collection_input.data_type != DataType::TableRefCollection {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: "table_merge expects a `table_ref_collection` input on `items`.".to_string(),
+        });
+    }
+
+    let collection_payload: TableReferenceCollectionPayload =
+        serde_json::from_value(collection_input.value.clone()).map_err(|error| {
+            AdapterError::ExecutionFailed {
+                node_id: node.node_id.clone(),
+                message: format!("invalid table reference collection payload: {error}"),
+            }
+        })?;
+
+    if collection_payload.kind != "table_reference_collection" {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: format!(
+                "unsupported table reference collection kind `{}`",
+                collection_payload.kind
+            ),
+        });
+    }
+
+    let manifest_ref = collection_payload.manifest_ref.clone();
+    let mut collection_metadata = match collection_payload.metadata.clone() {
+        Some(Value::Object(object)) => Value::Object(object),
+        Some(_) | None => json!({}),
+    };
+    let mut merged_table_refs = Vec::new();
+    let mut logs = Vec::new();
+    let mut total_merged_table_count = 0usize;
+    for table_payload in collection_payload.table_refs {
+        let (output_payload, merged_table_count, log_line) = execute_table_merge_single_table(
+            &node.node_id,
+            table_payload,
+            target_schema,
+            write_policy,
+            &merge_key_columns,
+            delete_handling,
+            schema_drift_behavior,
+            connection.as_ref(),
+        )?;
+        total_merged_table_count += merged_table_count;
+        merged_table_refs.push(output_payload);
+        logs.push(log_line);
+    }
+
+    if let Some(metadata_object) = collection_metadata.as_object_mut() {
+        metadata_object.insert("merge_kind".to_string(), json!("table_merge"));
+        metadata_object.insert("target_schema".to_string(), json!(target_schema));
+        metadata_object.insert(
+            "merged_item_count".to_string(),
+            json!(merged_table_refs.len()),
+        );
+        metadata_object.insert(
+            "merged_table_count".to_string(),
+            json!(total_merged_table_count),
+        );
+    }
+
+    let merged_collection = TableReferenceCollectionPayload {
+        kind: "table_reference_collection".to_string(),
+        table_refs: merged_table_refs,
+        manifest_ref,
+        metadata: Some(collection_metadata),
+    };
+    let output_value = serde_json::to_value(&merged_collection).map_err(|error| {
+        AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: format!("failed to serialize table_merge collection output: {error}"),
+        }
+    })?;
 
     let mut outputs = PortValues::new();
     outputs.insert(
-        "table".to_string(),
+        "items".to_string(),
         TypedValue {
-            data_type: DataType::TableRef,
-            value: json!({
-                "kind": "table_reference",
-                "catalog": table_payload.catalog,
-                "schema_name": target_schema,
-                "table_name": table_payload.table_name,
-                "output_alias": table_payload.output_alias,
-                "selected_columns": table_payload.selected_columns,
-                "row_filter": table_payload.row_filter,
-                "row_limit": table_payload.row_limit,
-                "refresh_schema": true,
-                "open_in_catalog": table_payload.open_in_catalog,
-                "schema_definition": table_payload.schema_definition,
-                "schema_definitions": table_payload.schema_definitions,
-                "load_manifest_ref": table_payload.load_manifest_ref,
-                "metadata": metadata,
-            }),
+            data_type: DataType::TableRefCollection,
+            value: output_value,
         },
     );
 
-    Ok(NodeExecutionResult {
-        outputs,
-        logs: vec![format!(
-            "Prepared {write_policy_label} merge into `{target_schema}` from `{}.{}` across {merged_table_count} table definition(s){}.",
-            table_payload.schema_name,
-            table_payload.table_name,
-            if merge_key_columns.is_empty() {
-                String::new()
-            } else {
-                format!(" using merge key `{}`", merge_key_columns.join(", "))
-            }
-        )],
-    })
+    logs.push(format!(
+        "Prepared table_merge collection into `{target_schema}` with {} output table reference(s).",
+        merged_collection.table_refs.len()
+    ));
+
+    Ok(NodeExecutionResult { outputs, logs })
 }
 
 fn execute_sql_transform_single_table(
@@ -5431,41 +5577,24 @@ fn execute_map_table_collection(
     })
 }
 
-fn execute_quality_check(
-    node: &WorkflowNode,
-    inputs: &PortValues,
-) -> Result<NodeExecutionResult, AdapterError> {
-    let config: QualityCheckConfig =
-        serde_json::from_value(node.config.clone()).map_err(|error| {
-            AdapterError::InvalidConfig {
-                node_id: node.node_id.clone(),
-                message: error.to_string(),
-            }
-        })?;
+#[derive(Clone, Debug)]
+struct QualityCheckTableOutcome {
+    gate_status: String,
+    warning_rule_count: usize,
+    failing_rule_count: usize,
+    approved_table_count: usize,
+    repository: String,
+    log_line: String,
+}
 
-    let table_input = inputs
-        .get("table")
-        .ok_or_else(|| AdapterError::MissingInput {
-            node_id: node.node_id.clone(),
-            port: "table".to_string(),
-        })?;
-
-    if table_input.data_type != DataType::TableRef {
-        return Err(AdapterError::ExecutionFailed {
-            node_id: node.node_id.clone(),
-            message: "quality_check expects a `table_ref` input.".to_string(),
-        });
-    }
-
-    let table_payload: TableReferencePayload = serde_json::from_value(table_input.value.clone())
-        .map_err(|error| AdapterError::ExecutionFailed {
-            node_id: node.node_id.clone(),
-            message: format!("invalid table reference payload: {error}"),
-        })?;
-
+fn execute_quality_check_single_table(
+    node_id: &str,
+    config: &QualityCheckConfig,
+    table_payload: TableReferencePayload,
+) -> Result<(TableReferencePayload, QualityCheckTableOutcome), AdapterError> {
     if table_payload.kind != "table_reference" {
         return Err(AdapterError::ExecutionFailed {
-            node_id: node.node_id.clone(),
+            node_id: node_id.to_string(),
             message: format!("unsupported table reference kind `{}`", table_payload.kind),
         });
     }
@@ -5516,7 +5645,7 @@ fn execute_quality_check(
 
     if gate_status == "fail" && block_checkpoint_write_on_failure {
         return Err(AdapterError::ExecutionFailed {
-            node_id: node.node_id.clone(),
+            node_id: node_id.to_string(),
             message: format!(
                 "quality gate failed for `{}` and checkpoint advancement is blocked.",
                 repository
@@ -5526,7 +5655,7 @@ fn execute_quality_check(
 
     if gate_status == "warn" && !allow_warning_only_runs_to_continue {
         return Err(AdapterError::ExecutionFailed {
-            node_id: node.node_id.clone(),
+            node_id: node_id.to_string(),
             message: format!(
                 "quality gate returned warnings for `{}` and warning-only continuation is disabled.",
                 repository
@@ -5538,6 +5667,10 @@ fn execute_quality_check(
         .into_iter()
         .map(|table_name| format!("{}.{}", table_payload.schema_name, table_name))
         .collect::<Vec<_>>();
+    let approved_table_count = approved_table_set.len();
+
+    let warning_rule_count = warning_rules.len();
+    let failing_rule_count = failing_rules.len();
 
     let quality_gate_result = json!({
         "kind": "quality_gate_result",
@@ -5557,48 +5690,46 @@ fn execute_quality_check(
         metadata_object.insert("quality_check".to_string(), quality_gate_result);
     }
 
-    let mut outputs = PortValues::new();
-    outputs.insert(
-        "table".to_string(),
-        TypedValue {
-            data_type: DataType::TableRef,
-            value: json!({
-                "kind": "table_reference",
-                "catalog": table_payload.catalog,
-                "schema_name": table_payload.schema_name,
-                "table_name": table_payload.table_name,
-                "output_alias": table_payload.output_alias,
-                "selected_columns": table_payload.selected_columns,
-                "row_filter": table_payload.row_filter,
-                "row_limit": table_payload.row_limit,
-                "refresh_schema": true,
-                "open_in_catalog": table_payload.open_in_catalog,
-                "schema_definition": table_payload.schema_definition,
-                "schema_definitions": table_payload.schema_definitions,
-                "load_manifest_ref": table_payload.load_manifest_ref,
-                "metadata": next_metadata,
-            }),
-        },
-    );
+    let output_payload = TableReferencePayload {
+        kind: "table_reference".to_string(),
+        catalog: table_payload.catalog,
+        schema_name: table_payload.schema_name,
+        table_name: table_payload.table_name,
+        output_alias: table_payload.output_alias,
+        selected_columns: table_payload.selected_columns,
+        row_filter: table_payload.row_filter,
+        row_limit: table_payload.row_limit,
+        _refresh_schema: true,
+        open_in_catalog: table_payload.open_in_catalog,
+        schema_definition: table_payload.schema_definition,
+        schema_definitions: table_payload.schema_definitions,
+        load_manifest_ref: table_payload.load_manifest_ref,
+        metadata: Some(next_metadata),
+    };
 
-    Ok(NodeExecutionResult {
-        outputs,
-        logs: vec![format!(
+    let outcome = QualityCheckTableOutcome {
+        gate_status: gate_status.to_string(),
+        warning_rule_count,
+        failing_rule_count,
+        approved_table_count,
+        repository: repository.clone(),
+        log_line: format!(
             "Applied quality gate `{}` to `{}` with status `{}` and warning budget {}.",
             suite_preset.as_str(),
             repository,
             gate_status,
             warning_budget
-        )],
-    })
+        ),
+    };
+
+    Ok((output_payload, outcome))
 }
 
-fn execute_checkpoint_write(
+fn execute_quality_check(
     node: &WorkflowNode,
     inputs: &PortValues,
-    context: &AdapterExecutionContext,
 ) -> Result<NodeExecutionResult, AdapterError> {
-    let config: CheckpointWriteConfig =
+    let config: QualityCheckConfig =
         serde_json::from_value(node.config.clone()).map_err(|error| {
             AdapterError::InvalidConfig {
                 node_id: node.node_id.clone(),
@@ -5606,29 +5737,199 @@ fn execute_checkpoint_write(
             }
         })?;
 
-    let table_input = inputs
-        .get("table")
-        .ok_or_else(|| AdapterError::MissingInput {
-            node_id: node.node_id.clone(),
-            port: "table".to_string(),
+    let table_input = inputs.get("table");
+    let collection_input = inputs.get("items");
+    match (table_input, collection_input) {
+        (Some(_), Some(_)) => {
+            return Err(AdapterError::ExecutionFailed {
+                node_id: node.node_id.clone(),
+                message: "quality_check accepts either `table` or `items`, not both.".to_string(),
+            });
+        }
+        (None, None) => {
+            return Err(AdapterError::MissingInput {
+                node_id: node.node_id.clone(),
+                port: "table".to_string(),
+            });
+        }
+        _ => {}
+    }
+
+    if let Some(table_input) = table_input {
+        if table_input.data_type != DataType::TableRef {
+            return Err(AdapterError::ExecutionFailed {
+                node_id: node.node_id.clone(),
+                message: "quality_check expects a `table_ref` input on `table`.".to_string(),
+            });
+        }
+
+        let table_payload: TableReferencePayload = serde_json::from_value(table_input.value.clone())
+            .map_err(|error| AdapterError::ExecutionFailed {
+                node_id: node.node_id.clone(),
+                message: format!("invalid table reference payload: {error}"),
+            })?;
+        let (output_payload, outcome) =
+            execute_quality_check_single_table(&node.node_id, &config, table_payload)?;
+        let output_value = serde_json::to_value(&output_payload).map_err(|error| {
+            AdapterError::ExecutionFailed {
+                node_id: node.node_id.clone(),
+                message: format!("failed to serialize quality_check output: {error}"),
+            }
         })?;
 
-    if table_input.data_type != DataType::TableRef {
-        return Err(AdapterError::ExecutionFailed {
-            node_id: node.node_id.clone(),
-            message: "checkpoint_write expects a `table_ref` input.".to_string(),
+        let mut outputs = PortValues::new();
+        outputs.insert(
+            "table".to_string(),
+            TypedValue {
+                data_type: DataType::TableRef,
+                value: output_value,
+            },
+        );
+
+        return Ok(NodeExecutionResult {
+            outputs,
+            logs: vec![outcome.log_line],
         });
     }
 
-    let table_payload: TableReferencePayload = serde_json::from_value(table_input.value.clone())
-        .map_err(|error| AdapterError::ExecutionFailed {
-            node_id: node.node_id.clone(),
-            message: format!("invalid table reference payload: {error}"),
-        })?;
-
-    if table_payload.kind != "table_reference" {
+    let collection_input = collection_input.expect("collection input checked above");
+    if collection_input.data_type != DataType::TableRefCollection {
         return Err(AdapterError::ExecutionFailed {
             node_id: node.node_id.clone(),
+            message: "quality_check expects a `table_ref_collection` input on `items`.".to_string(),
+        });
+    }
+
+    let collection_payload: TableReferenceCollectionPayload =
+        serde_json::from_value(collection_input.value.clone()).map_err(|error| {
+            AdapterError::ExecutionFailed {
+                node_id: node.node_id.clone(),
+                message: format!("invalid table reference collection payload: {error}"),
+            }
+        })?;
+
+    if collection_payload.kind != "table_reference_collection" {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: format!(
+                "unsupported table reference collection kind `{}`",
+                collection_payload.kind
+            ),
+        });
+    }
+
+    let manifest_ref = collection_payload.manifest_ref.clone();
+    let mut collection_metadata = match collection_payload.metadata.clone() {
+        Some(Value::Object(object)) => Value::Object(object),
+        Some(_) | None => json!({}),
+    };
+    let mut checked_table_refs = Vec::new();
+    let mut logs = Vec::new();
+    let mut warning_rule_count = 0usize;
+    let mut failing_rule_count = 0usize;
+    let mut approved_table_count = 0usize;
+    let mut failed_table_count = 0usize;
+    let mut warned_table_count = 0usize;
+    let mut repositories = Vec::new();
+
+    for table_payload in collection_payload.table_refs {
+        let (output_payload, outcome) =
+            execute_quality_check_single_table(&node.node_id, &config, table_payload)?;
+        if outcome.gate_status == "fail" {
+            failed_table_count += 1;
+        } else if outcome.gate_status == "warn" {
+            warned_table_count += 1;
+        }
+        warning_rule_count += outcome.warning_rule_count;
+        failing_rule_count += outcome.failing_rule_count;
+        approved_table_count += outcome.approved_table_count;
+        if !repositories
+            .iter()
+            .any(|candidate: &String| candidate == &outcome.repository)
+        {
+            repositories.push(outcome.repository.clone());
+        }
+        logs.push(outcome.log_line);
+        checked_table_refs.push(output_payload);
+    }
+
+    let collection_gate_status = if failed_table_count > 0 {
+        "fail"
+    } else if warned_table_count > 0 {
+        "warn"
+    } else {
+        "pass"
+    };
+
+    if let Some(metadata_object) = collection_metadata.as_object_mut() {
+        metadata_object.insert(
+            "quality_check".to_string(),
+            json!({
+                "kind": "quality_gate_collection_result",
+                "gate_status": collection_gate_status,
+                "input_count": checked_table_refs.len(),
+                "output_count": checked_table_refs.len(),
+                "failed_table_count": failed_table_count,
+                "warned_table_count": warned_table_count,
+                "warning_rule_count": warning_rule_count,
+                "failing_rule_count": failing_rule_count,
+                "approved_table_count": approved_table_count,
+                "repositories": repositories,
+            }),
+        );
+    }
+
+    let checked_collection = TableReferenceCollectionPayload {
+        kind: "table_reference_collection".to_string(),
+        table_refs: checked_table_refs,
+        manifest_ref,
+        metadata: Some(collection_metadata),
+    };
+    let output_value = serde_json::to_value(&checked_collection).map_err(|error| {
+        AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: format!("failed to serialize quality_check collection output: {error}"),
+        }
+    })?;
+
+    let mut outputs = PortValues::new();
+    outputs.insert(
+        "items".to_string(),
+        TypedValue {
+            data_type: DataType::TableRefCollection,
+            value: output_value,
+        },
+    );
+
+    logs.insert(
+        0,
+        format!(
+            "Applied quality gate to {} table reference(s) with collection status `{}`.",
+            checked_collection.table_refs.len(),
+            collection_gate_status
+        ),
+    );
+
+    Ok(NodeExecutionResult { outputs, logs })
+}
+#[derive(Clone, Debug)]
+struct CheckpointWriteTableOutcome {
+    branch: String,
+    current_commit: String,
+    last_ingest_mode: String,
+    repository: String,
+    log_line: String,
+}
+
+fn execute_checkpoint_write_single_table(
+    node_id: &str,
+    config: &CheckpointWriteConfig,
+    table_payload: TableReferencePayload,
+    context: &AdapterExecutionContext,
+) -> Result<(TableReferencePayload, CheckpointWriteTableOutcome), AdapterError> {
+    if table_payload.kind != "table_reference" {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node_id.to_string(),
             message: format!("unsupported table reference kind `{}`", table_payload.kind),
         });
     }
@@ -5636,7 +5937,7 @@ fn execute_checkpoint_write(
     let checkpoint_table = config.checkpoint_table.trim();
     if checkpoint_table.is_empty() {
         return Err(AdapterError::InvalidConfig {
-            node_id: node.node_id.clone(),
+            node_id: node_id.to_string(),
             message: "`checkpoint_table` must not be empty.".to_string(),
         });
     }
@@ -5659,7 +5960,7 @@ fn execute_checkpoint_write(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| AdapterError::ExecutionFailed {
-            node_id: node.node_id.clone(),
+            node_id: node_id.to_string(),
             message: "checkpoint_write requires upstream table metadata to include `repository`."
                 .to_string(),
         })?
@@ -5670,7 +5971,7 @@ fn execute_checkpoint_write(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| AdapterError::ExecutionFailed {
-            node_id: node.node_id.clone(),
+            node_id: node_id.to_string(),
             message: "checkpoint_write requires upstream table metadata to include `branch`."
                 .to_string(),
         })?
@@ -5681,7 +5982,7 @@ fn execute_checkpoint_write(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| AdapterError::ExecutionFailed {
-            node_id: node.node_id.clone(),
+            node_id: node_id.to_string(),
             message:
                 "checkpoint_write requires upstream table metadata to include `current_commit`."
                     .to_string(),
@@ -5718,7 +6019,7 @@ fn execute_checkpoint_write(
         "advance_on_partial_success": advance_on_partial_success,
     });
 
-    if let Some(connection) = open_runtime_workflow_duckdb(context, &node.node_id)? {
+    if let Some(connection) = open_runtime_workflow_duckdb(context, node_id)? {
         persist_checkpoint_write_row(
             &connection,
             checkpoint_table,
@@ -5731,7 +6032,7 @@ fn execute_checkpoint_write(
             write_timing.as_str(),
             &table_payload,
             context,
-            &node.node_id,
+            node_id,
         )?;
     }
 
@@ -5740,37 +6041,235 @@ fn execute_checkpoint_write(
         metadata_object.insert("checkpoint_write".to_string(), checkpoint_write_result);
     }
 
+    let output_payload = TableReferencePayload {
+        kind: "table_reference".to_string(),
+        catalog: table_payload.catalog,
+        schema_name: table_payload.schema_name,
+        table_name: table_payload.table_name,
+        output_alias: table_payload.output_alias,
+        selected_columns: table_payload.selected_columns,
+        row_filter: table_payload.row_filter,
+        row_limit: table_payload.row_limit,
+        _refresh_schema: true,
+        open_in_catalog: table_payload.open_in_catalog,
+        schema_definition: table_payload.schema_definition,
+        schema_definitions: table_payload.schema_definitions,
+        load_manifest_ref: table_payload.load_manifest_ref,
+        metadata: Some(next_metadata),
+    };
+
+    let outcome = CheckpointWriteTableOutcome {
+        branch: branch.clone(),
+        current_commit: current_commit.clone(),
+        last_ingest_mode: last_ingest_mode.to_string(),
+        repository: repository.clone(),
+        log_line: format!(
+            "Prepared checkpoint write to `{checkpoint_table}` for `{repository}` on `{branch}` at commit `{current_commit}` using `{}`.",
+            write_timing.as_str()
+        ),
+    };
+
+    Ok((output_payload, outcome))
+}
+
+fn execute_checkpoint_write(
+    node: &WorkflowNode,
+    inputs: &PortValues,
+    context: &AdapterExecutionContext,
+) -> Result<NodeExecutionResult, AdapterError> {
+    let config: CheckpointWriteConfig =
+        serde_json::from_value(node.config.clone()).map_err(|error| {
+            AdapterError::InvalidConfig {
+                node_id: node.node_id.clone(),
+                message: error.to_string(),
+            }
+        })?;
+
+    let table_input = inputs.get("table");
+    let collection_input = inputs.get("items");
+    match (table_input, collection_input) {
+        (Some(_), Some(_)) => {
+            return Err(AdapterError::ExecutionFailed {
+                node_id: node.node_id.clone(),
+                message: "checkpoint_write accepts either `table` or `items`, not both.".to_string(),
+            });
+        }
+        (None, None) => {
+            return Err(AdapterError::MissingInput {
+                node_id: node.node_id.clone(),
+                port: "table".to_string(),
+            });
+        }
+        _ => {}
+    }
+
+    if let Some(table_input) = table_input {
+        if table_input.data_type != DataType::TableRef {
+            return Err(AdapterError::ExecutionFailed {
+                node_id: node.node_id.clone(),
+                message: "checkpoint_write expects a `table_ref` input on `table`.".to_string(),
+            });
+        }
+
+        let table_payload: TableReferencePayload = serde_json::from_value(table_input.value.clone())
+            .map_err(|error| AdapterError::ExecutionFailed {
+                node_id: node.node_id.clone(),
+                message: format!("invalid table reference payload: {error}"),
+            })?;
+        let (output_payload, outcome) = execute_checkpoint_write_single_table(
+            &node.node_id,
+            &config,
+            table_payload,
+            context,
+        )?;
+        let output_value = serde_json::to_value(&output_payload).map_err(|error| {
+            AdapterError::ExecutionFailed {
+                node_id: node.node_id.clone(),
+                message: format!("failed to serialize checkpoint_write output: {error}"),
+            }
+        })?;
+
+        let mut outputs = PortValues::new();
+        outputs.insert(
+            "table".to_string(),
+            TypedValue {
+                data_type: DataType::TableRef,
+                value: output_value,
+            },
+        );
+
+        return Ok(NodeExecutionResult {
+            outputs,
+            logs: vec![outcome.log_line],
+        });
+    }
+
+    let collection_input = collection_input.expect("collection input checked above");
+    if collection_input.data_type != DataType::TableRefCollection {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: "checkpoint_write expects a `table_ref_collection` input on `items`.".to_string(),
+        });
+    }
+
+    let collection_payload: TableReferenceCollectionPayload =
+        serde_json::from_value(collection_input.value.clone()).map_err(|error| {
+            AdapterError::ExecutionFailed {
+                node_id: node.node_id.clone(),
+                message: format!("invalid table reference collection payload: {error}"),
+            }
+        })?;
+
+    if collection_payload.kind != "table_reference_collection" {
+        return Err(AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: format!(
+                "unsupported table reference collection kind `{}`",
+                collection_payload.kind
+            ),
+        });
+    }
+
+    let manifest_ref = collection_payload.manifest_ref.clone();
+    let mut collection_metadata = match collection_payload.metadata.clone() {
+        Some(Value::Object(object)) => Value::Object(object),
+        Some(_) | None => json!({}),
+    };
+    let mut checked_table_refs = Vec::new();
+    let mut logs = Vec::new();
+    let mut repositories = Vec::new();
+    let mut branches = Vec::new();
+    let mut commits = Vec::new();
+    let mut ingest_modes = Vec::new();
+
+    for table_payload in collection_payload.table_refs {
+        let (output_payload, outcome) = execute_checkpoint_write_single_table(
+            &node.node_id,
+            &config,
+            table_payload,
+            context,
+        )?;
+        if !repositories.iter().any(|candidate: &String| candidate == &outcome.repository) {
+            repositories.push(outcome.repository.clone());
+        }
+        if !branches.iter().any(|candidate: &String| candidate == &outcome.branch) {
+            branches.push(outcome.branch.clone());
+        }
+        if !commits.iter().any(|candidate: &String| candidate == &outcome.current_commit) {
+            commits.push(outcome.current_commit.clone());
+        }
+        if !ingest_modes
+            .iter()
+            .any(|candidate: &String| candidate == &outcome.last_ingest_mode)
+        {
+            ingest_modes.push(outcome.last_ingest_mode.clone());
+        }
+        logs.push(outcome.log_line);
+        checked_table_refs.push(output_payload);
+    }
+
+    let checkpoint_table = config.checkpoint_table.trim();
+    let commit_source = config
+        .commit_source
+        .unwrap_or(CheckpointWriteCommitSource::MetadataCurrentCommit);
+    let write_timing = config
+        .write_timing
+        .unwrap_or(CheckpointWriteTiming::AfterMergeSuccess);
+    let only_persist_on_full_success = config.only_persist_on_full_success.unwrap_or(true);
+    let advance_on_partial_success = config.advance_on_partial_success.unwrap_or(false);
+
+    if let Some(metadata_object) = collection_metadata.as_object_mut() {
+        metadata_object.insert(
+            "checkpoint_write".to_string(),
+            json!({
+                "kind": "checkpoint_write_collection_result",
+                "checkpoint_table": checkpoint_table,
+                "input_count": checked_table_refs.len(),
+                "output_count": checked_table_refs.len(),
+                "repositories": repositories,
+                "branches": branches,
+                "last_synced_commits": commits,
+                "last_ingest_modes": ingest_modes,
+                "commit_source": commit_source.as_str(),
+                "write_timing": write_timing.as_str(),
+                "only_persist_on_full_success": only_persist_on_full_success,
+                "advance_on_partial_success": advance_on_partial_success,
+            }),
+        );
+    }
+
+    let checked_collection = TableReferenceCollectionPayload {
+        kind: "table_reference_collection".to_string(),
+        table_refs: checked_table_refs,
+        manifest_ref,
+        metadata: Some(collection_metadata),
+    };
+    let output_value = serde_json::to_value(&checked_collection).map_err(|error| {
+        AdapterError::ExecutionFailed {
+            node_id: node.node_id.clone(),
+            message: format!("failed to serialize checkpoint_write collection output: {error}"),
+        }
+    })?;
+
     let mut outputs = PortValues::new();
     outputs.insert(
-        "table".to_string(),
+        "items".to_string(),
         TypedValue {
-            data_type: DataType::TableRef,
-            value: json!({
-                "kind": "table_reference",
-                "catalog": table_payload.catalog,
-                "schema_name": table_payload.schema_name,
-                "table_name": table_payload.table_name,
-                "output_alias": table_payload.output_alias,
-                "selected_columns": table_payload.selected_columns,
-                "row_filter": table_payload.row_filter,
-                "row_limit": table_payload.row_limit,
-                "refresh_schema": true,
-                "open_in_catalog": table_payload.open_in_catalog,
-                "schema_definition": table_payload.schema_definition,
-                "schema_definitions": table_payload.schema_definitions,
-                "load_manifest_ref": table_payload.load_manifest_ref,
-                "metadata": next_metadata,
-            }),
+            data_type: DataType::TableRefCollection,
+            value: output_value,
         },
     );
 
-    Ok(NodeExecutionResult {
-        outputs,
-        logs: vec![format!(
-            "Prepared checkpoint write to `{checkpoint_table}` for `{repository}` on `{branch}` at commit `{current_commit}` using `{}`.",
+    logs.insert(
+        0,
+        format!(
+            "Prepared checkpoint writes to `{checkpoint_table}` for {} table reference(s) using `{}`.",
+            checked_collection.table_refs.len(),
             write_timing.as_str()
-        )],
-    })
+        ),
+    );
+
+    Ok(NodeExecutionResult { outputs, logs })
 }
 
 struct ResolvedLoadToDuckDbBundle {
@@ -9803,6 +10302,162 @@ mod tests {
         );
     }
 
+
+    #[test]
+    fn table_merge_merges_table_reference_collection() {
+        let registry = builtin_node_definitions();
+        let definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "table_merge")
+            .expect("table_merge definition");
+        let workflow_root = unique_test_workflow_root("table_merge_collection_output");
+        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        fs::create_dir_all(duckdb_path.parent().expect("duckdb parent should exist"))
+            .expect("duckdb parent directory should be created");
+        let connection = DuckDbConnection::open(&duckdb_path).expect("duckdb should open");
+        connection
+            .execute_batch(
+                "create schema staging_curated;
+                 create table staging_curated.rates_raw__normalized (
+                   curve_date date,
+                   tenor varchar,
+                   yield_pct double
+                 );
+                 create table staging_curated.fx_raw__normalized (
+                   rate_date date,
+                   pair varchar,
+                   close double
+                 );
+                 insert into staging_curated.rates_raw__normalized values
+                   ('2026-06-11', '2Y', 4.75);
+                 insert into staging_curated.fx_raw__normalized values
+                   ('2026-06-11', 'USDZAR', 18.21);",
+            )
+            .expect("source tables should be created");
+        drop(connection);
+
+        let node = WorkflowNode {
+            node_id: "table_merge".to_string(),
+            type_id: "table_merge".to_string(),
+            definition_version: 1,
+            label: None,
+            config: json!({
+                "target_schema": "tables",
+                "write_policy": "append_only",
+                "merge_key_columns": [],
+                "delete_handling": "apply_delete_markers",
+                "schema_drift_behavior": "fail_and_require_review"
+            }),
+            position: NodePosition::default(),
+        };
+        let mut inputs = PortValues::new();
+        inputs.insert(
+            "items".to_string(),
+            TypedValue {
+                data_type: DataType::TableRefCollection,
+                value: json!({
+                    "kind": "table_reference_collection",
+                    "table_refs": [
+                        {
+                            "kind": "table_reference",
+                            "catalog": "workflow.duckdb",
+                            "schema_name": "staging_curated",
+                            "table_name": "rates_raw__normalized",
+                            "output_alias": "rates_raw__normalized",
+                            "metadata": {
+                                "repository": "post-no-preference/rates",
+                                "branch": "main",
+                                "current_commit": "abc123",
+                                "dolt_source_table": "rates_raw",
+                                "transform_kind": "sql_transform"
+                            }
+                        },
+                        {
+                            "kind": "table_reference",
+                            "catalog": "workflow.duckdb",
+                            "schema_name": "staging_curated",
+                            "table_name": "fx_raw__normalized",
+                            "output_alias": "fx_raw__normalized",
+                            "metadata": {
+                                "repository": "post-no-preference/rates",
+                                "branch": "main",
+                                "current_commit": "abc123",
+                                "dolt_source_table": "fx_raw",
+                                "transform_kind": "sql_transform"
+                            }
+                        }
+                    ],
+                    "manifest_ref": {
+                        "kind": "dataset_reference",
+                        "artifact_id": "manifest-1"
+                    },
+                    "metadata": {
+                        "batch_id": "batch-1"
+                    }
+                }),
+            },
+        );
+        let context = AdapterExecutionContext {
+            workflow_duckdb_path: Some(duckdb_path.clone()),
+            ..AdapterExecutionContext::default()
+        };
+
+        let result = RuntimeAdapters::default()
+            .execute_with_context(definition, &node, &inputs, &context)
+            .expect("table_merge collection should succeed");
+        let payload = result
+            .outputs
+            .get("items")
+            .expect("items output should be present");
+        assert_eq!(payload.data_type, DataType::TableRefCollection);
+        assert_eq!(payload.value["kind"], json!("table_reference_collection"));
+        assert_eq!(payload.value["metadata"]["merge_kind"], json!("table_merge"));
+        assert_eq!(payload.value["metadata"]["target_schema"], json!("tables"));
+        assert_eq!(payload.value["metadata"]["merged_item_count"], json!(2));
+        assert_eq!(payload.value["metadata"]["merged_table_count"], json!(2));
+        assert_eq!(payload.value["manifest_ref"]["artifact_id"], json!("manifest-1"));
+
+        let table_refs = payload.value["table_refs"]
+            .as_array()
+            .expect("table_refs should be an array");
+        assert_eq!(table_refs.len(), 2);
+        assert_eq!(table_refs[0]["schema_name"], json!("tables"));
+        assert_eq!(table_refs[0]["table_name"], json!("rates_raw__normalized"));
+        assert_eq!(table_refs[0]["metadata"]["source_schema"], json!("staging_curated"));
+        assert_eq!(table_refs[0]["metadata"]["source_table"], json!("rates_raw__normalized"));
+        assert_eq!(table_refs[0]["metadata"]["target_schema"], json!("tables"));
+        assert_eq!(table_refs[0]["metadata"]["target_table"], json!("rates_raw__normalized"));
+        assert_eq!(table_refs[0]["metadata"]["dolt_source_table"], json!("rates_raw"));
+        assert_eq!(table_refs[0]["metadata"]["merge_kind"], json!("table_merge"));
+        assert_eq!(table_refs[1]["schema_name"], json!("tables"));
+        assert_eq!(table_refs[1]["table_name"], json!("fx_raw__normalized"));
+        assert_eq!(table_refs[1]["metadata"]["dolt_source_table"], json!("fx_raw"));
+        assert_eq!(table_refs[1]["metadata"]["repository"], json!("post-no-preference/rates"));
+
+        let connection = DuckDbConnection::open(&duckdb_path).expect("duckdb should reopen");
+        let rates_count: i64 = connection
+            .query_row(
+                "select count(*) from tables.rates_raw__normalized",
+                [],
+                |row| row.get(0),
+            )
+            .expect("rates durable table should query");
+        let fx_count: i64 = connection
+            .query_row(
+                "select count(*) from tables.fx_raw__normalized",
+                [],
+                |row| row.get(0),
+            )
+            .expect("fx durable table should query");
+        assert_eq!(rates_count, 1);
+        assert_eq!(fx_count, 1);
+        assert!(result.logs.iter().any(|line| {
+            line.contains("Prepared table_merge collection into `tables` with 2 output table reference(s).")
+        }));
+
+        let _ = fs::remove_dir_all(&workflow_root);
+    }
+
     #[test]
     fn table_merge_reports_missing_target_merge_key_before_duckdb_binder_error() {
         let registry = builtin_node_definitions();
@@ -10575,6 +11230,238 @@ unpivot (
                 "Prepared checkpoint write to `tables.ingest_checkpoints` for `post-no-preference/earnings` on `main` at commit `a34ef9c` using `after_quality_gate`."
             ]
         );
+    }
+
+    #[test]
+    fn quality_check_passes_through_table_reference_collection() {
+        let registry = builtin_node_definitions();
+        let definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "quality_check")
+            .expect("quality_check definition");
+        let node = WorkflowNode {
+            node_id: "quality_check".to_string(),
+            type_id: "quality_check".to_string(),
+            definition_version: 1,
+            label: None,
+            config: json!({
+                "suite_preset": "post_merge_ingest_gate",
+                "schema_drift_rule": "fail_on_required_column_drift",
+                "null_key_policy": "block_on_primary_key_nulls",
+                "warning_budget": 2,
+                "block_checkpoint_write_on_failure": true,
+                "allow_warning_only_runs_to_continue": true
+            }),
+            position: NodePosition::default(),
+        };
+        let mut inputs = PortValues::new();
+        inputs.insert(
+            "items".to_string(),
+            TypedValue {
+                data_type: DataType::TableRefCollection,
+                value: json!({
+                    "kind": "table_reference_collection",
+                    "table_refs": [
+                        {
+                            "kind": "table_reference",
+                            "catalog": "workflow.duckdb",
+                            "schema_name": "tables",
+                            "table_name": "earnings_calendar",
+                            "output_alias": "earnings_calendar",
+                            "selected_columns": [],
+                            "row_filter": Value::Null,
+                            "row_limit": Value::Null,
+                            "refresh_schema": true,
+                            "open_in_catalog": false,
+                            "schema_definition": {
+                                "columns": [],
+                                "primary_key": [],
+                                "checks": []
+                            },
+                            "metadata": {
+                                "branch": "main",
+                                "current_commit": "a34ef9c",
+                                "repository": "post-no-preference/earnings"
+                            }
+                        },
+                        {
+                            "kind": "table_reference",
+                            "catalog": "workflow.duckdb",
+                            "schema_name": "tables",
+                            "table_name": "eps_history",
+                            "output_alias": "eps_history",
+                            "selected_columns": [],
+                            "row_filter": Value::Null,
+                            "row_limit": Value::Null,
+                            "refresh_schema": true,
+                            "open_in_catalog": false,
+                            "schema_definition": {
+                                "columns": [],
+                                "primary_key": [],
+                                "checks": []
+                            },
+                            "metadata": {
+                                "branch": "main",
+                                "current_commit": "a34ef9c",
+                                "repository": "post-no-preference/earnings"
+                            }
+                        }
+                    ],
+                    "manifest_ref": {
+                        "kind": "dataset_reference",
+                        "artifact_id": "manifest-1"
+                    },
+                    "metadata": {
+                        "batch_id": "batch-1"
+                    }
+                }),
+            },
+        );
+
+        let result = RuntimeAdapters::default()
+            .execute(definition, &node, &inputs)
+            .expect("quality check collection should succeed");
+        let payload = result
+            .outputs
+            .get("items")
+            .expect("items output should be present");
+        assert_eq!(payload.data_type, DataType::TableRefCollection);
+        assert_eq!(payload.value["kind"], json!("table_reference_collection"));
+        assert_eq!(payload.value["metadata"]["quality_check"]["kind"], json!("quality_gate_collection_result"));
+        assert_eq!(payload.value["metadata"]["quality_check"]["gate_status"], json!("warn"));
+        assert_eq!(payload.value["metadata"]["quality_check"]["input_count"], json!(2));
+        assert_eq!(payload.value["metadata"]["quality_check"]["warned_table_count"], json!(2));
+        assert_eq!(payload.value["manifest_ref"]["artifact_id"], json!("manifest-1"));
+
+        let table_refs = payload.value["table_refs"]
+            .as_array()
+            .expect("table_refs should be an array");
+        assert_eq!(table_refs.len(), 2);
+        assert_eq!(table_refs[0]["metadata"]["quality_check"]["gate_status"], json!("warn"));
+        assert_eq!(table_refs[1]["metadata"]["quality_check"]["approved_table_set"], json!(["tables.eps_history"]));
+        assert!(result.logs.iter().any(|line| {
+            line.contains("Applied quality gate to 2 table reference(s) with collection status `warn`.")
+        }));
+    }
+
+    #[test]
+    fn checkpoint_write_passes_through_table_reference_collection() {
+        let registry = builtin_node_definitions();
+        let definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "checkpoint_write")
+            .expect("checkpoint_write definition");
+        let node = WorkflowNode {
+            node_id: "checkpoint_write".to_string(),
+            type_id: "checkpoint_write".to_string(),
+            definition_version: 1,
+            label: None,
+            config: json!({
+                "checkpoint_table": "tables.ingest_checkpoints",
+                "commit_source": "metadata.current_commit",
+                "write_timing": "after_quality_gate",
+                "only_persist_on_full_success": true,
+                "advance_on_partial_success": false
+            }),
+            position: NodePosition::default(),
+        };
+        let mut inputs = PortValues::new();
+        inputs.insert(
+            "items".to_string(),
+            TypedValue {
+                data_type: DataType::TableRefCollection,
+                value: json!({
+                    "kind": "table_reference_collection",
+                    "table_refs": [
+                        {
+                            "kind": "table_reference",
+                            "catalog": "workflow.duckdb",
+                            "schema_name": "tables",
+                            "table_name": "earnings_calendar",
+                            "output_alias": "earnings_calendar",
+                            "selected_columns": [],
+                            "row_filter": Value::Null,
+                            "row_limit": Value::Null,
+                            "refresh_schema": true,
+                            "open_in_catalog": false,
+                            "schema_definition": {
+                                "columns": [],
+                                "primary_key": [],
+                                "checks": []
+                            },
+                            "metadata": {
+                                "branch": "main",
+                                "current_commit": "a34ef9c",
+                                "previous_commit": Value::Null,
+                                "repository": "post-no-preference/earnings"
+                            }
+                        },
+                        {
+                            "kind": "table_reference",
+                            "catalog": "workflow.duckdb",
+                            "schema_name": "tables",
+                            "table_name": "eps_history",
+                            "output_alias": "eps_history",
+                            "selected_columns": [],
+                            "row_filter": Value::Null,
+                            "row_limit": Value::Null,
+                            "refresh_schema": true,
+                            "open_in_catalog": false,
+                            "schema_definition": {
+                                "columns": [],
+                                "primary_key": [],
+                                "checks": []
+                            },
+                            "metadata": {
+                                "branch": "main",
+                                "current_commit": "a34ef9c",
+                                "previous_commit": Value::Null,
+                                "repository": "post-no-preference/earnings"
+                            }
+                        }
+                    ],
+                    "manifest_ref": {
+                        "kind": "dataset_reference",
+                        "artifact_id": "manifest-1"
+                    },
+                    "metadata": {
+                        "batch_id": "batch-1"
+                    }
+                }),
+            },
+        );
+
+        let result = RuntimeAdapters::default()
+            .execute(definition, &node, &inputs)
+            .expect("checkpoint write collection should succeed");
+        let payload = result
+            .outputs
+            .get("items")
+            .expect("items output should be present");
+        assert_eq!(payload.data_type, DataType::TableRefCollection);
+        assert_eq!(payload.value["kind"], json!("table_reference_collection"));
+        assert_eq!(payload.value["metadata"]["checkpoint_write"]["kind"], json!("checkpoint_write_collection_result"));
+        assert_eq!(payload.value["metadata"]["checkpoint_write"]["checkpoint_table"], json!("tables.ingest_checkpoints"));
+        assert_eq!(payload.value["metadata"]["checkpoint_write"]["input_count"], json!(2));
+        assert_eq!(payload.value["metadata"]["checkpoint_write"]["write_timing"], json!("after_quality_gate"));
+        assert_eq!(payload.value["metadata"]["checkpoint_write"]["last_synced_commits"], json!(["a34ef9c"]));
+        assert_eq!(payload.value["manifest_ref"]["artifact_id"], json!("manifest-1"));
+
+        let table_refs = payload.value["table_refs"]
+            .as_array()
+            .expect("table_refs should be an array");
+        assert_eq!(table_refs.len(), 2);
+        assert_eq!(
+            table_refs[0]["metadata"]["checkpoint_write"]["last_synced_commit"],
+            json!("a34ef9c")
+        );
+        assert_eq!(
+            table_refs[1]["metadata"]["checkpoint_write"]["last_ingest_mode"],
+            json!("bootstrap_refresh")
+        );
+        assert!(result.logs.iter().any(|line| {
+            line.contains("Prepared checkpoint writes to `tables.ingest_checkpoints` for 2 table reference(s) using `after_quality_gate`.")
+        }));
     }
 
     #[test]

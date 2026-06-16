@@ -3,7 +3,7 @@ import { vi } from 'vitest';
 import starterWorkflowFixture from '../../../../tests/fixtures/workflows/basic_text_preview.json';
 import connectionFixture from '../../../../tests/fixtures/api/connections.json';
 import nodeDefinitionFixture from '../../../../tests/fixtures/api/node_definitions.json';
-import CanvasWorkspace from './CanvasWorkspace';
+import CanvasWorkspace from './CanvasWorkspace.jsx';
 
 vi.mock('./WorkflowCanvas', () => ({
   default: function WorkflowCanvasMock({ onSelectionChange }) {
@@ -42,6 +42,9 @@ vi.mock('./WorkflowCanvas', () => ({
         </button>
         <button onClick={() => onSelectionChange?.('load_to_duckdb')} type="button">
           Select load to duckdb node
+        </button>
+        <button onClick={() => onSelectionChange?.('sql_transform')} type="button">
+          Select sql transform node
         </button>
         <button onClick={() => onSelectionChange?.('table_merge')} type="button">
           Select table merge node
@@ -536,6 +539,42 @@ function buildLoadToDuckDbWorkflow() {
     source_port_id: 'bundle',
     target_node_id: 'load_to_duckdb',
     target_port_id: 'bundle'
+  });
+
+  return workflow;
+}
+
+function buildSqlTransformCollectionWorkflow() {
+  const workflow = buildLoadToDuckDbWorkflow();
+
+  workflow.nodes.push({
+    node_id: 'sql_transform',
+    type_id: 'sql_transform',
+    definition_version: 1,
+    label: 'SQL Transform',
+    config: {
+      execution: {
+        wait_after_seconds: 0,
+        wait_before_seconds: 0
+      },
+      materialization_mode: 'view',
+      output_table_name: '',
+      output_table_name_template: '{{table_name}}__normalized',
+      source_table_name: '',
+      sql_text: 'select *\nfrom {{source}}',
+      target_schema: 'staging_curated'
+    },
+    position: {
+      x: 2120,
+      y: 180
+    }
+  });
+  workflow.edges.push({
+    edge_id: 'edge_load_to_duckdb_tables_to_sql_transform_items',
+    source_node_id: 'load_to_duckdb',
+    source_port_id: 'tables',
+    target_node_id: 'sql_transform',
+    target_port_id: 'items'
   });
 
   return workflow;
@@ -1273,6 +1312,62 @@ describe('CanvasWorkspace', () => {
       'snapshot bundle'
     );
     expect(screen.getByLabelText('Current staging state')).toHaveTextContent('3 tables');
+  });
+
+  it('shows the sql transform management panel with per-table template controls', async () => {
+    const workflowWithSqlTransform = buildSqlTransformCollectionWorkflow();
+
+    api.getWorkflow.mockResolvedValue({
+      workflow: {
+        workflow_id: workflowWithSqlTransform.workflow_id,
+        version: workflowWithSqlTransform.version
+      },
+      definition: workflowWithSqlTransform
+    });
+
+    render(
+      <CanvasWorkspace
+        workflowId={workflowWithSqlTransform.workflow_id}
+        workspaceId="ws_test"
+      />
+    );
+
+    await screen.findByLabelText('Workflow run status');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select sql transform node' }));
+
+    expect(await screen.findByLabelText('Current transform state')).toHaveTextContent(
+      'Per-table SQL template'
+    );
+    expect(screen.getByLabelText('Current transform state')).toHaveTextContent('3 tables');
+    expect(screen.getByLabelText('SQL transform input summary')).toHaveTextContent(
+      'Table collection'
+    );
+    expect(screen.getByLabelText('SQL transform input summary')).toHaveTextContent(
+      'load_to_duckdb table_ref_collection'
+    );
+    expect(screen.getByLabelText('SQL transform input summary')).toHaveTextContent(
+      'staging.earnings_calendar'
+    );
+    expect(screen.getByLabelText('Single-table source override status')).toHaveTextContent(
+      'disabled for table collections'
+    );
+    expect(screen.getByLabelText('Output table name template')).toHaveValue(
+      '{{table_name}}__normalized'
+    );
+    expect(screen.getByLabelText('SQL template')).toHaveValue('select *\nfrom {{source}}');
+    expect(screen.getByLabelText('SQL transform preview context')).toHaveTextContent(
+      'staging_curated.earnings_calendar__normalized'
+    );
+    expect(screen.getByLabelText('SQL transform preview context')).toHaveTextContent(
+      'staging_curated.{{table_name}}__normalized'
+    );
+    expect(screen.getByLabelText('Rendered SQL preview')).toHaveTextContent(
+      'from staging.earnings_calendar'
+    );
+    expect(screen.getByText('Transform contract').closest('.canvas-node-panel__footer')).toHaveTextContent(
+      'same SQL template per table'
+    );
   });
 
   it('shows the table merge management panel with durable reconcile controls', async () => {

@@ -2636,15 +2636,27 @@ fn validate_node_config(node: &WorkflowNode) -> Option<ValidationIssue> {
             }
 
             let output_table_name = node.config.get("output_table_name").and_then(Value::as_str);
-            if output_table_name.map_or(true, |value| value.trim().is_empty()) {
+            let output_table_name_template = node
+                .config
+                .get("output_table_name_template")
+                .and_then(Value::as_str);
+            let has_output_table_name = output_table_name
+                .map(str::trim)
+                .map(|value| !value.is_empty())
+                .unwrap_or(false);
+            let has_output_table_name_template = output_table_name_template
+                .map(str::trim)
+                .map(|value| !value.is_empty())
+                .unwrap_or(false);
+            if !has_output_table_name && !has_output_table_name_template {
                 return Some(issue(
                     "invalid_sql_transform_output_table_name",
                     format!(
-                        "Node `{}` requires a non-empty string `output_table_name` config field.",
+                        "Node `{}` requires either non-empty `output_table_name` or `output_table_name_template` config field.",
                         node.node_id
                     ),
                     Some(format!(
-                        "workflow.nodes.{}.config.output_table_name",
+                        "workflow.nodes.{}.config.output_table_name_template",
                         node.node_id
                     )),
                 ));

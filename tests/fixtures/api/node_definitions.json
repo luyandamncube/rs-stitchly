@@ -1000,17 +1000,17 @@
           ],
           "footer": {
             "kind": "metric",
-            "label": "Output",
+            "label": "Output template",
             "value": {
               "source": "config",
-              "path": "output_table_name"
+              "path": "output_table_name_template"
             },
             "formatter": "text",
             "icon_key": "status"
           },
           "handles": {
-            "input_layout": "single_left",
-            "output_layout": "single_right",
+            "input_layout": "multi_left",
+            "output_layout": "multi_right",
             "show_labels": "never",
             "align_to_rows": true
           },
@@ -1264,6 +1264,1480 @@
           },
           "size": {
             "width": 340,
+            "density": "comfortable"
+          }
+        }
+      }
+    },
+    {
+      "type_id": "dolt_repo_source",
+      "version": 1,
+      "display_name": "Dolt Repo Source",
+      "category": "input",
+      "description": "References a Dolt repository and branch for downstream sync and export nodes.",
+      "inputs": [],
+      "outputs": [
+        {
+          "port_id": "repo_out",
+          "display_name": "Repo",
+          "direction": "output",
+          "data_type": "dataset_ref",
+          "required": false,
+          "multiple": false,
+          "description": "Dolt repo reference and checkout metadata."
+        }
+      ],
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "connection_ref": {
+            "type": "string",
+            "default": "local_dolt"
+          },
+          "repository": {
+            "type": "string",
+            "default": "post-no-preference/earnings"
+          },
+          "branch": {
+            "type": "string",
+            "default": "main"
+          },
+          "checkout_ref": {
+            "type": "string",
+            "default": ""
+          },
+          "clone_mode": {
+            "type": "string",
+            "enum": [
+              "reuse_local_copy",
+              "fresh_clone",
+              "depth_1"
+            ],
+            "default": "reuse_local_copy"
+          },
+          "sync_strategy": {
+            "type": "string",
+            "enum": [
+              "pull_before_execution",
+              "clone_only",
+              "manual"
+            ],
+            "default": "pull_before_execution"
+          }
+        }
+      },
+      "runtime": {
+        "executor_kind": "rust_native",
+        "isolation_mode": "in_process"
+      },
+      "capabilities": {
+        "reads_external_state": true,
+        "writes_external_state": false,
+        "produces_durable_artifacts": false,
+        "supports_preview": true,
+        "requires_connection": false,
+        "may_emit_structured_logs": true
+      },
+      "ui": {
+        "icon": "dolt_repo_source",
+        "color_token": "var(--node-input)",
+        "default_width": 336,
+        "default_height": 176,
+        "help_text": "Select a Dolt repository and branch.",
+        "node_card": {
+          "variant": "input",
+          "icon_key": "dolt_repo_source",
+          "top_chip": {
+            "visible": false,
+            "text": null
+          },
+          "header": {
+            "title_source": "instance_label_or_display_name",
+            "show_overflow_menu": true
+          },
+          "rows": [
+            {
+              "row_id": "repository",
+              "kind": "kv",
+              "label": "Repo",
+              "value": {
+                "source": "config",
+                "path": "repository"
+              },
+              "formatter": "text",
+              "icon_key": "label",
+              "truncate": false
+            },
+            {
+              "row_id": "branch",
+              "kind": "kv",
+              "label": "Branch",
+              "value": {
+                "source": "config",
+                "path": "branch"
+              },
+              "formatter": "text",
+              "icon_key": "status",
+              "truncate": false
+            }
+          ],
+          "footer": {
+            "kind": "metric",
+            "label": "Sync",
+            "value": {
+              "source": "config",
+              "path": "sync_strategy"
+            },
+            "formatter": "text",
+            "icon_key": "status"
+          },
+          "handles": {
+            "input_layout": "none",
+            "output_layout": "single_right",
+            "show_labels": "never",
+            "align_to_rows": true
+          },
+          "size": {
+            "width": 336,
+            "density": "comfortable"
+          }
+        }
+      }
+    },
+    {
+      "type_id": "checkpoint_read",
+      "version": 1,
+      "display_name": "Checkpoint Read",
+      "category": "input",
+      "description": "Reads the last successful checkpoint for a repo and branch.",
+      "inputs": [],
+      "outputs": [
+        {
+          "port_id": "checkpoint",
+          "display_name": "Checkpoint",
+          "direction": "output",
+          "data_type": "json",
+          "required": false,
+          "multiple": false,
+          "description": "Checkpoint context with previous commit metadata."
+        }
+      ],
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "checkpoint_table": {
+            "type": "string",
+            "default": "stitchly.checkpoints"
+          },
+          "source_repo": {
+            "type": "string",
+            "default": "post-no-preference/earnings"
+          },
+          "branch": {
+            "type": "string",
+            "default": "main"
+          },
+          "emit_bootstrap_marker_if_missing": {
+            "type": "boolean",
+            "default": true
+          },
+          "fail_on_stale_checkpoint": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "runtime": {
+        "executor_kind": "rust_native",
+        "isolation_mode": "in_process"
+      },
+      "capabilities": {
+        "reads_external_state": true,
+        "writes_external_state": false,
+        "produces_durable_artifacts": false,
+        "supports_preview": true,
+        "requires_connection": false,
+        "may_emit_structured_logs": true
+      },
+      "ui": {
+        "icon": "checkpoint_read",
+        "color_token": "var(--node-input)",
+        "default_width": 336,
+        "default_height": 176,
+        "help_text": "Read checkpoint state for incremental Dolt ingestion.",
+        "node_card": {
+          "variant": "compute",
+          "icon_key": "checkpoint_read",
+          "top_chip": {
+            "visible": false,
+            "text": null
+          },
+          "header": {
+            "title_source": "instance_label_or_display_name",
+            "show_overflow_menu": true
+          },
+          "rows": [
+            {
+              "row_id": "source_repo",
+              "kind": "kv",
+              "label": "Repo",
+              "value": {
+                "source": "config",
+                "path": "source_repo"
+              },
+              "formatter": "text",
+              "icon_key": "label",
+              "truncate": false
+            },
+            {
+              "row_id": "branch",
+              "kind": "kv",
+              "label": "Branch",
+              "value": {
+                "source": "config",
+                "path": "branch"
+              },
+              "formatter": "text",
+              "icon_key": "status",
+              "truncate": false
+            }
+          ],
+          "footer": {
+            "kind": "metric",
+            "label": "Checkpoint store",
+            "value": {
+              "source": "config",
+              "path": "checkpoint_table"
+            },
+            "formatter": "text",
+            "icon_key": "status"
+          },
+          "handles": {
+            "input_layout": "none",
+            "output_layout": "single_right",
+            "show_labels": "never",
+            "align_to_rows": true
+          },
+          "size": {
+            "width": 336,
+            "density": "comfortable"
+          }
+        }
+      }
+    },
+    {
+      "type_id": "dolt_repo_sync",
+      "version": 1,
+      "display_name": "Dolt Repo Sync",
+      "category": "data_movement",
+      "description": "Synchronizes a Dolt repo and resolves current/previous commit range metadata.",
+      "inputs": [
+        {
+          "port_id": "repo",
+          "display_name": "Repo",
+          "direction": "input",
+          "data_type": "dataset_ref",
+          "required": true,
+          "multiple": false,
+          "description": "Dolt repo reference."
+        },
+        {
+          "port_id": "checkpoint",
+          "display_name": "Checkpoint",
+          "direction": "input",
+          "data_type": "json",
+          "required": false,
+          "multiple": false,
+          "description": "Optional checkpoint context."
+        }
+      ],
+      "outputs": [
+        {
+          "port_id": "repo_out",
+          "display_name": "Repo",
+          "direction": "output",
+          "data_type": "dataset_ref",
+          "required": false,
+          "multiple": false,
+          "description": "Synced Dolt repo reference with range metadata."
+        }
+      ],
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "sync_action": {
+            "type": "string",
+            "enum": [
+              "pull_remote_head",
+              "fetch_and_checkout",
+              "refresh_checkout"
+            ],
+            "default": "pull_remote_head"
+          },
+          "no_change_behavior": {
+            "type": "string",
+            "enum": [
+              "emit_current_range",
+              "emit_no_op_marker"
+            ],
+            "default": "emit_current_range"
+          },
+          "branch_guard": {
+            "type": "string",
+            "enum": [
+              "require_tracked_branch_match",
+              "allow_detached_head"
+            ],
+            "default": "require_tracked_branch_match"
+          },
+          "dirty_working_copy_policy": {
+            "type": "string",
+            "enum": [
+              "fail_if_dirty",
+              "stash_and_continue"
+            ],
+            "default": "fail_if_dirty"
+          }
+        }
+      },
+      "runtime": {
+        "executor_kind": "rust_native",
+        "isolation_mode": "in_process"
+      },
+      "capabilities": {
+        "reads_external_state": true,
+        "writes_external_state": true,
+        "produces_durable_artifacts": false,
+        "supports_preview": true,
+        "requires_connection": false,
+        "may_emit_structured_logs": true
+      },
+      "ui": {
+        "icon": "dolt_repo_sync",
+        "color_token": "var(--node-transform)",
+        "default_width": 336,
+        "default_height": 176,
+        "help_text": "Sync a Dolt repo before computing changed tables.",
+        "node_card": {
+          "variant": "compute",
+          "icon_key": "dolt_repo_sync",
+          "top_chip": {
+            "visible": false,
+            "text": null
+          },
+          "header": {
+            "title_source": "instance_label_or_display_name",
+            "show_overflow_menu": true
+          },
+          "rows": [
+            {
+              "row_id": "sync_action",
+              "kind": "kv",
+              "label": "Action",
+              "value": {
+                "source": "config",
+                "path": "sync_action"
+              },
+              "formatter": "text",
+              "icon_key": "logic",
+              "truncate": false
+            },
+            {
+              "row_id": "branch_guard",
+              "kind": "kv",
+              "label": "Guard",
+              "value": {
+                "source": "config",
+                "path": "branch_guard"
+              },
+              "formatter": "text",
+              "icon_key": "status",
+              "truncate": false
+            }
+          ],
+          "footer": {
+            "kind": "metric",
+            "label": "Dirty policy",
+            "value": {
+              "source": "config",
+              "path": "dirty_working_copy_policy"
+            },
+            "formatter": "text",
+            "icon_key": "status"
+          },
+          "handles": {
+            "input_layout": "multi_left",
+            "output_layout": "single_right",
+            "show_labels": "never",
+            "align_to_rows": true
+          },
+          "size": {
+            "width": 336,
+            "density": "comfortable"
+          }
+        }
+      }
+    },
+    {
+      "type_id": "dolt_change_manifest",
+      "version": 1,
+      "display_name": "Dolt Change Manifest",
+      "category": "compute",
+      "description": "Computes a scoped changed-table manifest from an upstream Dolt commit range.",
+      "inputs": [
+        {
+          "port_id": "repo",
+          "display_name": "Repo",
+          "direction": "input",
+          "data_type": "dataset_ref",
+          "required": true,
+          "multiple": false,
+          "description": "Synced Dolt repo reference with resolved commit range metadata."
+        }
+      ],
+      "outputs": [
+        {
+          "port_id": "manifest",
+          "display_name": "Manifest",
+          "direction": "output",
+          "data_type": "dataset_ref",
+          "required": false,
+          "multiple": false,
+          "description": "Changed-table manifest reference plus schema-drift metadata."
+        }
+      ],
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "table_scope": {
+            "type": "string",
+            "enum": [
+              "all_tables",
+              "allowlist"
+            ],
+            "default": "all_tables"
+          },
+          "selected_tables": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "schema_change_policy": {
+            "type": "string",
+            "enum": [
+              "flag_and_continue",
+              "fail_run"
+            ],
+            "default": "flag_and_continue"
+          }
+        }
+      },
+      "runtime": {
+        "executor_kind": "rust_native",
+        "isolation_mode": "in_process"
+      },
+      "capabilities": {
+        "reads_external_state": true,
+        "writes_external_state": false,
+        "produces_durable_artifacts": false,
+        "supports_preview": true,
+        "requires_connection": false,
+        "may_emit_structured_logs": true
+      },
+      "ui": {
+        "icon": "dolt_change_manifest",
+        "color_token": "var(--node-transform)",
+        "default_width": 336,
+        "default_height": 176,
+        "help_text": "Compute a manifest of changed Dolt tables.",
+        "node_card": {
+          "variant": "compute",
+          "icon_key": "dolt_change_manifest",
+          "top_chip": {
+            "visible": false,
+            "text": null
+          },
+          "header": {
+            "title_source": "instance_label_or_display_name",
+            "show_overflow_menu": true
+          },
+          "rows": [
+            {
+              "row_id": "table_scope",
+              "kind": "kv",
+              "label": "Scope",
+              "value": {
+                "source": "config",
+                "path": "table_scope"
+              },
+              "formatter": "text",
+              "icon_key": "logic",
+              "truncate": false
+            },
+            {
+              "row_id": "schema_change_policy",
+              "kind": "kv",
+              "label": "Schema",
+              "value": {
+                "source": "config",
+                "path": "schema_change_policy"
+              },
+              "formatter": "text",
+              "icon_key": "status",
+              "truncate": false
+            }
+          ],
+          "footer": {
+            "kind": "metric",
+            "label": "Tables",
+            "value": {
+              "source": "config",
+              "path": "selected_tables"
+            },
+            "formatter": "text",
+            "icon_key": "status"
+          },
+          "handles": {
+            "input_layout": "single_left",
+            "output_layout": "single_right",
+            "show_labels": "never",
+            "align_to_rows": true
+          },
+          "size": {
+            "width": 336,
+            "density": "comfortable"
+          }
+        }
+      }
+    },
+    {
+      "type_id": "dolt_dump",
+      "version": 1,
+      "display_name": "Dolt Dump",
+      "category": "data_movement",
+      "description": "Exports whole Dolt tables into a bundle directory for downstream raw landing.",
+      "inputs": [
+        {
+          "port_id": "repo",
+          "display_name": "Repo",
+          "direction": "input",
+          "data_type": "dataset_ref",
+          "required": true,
+          "multiple": false,
+          "description": "Upstream Dolt repo or manifest dataset that resolves the export scope."
+        }
+      ],
+      "outputs": [
+        {
+          "port_id": "bundle",
+          "display_name": "Bundle",
+          "direction": "output",
+          "data_type": "directory_ref",
+          "required": false,
+          "multiple": false,
+          "description": "Directory reference for exported files."
+        },
+        {
+          "port_id": "manifest",
+          "display_name": "Manifest",
+          "direction": "output",
+          "data_type": "dataset_ref",
+          "required": false,
+          "multiple": false,
+          "description": "Table manifest with exported source tables."
+        }
+      ],
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "output_format": {
+            "type": "string",
+            "enum": [
+              "csv",
+              "parquet"
+            ],
+            "default": "parquet"
+          },
+          "table_selection_mode": {
+            "type": "string",
+            "enum": [
+              "prefer_manifest_scope",
+              "all_tables",
+              "manual_tables"
+            ],
+            "default": "prefer_manifest_scope"
+          },
+          "selected_tables": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "artifact_retention": {
+            "type": "string",
+            "enum": [
+              "keep_latest_success",
+              "ephemeral_per_run",
+              "persist_all"
+            ],
+            "default": "keep_latest_success"
+          },
+          "output_directory_policy": {
+            "type": "string",
+            "enum": [
+              "ephemeral_run_bundle",
+              "stable_repo_cache"
+            ],
+            "default": "ephemeral_run_bundle"
+          }
+        }
+      },
+      "runtime": {
+        "executor_kind": "rust_native",
+        "isolation_mode": "in_process"
+      },
+      "capabilities": {
+        "reads_external_state": true,
+        "writes_external_state": true,
+        "produces_durable_artifacts": true,
+        "supports_preview": true,
+        "requires_connection": false,
+        "may_emit_structured_logs": true
+      },
+      "ui": {
+        "icon": "dolt_dump",
+        "color_token": "var(--node-transform)",
+        "default_width": 336,
+        "default_height": 176,
+        "help_text": "Export Dolt tables to a file bundle.",
+        "node_card": {
+          "variant": "compute",
+          "icon_key": "dolt_dump",
+          "top_chip": {
+            "visible": false,
+            "text": null
+          },
+          "header": {
+            "title_source": "instance_label_or_display_name",
+            "show_overflow_menu": true
+          },
+          "rows": [
+            {
+              "row_id": "table_selection_mode",
+              "kind": "kv",
+              "label": "Tables",
+              "value": {
+                "source": "config",
+                "path": "table_selection_mode"
+              },
+              "formatter": "text",
+              "icon_key": "logic",
+              "truncate": false
+            },
+            {
+              "row_id": "output_format",
+              "kind": "kv",
+              "label": "Format",
+              "value": {
+                "source": "config",
+                "path": "output_format"
+              },
+              "formatter": "text",
+              "icon_key": "status",
+              "truncate": false
+            }
+          ],
+          "footer": {
+            "kind": "metric",
+            "label": "Retention",
+            "value": {
+              "source": "config",
+              "path": "artifact_retention"
+            },
+            "formatter": "text",
+            "icon_key": "status"
+          },
+          "handles": {
+            "input_layout": "single_left",
+            "output_layout": "multi_right",
+            "show_labels": "never",
+            "align_to_rows": true
+          },
+          "size": {
+            "width": 336,
+            "density": "comfortable"
+          }
+        }
+      }
+    },
+    {
+      "type_id": "dolt_diff_export",
+      "version": 1,
+      "display_name": "Dolt Diff Export",
+      "category": "data_movement",
+      "description": "Exports Dolt table deltas into a bundle directory for incremental loads.",
+      "inputs": [
+        {
+          "port_id": "manifest",
+          "display_name": "Manifest",
+          "direction": "input",
+          "data_type": "dataset_ref",
+          "required": true,
+          "multiple": false,
+          "description": "Changed-table manifest from Dolt Change Manifest."
+        }
+      ],
+      "outputs": [
+        {
+          "port_id": "bundle",
+          "display_name": "Bundle",
+          "direction": "output",
+          "data_type": "directory_ref",
+          "required": false,
+          "multiple": false,
+          "description": "Directory reference for exported delta files."
+        }
+      ],
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "output_format": {
+            "type": "string",
+            "enum": [
+              "csv",
+              "parquet"
+            ],
+            "default": "parquet"
+          },
+          "change_filter": {
+            "type": "string",
+            "enum": [
+              "all_changes",
+              "non_delete_changes",
+              "added_only",
+              "modified_only",
+              "removed_only"
+            ],
+            "default": "all_changes"
+          },
+          "deleted_row_handling": {
+            "type": "string",
+            "enum": [
+              "emit_delete_markers",
+              "omit_delete_rows"
+            ],
+            "default": "emit_delete_markers"
+          }
+        }
+      },
+      "runtime": {
+        "executor_kind": "rust_native",
+        "isolation_mode": "in_process"
+      },
+      "capabilities": {
+        "reads_external_state": true,
+        "writes_external_state": true,
+        "produces_durable_artifacts": true,
+        "supports_preview": true,
+        "requires_connection": false,
+        "may_emit_structured_logs": true
+      },
+      "ui": {
+        "icon": "dolt_diff_export",
+        "color_token": "var(--node-transform)",
+        "default_width": 336,
+        "default_height": 176,
+        "help_text": "Export changed rows from a Dolt manifest.",
+        "node_card": {
+          "variant": "compute",
+          "icon_key": "dolt_diff_export",
+          "top_chip": {
+            "visible": false,
+            "text": null
+          },
+          "header": {
+            "title_source": "instance_label_or_display_name",
+            "show_overflow_menu": true
+          },
+          "rows": [
+            {
+              "row_id": "change_filter",
+              "kind": "kv",
+              "label": "Filter",
+              "value": {
+                "source": "config",
+                "path": "change_filter"
+              },
+              "formatter": "text",
+              "icon_key": "logic",
+              "truncate": false
+            },
+            {
+              "row_id": "deleted_row_handling",
+              "kind": "kv",
+              "label": "Deletes",
+              "value": {
+                "source": "config",
+                "path": "deleted_row_handling"
+              },
+              "formatter": "text",
+              "icon_key": "status",
+              "truncate": false
+            }
+          ],
+          "footer": {
+            "kind": "metric",
+            "label": "Format",
+            "value": {
+              "source": "config",
+              "path": "output_format"
+            },
+            "formatter": "text",
+            "icon_key": "status"
+          },
+          "handles": {
+            "input_layout": "single_left",
+            "output_layout": "single_right",
+            "show_labels": "never",
+            "align_to_rows": true
+          },
+          "size": {
+            "width": 336,
+            "density": "comfortable"
+          }
+        }
+      }
+    },
+    {
+      "type_id": "load_to_duckdb",
+      "version": 1,
+      "display_name": "Load to DuckDB",
+      "category": "data_movement",
+      "description": "Loads a Dolt export bundle into workflow-local DuckDB staging tables.",
+      "inputs": [
+        {
+          "port_id": "bundle",
+          "display_name": "Bundle",
+          "direction": "input",
+          "data_type": "directory_ref",
+          "required": true,
+          "multiple": false,
+          "description": "Dolt dump or diff export bundle."
+        }
+      ],
+      "outputs": [
+        {
+          "port_id": "table",
+          "display_name": "Table",
+          "direction": "output",
+          "data_type": "table_ref",
+          "required": false,
+          "multiple": false,
+          "description": "Legacy single loaded table reference."
+        },
+        {
+          "port_id": "tables",
+          "display_name": "Tables",
+          "direction": "output",
+          "data_type": "table_ref_collection",
+          "required": false,
+          "multiple": false,
+          "description": "Collection of loaded table references."
+        }
+      ],
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "target_schema": {
+            "type": "string",
+            "default": "staging_raw"
+          },
+          "table_mapping": {
+            "type": "string",
+            "enum": [
+              "bundle_aware_staging_names"
+            ],
+            "default": "bundle_aware_staging_names"
+          },
+          "schema_handling": {
+            "type": "string",
+            "enum": [
+              "infer_on_first_load_validate_on_recurring"
+            ],
+            "default": "infer_on_first_load_validate_on_recurring"
+          },
+          "delta_context_preservation": {
+            "type": "string",
+            "enum": [
+              "preserve_commit_range_and_delete_flags"
+            ],
+            "default": "preserve_commit_range_and_delete_flags"
+          }
+        }
+      },
+      "runtime": {
+        "executor_kind": "rust_native",
+        "isolation_mode": "in_process"
+      },
+      "capabilities": {
+        "reads_external_state": true,
+        "writes_external_state": true,
+        "produces_durable_artifacts": false,
+        "supports_preview": true,
+        "requires_connection": false,
+        "may_emit_structured_logs": true
+      },
+      "ui": {
+        "icon": "load_to_duckdb",
+        "color_token": "var(--node-transform)",
+        "default_width": 336,
+        "default_height": 176,
+        "help_text": "Load exported files into DuckDB staging tables.",
+        "node_card": {
+          "variant": "compute",
+          "icon_key": "table_input",
+          "top_chip": {
+            "visible": false,
+            "text": null
+          },
+          "header": {
+            "title_source": "instance_label_or_display_name",
+            "show_overflow_menu": true
+          },
+          "rows": [
+            {
+              "row_id": "target_schema",
+              "kind": "kv",
+              "label": "Schema",
+              "value": {
+                "source": "config",
+                "path": "target_schema"
+              },
+              "formatter": "text",
+              "icon_key": "table_output",
+              "truncate": false
+            },
+            {
+              "row_id": "table_mapping",
+              "kind": "kv",
+              "label": "Mapping",
+              "value": {
+                "source": "config",
+                "path": "table_mapping"
+              },
+              "formatter": "text",
+              "icon_key": "logic",
+              "truncate": false
+            }
+          ],
+          "footer": {
+            "kind": "metric",
+            "label": "Schema handling",
+            "value": {
+              "source": "config",
+              "path": "schema_handling"
+            },
+            "formatter": "text",
+            "icon_key": "status"
+          },
+          "handles": {
+            "input_layout": "single_left",
+            "output_layout": "multi_right",
+            "show_labels": "never",
+            "align_to_rows": true
+          },
+          "size": {
+            "width": 336,
+            "density": "comfortable"
+          }
+        }
+      }
+    },
+    {
+      "type_id": "table_merge",
+      "version": 1,
+      "display_name": "Table Merge",
+      "category": "data_movement",
+      "description": "Merges transformed staging tables into durable workflow target tables.",
+      "inputs": [
+        {
+          "port_id": "table",
+          "display_name": "Table",
+          "direction": "input",
+          "data_type": "table_ref",
+          "required": false,
+          "multiple": false,
+          "description": "Legacy single table ready for merge."
+        },
+        {
+          "port_id": "items",
+          "display_name": "Tables",
+          "direction": "input",
+          "data_type": "table_ref_collection",
+          "required": false,
+          "multiple": false,
+          "description": "Collection of tables ready for merge."
+        }
+      ],
+      "outputs": [
+        {
+          "port_id": "table",
+          "display_name": "Table",
+          "direction": "output",
+          "data_type": "table_ref",
+          "required": false,
+          "multiple": false,
+          "description": "Legacy durable merged table reference."
+        },
+        {
+          "port_id": "items",
+          "display_name": "Tables",
+          "direction": "output",
+          "data_type": "table_ref_collection",
+          "required": false,
+          "multiple": false,
+          "description": "Durable merged table collection."
+        }
+      ],
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "target_schema": {
+            "type": "string",
+            "default": "warehouse"
+          },
+          "write_policy": {
+            "type": "string",
+            "enum": [
+              "upsert",
+              "append_only",
+              "snapshot_replace"
+            ],
+            "default": "upsert"
+          },
+          "merge_key_columns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "delete_handling": {
+            "type": "string",
+            "enum": [
+              "apply_delete_markers",
+              "ignore_delete_markers"
+            ],
+            "default": "apply_delete_markers"
+          },
+          "schema_drift_behavior": {
+            "type": "string",
+            "enum": [
+              "fail_and_require_review",
+              "allow_additive_changes"
+            ],
+            "default": "fail_and_require_review"
+          }
+        }
+      },
+      "runtime": {
+        "executor_kind": "rust_native",
+        "isolation_mode": "in_process"
+      },
+      "capabilities": {
+        "reads_external_state": true,
+        "writes_external_state": true,
+        "produces_durable_artifacts": true,
+        "supports_preview": true,
+        "requires_connection": false,
+        "may_emit_structured_logs": true
+      },
+      "ui": {
+        "icon": "table_merge",
+        "color_token": "var(--node-transform)",
+        "default_width": 336,
+        "default_height": 176,
+        "help_text": "Merge curated staging tables into durable targets.",
+        "node_card": {
+          "variant": "compute",
+          "icon_key": "table_merge",
+          "top_chip": {
+            "visible": false,
+            "text": null
+          },
+          "header": {
+            "title_source": "instance_label_or_display_name",
+            "show_overflow_menu": true
+          },
+          "rows": [
+            {
+              "row_id": "write_policy",
+              "kind": "kv",
+              "label": "Policy",
+              "value": {
+                "source": "config",
+                "path": "write_policy"
+              },
+              "formatter": "text",
+              "icon_key": "logic",
+              "truncate": false
+            },
+            {
+              "row_id": "target_schema",
+              "kind": "kv",
+              "label": "Target",
+              "value": {
+                "source": "config",
+                "path": "target_schema"
+              },
+              "formatter": "text",
+              "icon_key": "table_output",
+              "truncate": false
+            }
+          ],
+          "footer": {
+            "kind": "metric",
+            "label": "Delete handling",
+            "value": {
+              "source": "config",
+              "path": "delete_handling"
+            },
+            "formatter": "text",
+            "icon_key": "status"
+          },
+          "handles": {
+            "input_layout": "multi_left",
+            "output_layout": "multi_right",
+            "show_labels": "never",
+            "align_to_rows": true
+          },
+          "size": {
+            "width": 336,
+            "density": "comfortable"
+          }
+        }
+      }
+    },
+    {
+      "type_id": "quality_check",
+      "version": 1,
+      "display_name": "Quality Check",
+      "category": "control",
+      "description": "Applies post-merge validation rules and gates whether checkpoint advancement may continue.",
+      "inputs": [
+        {
+          "port_id": "table",
+          "display_name": "Table",
+          "direction": "input",
+          "data_type": "table_ref",
+          "required": false,
+          "multiple": false,
+          "description": "Legacy single durable table reference ready for validation."
+        },
+        {
+          "port_id": "items",
+          "display_name": "Tables",
+          "direction": "input",
+          "data_type": "table_ref_collection",
+          "required": false,
+          "multiple": false,
+          "description": "Collection of durable table references ready for validation."
+        }
+      ],
+      "outputs": [
+        {
+          "port_id": "table",
+          "display_name": "Table",
+          "direction": "output",
+          "data_type": "table_ref",
+          "required": false,
+          "multiple": false,
+          "description": "The same durable table reference enriched with quality gate metadata."
+        },
+        {
+          "port_id": "items",
+          "display_name": "Tables",
+          "direction": "output",
+          "data_type": "table_ref_collection",
+          "required": false,
+          "multiple": false,
+          "description": "The same durable table collection enriched with quality gate metadata."
+        }
+      ],
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "suite_preset": {
+            "type": "string",
+            "enum": [
+              "post_merge_ingest_gate",
+              "custom_rule_bundle"
+            ],
+            "default": "post_merge_ingest_gate"
+          },
+          "schema_drift_rule": {
+            "type": "string",
+            "enum": [
+              "fail_on_required_column_drift",
+              "allow_additive_schema_notes"
+            ],
+            "default": "fail_on_required_column_drift"
+          },
+          "null_key_policy": {
+            "type": "string",
+            "enum": [
+              "block_on_primary_key_nulls",
+              "allow_nulls_with_warning"
+            ],
+            "default": "block_on_primary_key_nulls"
+          },
+          "warning_budget": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0
+          },
+          "block_checkpoint_write_on_failure": {
+            "type": "boolean",
+            "default": true
+          },
+          "allow_warning_only_runs_to_continue": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "runtime": {
+        "executor_kind": "rust_native",
+        "isolation_mode": "in_process"
+      },
+      "capabilities": {
+        "reads_external_state": true,
+        "writes_external_state": false,
+        "produces_durable_artifacts": false,
+        "supports_preview": true,
+        "requires_connection": false,
+        "may_emit_structured_logs": true
+      },
+      "ui": {
+        "icon": "quality_check",
+        "color_token": "var(--node-transform)",
+        "default_width": 336,
+        "default_height": 176,
+        "help_text": "Run post-merge quality gates before checkpoint advancement.",
+        "node_card": {
+          "variant": "compute",
+          "icon_key": "quality_check",
+          "top_chip": {
+            "visible": false,
+            "text": null
+          },
+          "header": {
+            "title_source": "instance_label_or_display_name",
+            "show_overflow_menu": true
+          },
+          "rows": [
+            {
+              "row_id": "suite_preset",
+              "kind": "kv",
+              "label": "Suite",
+              "value": {
+                "source": "config",
+                "path": "suite_preset"
+              },
+              "formatter": "text",
+              "icon_key": "logic",
+              "truncate": false
+            },
+            {
+              "row_id": "warning_budget",
+              "kind": "kv",
+              "label": "Budget",
+              "value": {
+                "source": "config",
+                "path": "warning_budget"
+              },
+              "formatter": "text",
+              "icon_key": "metric",
+              "truncate": false
+            }
+          ],
+          "footer": {
+            "kind": "metric",
+            "label": "Gate",
+            "value": {
+              "source": "config",
+              "path": "block_checkpoint_write_on_failure"
+            },
+            "formatter": "text",
+            "icon_key": "status"
+          },
+          "handles": {
+            "input_layout": "multi_left",
+            "output_layout": "multi_right",
+            "show_labels": "never",
+            "align_to_rows": true
+          },
+          "size": {
+            "width": 336,
+            "density": "comfortable"
+          }
+        }
+      }
+    },
+    {
+      "type_id": "checkpoint_write",
+      "version": 1,
+      "display_name": "Checkpoint Write",
+      "category": "control",
+      "description": "Persists checkpoint advancement after successful merge and quality gates.",
+      "inputs": [
+        {
+          "port_id": "table",
+          "display_name": "Table",
+          "direction": "input",
+          "data_type": "table_ref",
+          "required": false,
+          "multiple": false,
+          "description": "Legacy single table whose metadata should advance checkpoint state."
+        },
+        {
+          "port_id": "items",
+          "display_name": "Tables",
+          "direction": "input",
+          "data_type": "table_ref_collection",
+          "required": false,
+          "multiple": false,
+          "description": "Collection of tables whose metadata should advance checkpoint state."
+        }
+      ],
+      "outputs": [
+        {
+          "port_id": "table",
+          "display_name": "Table",
+          "direction": "output",
+          "data_type": "table_ref",
+          "required": false,
+          "multiple": false,
+          "description": "Pass-through single table reference enriched with checkpoint write metadata."
+        },
+        {
+          "port_id": "items",
+          "display_name": "Tables",
+          "direction": "output",
+          "data_type": "table_ref_collection",
+          "required": false,
+          "multiple": false,
+          "description": "Pass-through table collection enriched with checkpoint write metadata."
+        }
+      ],
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "checkpoint_table": {
+            "type": "string",
+            "default": "stitchly.checkpoints"
+          },
+          "commit_source": {
+            "type": "string",
+            "enum": [
+              "metadata.current_commit"
+            ],
+            "default": "metadata.current_commit"
+          },
+          "write_timing": {
+            "type": "string",
+            "enum": [
+              "after_merge_success",
+              "after_quality_gate"
+            ],
+            "default": "after_quality_gate"
+          },
+          "only_persist_on_full_success": {
+            "type": "boolean",
+            "default": true
+          },
+          "advance_on_partial_success": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "runtime": {
+        "executor_kind": "rust_native",
+        "isolation_mode": "in_process"
+      },
+      "capabilities": {
+        "reads_external_state": true,
+        "writes_external_state": true,
+        "produces_durable_artifacts": true,
+        "supports_preview": true,
+        "requires_connection": false,
+        "may_emit_structured_logs": true
+      },
+      "ui": {
+        "icon": "checkpoint_write",
+        "color_token": "var(--node-transform)",
+        "default_width": 336,
+        "default_height": 176,
+        "help_text": "Persist checkpoint state after successful processing.",
+        "node_card": {
+          "variant": "compute",
+          "icon_key": "checkpoint_write",
+          "top_chip": {
+            "visible": false,
+            "text": null
+          },
+          "header": {
+            "title_source": "instance_label_or_display_name",
+            "show_overflow_menu": true
+          },
+          "rows": [
+            {
+              "row_id": "checkpoint_table",
+              "kind": "kv",
+              "label": "Checkpoint",
+              "value": {
+                "source": "config",
+                "path": "checkpoint_table"
+              },
+              "formatter": "text",
+              "icon_key": "metric",
+              "truncate": false
+            },
+            {
+              "row_id": "write_timing",
+              "kind": "kv",
+              "label": "Timing",
+              "value": {
+                "source": "config",
+                "path": "write_timing"
+              },
+              "formatter": "text",
+              "icon_key": "status",
+              "truncate": false
+            }
+          ],
+          "footer": {
+            "kind": "metric",
+            "label": "Commit source",
+            "value": {
+              "source": "config",
+              "path": "commit_source"
+            },
+            "formatter": "text",
+            "icon_key": "status"
+          },
+          "handles": {
+            "input_layout": "multi_left",
+            "output_layout": "multi_right",
+            "show_labels": "never",
+            "align_to_rows": true
+          },
+          "size": {
+            "width": 336,
             "density": "comfortable"
           }
         }

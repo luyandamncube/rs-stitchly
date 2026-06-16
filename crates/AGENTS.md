@@ -98,3 +98,23 @@ Do not increase build parallelism unless the user explicitly asks.
 ### Reporting validation
 
 If validation is skipped or unavailable, state that explicitly in the handoff. Include the exact command run and the first meaningful error when a command fails.
+
+## Cargo lock policy
+
+Never run more than one Cargo command at a time in this repository.
+
+If `/ps` or terminal output shows any active Cargo command, do not start another Cargo command. This includes:
+
+- `cargo check`
+- `cargo build`
+- `cargo test`
+- any command using `CARGO_TARGET_DIR=...`
+- any command that indirectly runs Cargo through a script
+
+Do not use temporary target directories to bypass Cargo locks.
+
+Forbidden pattern:
+
+```bash
+CARGO_TARGET_DIR=/tmp/... cargo check ...
+CARGO_TARGET_DIR=/tmp/... cargo test ...

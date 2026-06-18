@@ -955,6 +955,8 @@ struct TableMergeConfig {
     #[serde(default)]
     merge_key_columns: Option<Vec<String>>,
     #[serde(default)]
+    merge_keys_by_table: Option<BTreeMap<String, Vec<String>>>,
+    #[serde(default)]
     delete_handling: Option<TableMergeDeleteHandling>,
     #[serde(default)]
     schema_drift_behavior: Option<TableMergeSchemaDriftBehavior>,
@@ -980,6 +982,78 @@ enum TableMergeDeleteHandling {
 enum TableMergeSchemaDriftBehavior {
     FailAndRequireReview,
     AllowAdditiveChanges,
+}
+
+fn normalize_table_merge_key_columns(values: Option<Vec<String>>) -> Vec<String> {
+    values
+        .unwrap_or_default()
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+}
+
+fn normalize_merge_keys_by_table(
+    values: Option<BTreeMap<String, Vec<String>>>,
+) -> BTreeMap<String, Vec<String>> {
+    values
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|(table_name, columns)| {
+            let normalized_table_name = table_name.trim().to_string();
+            let normalized_columns = normalize_table_merge_key_columns(Some(columns));
+
+            if normalized_table_name.is_empty() || normalized_columns.is_empty() {
+                None
+            } else {
+                Some((normalized_table_name, normalized_columns))
+            }
+        })
+        .collect::<BTreeMap<_, _>>()
+}
+
+fn merge_keys_for_collection_table(
+    node_id: &str,
+    table_payload: &TableReferencePayload,
+    write_policy: TableMergeWritePolicy,
+    merge_keys_by_table: &BTreeMap<String, Vec<String>>,
+) -> Result<Vec<String>, AdapterError> {
+    if !matches!(write_policy, TableMergeWritePolicy::Upsert) {
+        return Ok(Vec::new());
+    }
+
+    if let Some(keys) = merge_keys_by_table.get(table_payload.table_name.trim()) {
+        return Ok(keys.clone());
+    }
+
+    let output_alias = table_payload.output_alias.trim();
+    if !output_alias.is_empty() && output_alias != table_payload.table_name.trim() {
+        if let Some(keys) = merge_keys_by_table.get(output_alias) {
+            return Ok(keys.clone());
+        }
+    }
+
+    if merge_keys_by_table.is_empty() {
+        return Err(AdapterError::InvalidConfig {
+            node_id: node_id.to_string(),
+            message: "table_merge received an `items` collection in upsert mode, but `merge_keys_by_table` is empty. Provide per-table merge keys like `{ \"orders_fact\": [\"order_id\"] }`."
+                .to_string(),
+        });
+    }
+
+    let configured_tables = merge_keys_by_table
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("`, `");
+
+    Err(AdapterError::InvalidConfig {
+        node_id: node_id.to_string(),
+        message: format!(
+            "table_merge received table `{}` in `items`, but `merge_keys_by_table` has no entry for it. Configured table keys: `{}`.",
+            table_payload.table_name, configured_tables
+        ),
+    })
 }
 
 #[derive(Clone, Copy, Deserialize)]
@@ -4805,6 +4879,16 @@ fn execute_table_merge_single_table(
         });
     }
 
+    if matches!(write_policy, TableMergeWritePolicy::Upsert) && merge_key_columns.is_empty() {
+        return Err(AdapterError::InvalidConfig {
+            node_id: node_id.to_string(),
+            message: format!(
+                "upsert table_merge for `{}.{}` requires at least one merge key column.",
+                table_payload.schema_name, table_payload.table_name
+            ),
+        });
+    }
+
     let merged_table_count = table_payload
         .schema_definitions
         .as_ref()
@@ -4951,13 +5035,8 @@ fn execute_table_merge(
     let schema_drift_behavior = config
         .schema_drift_behavior
         .unwrap_or(TableMergeSchemaDriftBehavior::FailAndRequireReview);
-    let merge_key_columns = config
-        .merge_key_columns
-        .unwrap_or_default()
-        .into_iter()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>();
+    let merge_key_columns = normalize_table_merge_key_columns(config.merge_key_columns);
+    let merge_keys_by_table = normalize_merge_keys_by_table(config.merge_keys_by_table);
 
     let connection = open_runtime_workflow_duckdb(context, &node.node_id)?;
 
@@ -5041,12 +5120,18 @@ fn execute_table_merge(
     let mut logs = Vec::new();
     let mut total_merged_table_count = 0usize;
     for table_payload in collection_payload.table_refs {
+        let table_merge_key_columns = merge_keys_for_collection_table(
+            &node.node_id,
+            &table_payload,
+            write_policy,
+            &merge_keys_by_table,
+        )?;
         let (output_payload, merged_table_count, log_line) = execute_table_merge_single_table(
             &node.node_id,
             table_payload,
             target_schema,
             write_policy,
-            &merge_key_columns,
+            &table_merge_key_columns,
             delete_handling,
             schema_drift_behavior,
             connection.as_ref(),
@@ -5066,6 +5151,10 @@ fn execute_table_merge(
         metadata_object.insert(
             "merged_table_count".to_string(),
             json!(total_merged_table_count),
+        );
+        metadata_object.insert(
+            "merge_keys_by_table".to_string(),
+            json!(merge_keys_by_table),
         );
     }
 
@@ -10456,6 +10545,200 @@ mod tests {
         }));
 
         let _ = fs::remove_dir_all(&workflow_root);
+    }
+
+    #[test]
+    fn table_merge_collection_uses_merge_keys_by_table_for_upserts() {
+        let registry = builtin_node_definitions();
+        let definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "table_merge")
+            .expect("table_merge definition");
+        let workflow_root = unique_test_workflow_root("table_merge_collection_keys_by_table");
+        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        fs::create_dir_all(duckdb_path.parent().expect("duckdb parent should exist"))
+            .expect("duckdb parent directory should be created");
+        let connection = DuckDbConnection::open(&duckdb_path).expect("duckdb should open");
+        connection
+            .execute_batch(
+                "create schema staging_delta;
+                 create schema tables;
+                 create table staging_delta.daily_prices (
+                   symbol varchar,
+                   price_date date,
+                   close double
+                 );
+                 create table staging_delta.us_treasury (
+                   curve_date date,
+                   tenor varchar,
+                   yield_pct double
+                 );
+                 insert into staging_delta.daily_prices values
+                   ('MSFT', '2026-06-11', 425.10);
+                 insert into staging_delta.us_treasury values
+                   ('2026-06-11', '2Y', 4.75);
+                 create table tables.daily_prices (
+                   symbol varchar,
+                   price_date date,
+                   close double
+                 );
+                 create table tables.us_treasury (
+                   curve_date date,
+                   tenor varchar,
+                   yield_pct double
+                 );
+                 insert into tables.daily_prices values
+                   ('MSFT', '2026-06-11', 420.00);
+                 insert into tables.us_treasury values
+                   ('2026-06-11', '2Y', 4.50);",
+            )
+            .expect("source and target tables should be created");
+        drop(connection);
+
+        let node = WorkflowNode {
+            node_id: "table_merge".to_string(),
+            type_id: "table_merge".to_string(),
+            definition_version: 1,
+            label: None,
+            config: json!({
+                "target_schema": "tables",
+                "write_policy": "upsert",
+                "merge_keys_by_table": {
+                    "daily_prices": ["symbol", "price_date"],
+                    "us_treasury": ["curve_date", "tenor"]
+                },
+                "delete_handling": "apply_delete_markers",
+                "schema_drift_behavior": "fail_and_require_review"
+            }),
+            position: NodePosition::default(),
+        };
+        let mut inputs = PortValues::new();
+        inputs.insert(
+            "items".to_string(),
+            TypedValue {
+                data_type: DataType::TableRefCollection,
+                value: json!({
+                    "kind": "table_reference_collection",
+                    "table_refs": [
+                        {
+                            "kind": "table_reference",
+                            "catalog": "workflow.duckdb",
+                            "schema_name": "staging_delta",
+                            "table_name": "daily_prices",
+                            "output_alias": "daily_prices"
+                        },
+                        {
+                            "kind": "table_reference",
+                            "catalog": "workflow.duckdb",
+                            "schema_name": "staging_delta",
+                            "table_name": "us_treasury",
+                            "output_alias": "us_treasury"
+                        }
+                    ]
+                }),
+            },
+        );
+        let context = AdapterExecutionContext {
+            workflow_duckdb_path: Some(duckdb_path.clone()),
+            ..AdapterExecutionContext::default()
+        };
+
+        let result = RuntimeAdapters::default()
+            .execute_with_context(definition, &node, &inputs, &context)
+            .expect("table_merge collection should succeed");
+        let payload = result
+            .outputs
+            .get("items")
+            .expect("items output should be present");
+        assert_eq!(
+            payload.value["metadata"]["merge_keys_by_table"]["daily_prices"],
+            json!(["symbol", "price_date"])
+        );
+        assert_eq!(
+            payload.value["table_refs"][0]["metadata"]["merge_key_columns"],
+            json!(["symbol", "price_date"])
+        );
+        assert_eq!(
+            payload.value["table_refs"][1]["metadata"]["merge_key_columns"],
+            json!(["curve_date", "tenor"])
+        );
+
+        let connection = DuckDbConnection::open(&duckdb_path).expect("duckdb should reopen");
+        let close: f64 = connection
+            .query_row(
+                "select close from tables.daily_prices where symbol = 'MSFT' and price_date = '2026-06-11'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("daily price should query");
+        let yield_pct: f64 = connection
+            .query_row(
+                "select yield_pct from tables.us_treasury where curve_date = '2026-06-11' and tenor = '2Y'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("treasury rate should query");
+        assert_eq!(close, 425.10);
+        assert_eq!(yield_pct, 4.75);
+
+        let _ = fs::remove_dir_all(&workflow_root);
+    }
+
+    #[test]
+    fn table_merge_collection_requires_merge_keys_by_table_for_upserts() {
+        let registry = builtin_node_definitions();
+        let definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "table_merge")
+            .expect("table_merge definition");
+        let node = WorkflowNode {
+            node_id: "table_merge".to_string(),
+            type_id: "table_merge".to_string(),
+            definition_version: 1,
+            label: None,
+            config: json!({
+                "target_schema": "tables",
+                "write_policy": "upsert",
+                "merge_keys_by_table": {
+                    "orders_fact": ["order_id"]
+                },
+                "delete_handling": "apply_delete_markers",
+                "schema_drift_behavior": "fail_and_require_review"
+            }),
+            position: NodePosition::default(),
+        };
+        let mut inputs = PortValues::new();
+        inputs.insert(
+            "items".to_string(),
+            TypedValue {
+                data_type: DataType::TableRefCollection,
+                value: json!({
+                    "kind": "table_reference_collection",
+                    "table_refs": [
+                        {
+                            "kind": "table_reference",
+                            "catalog": "workflow.duckdb",
+                            "schema_name": "staging_delta",
+                            "table_name": "customers_dim",
+                            "output_alias": "customers_dim"
+                        }
+                    ]
+                }),
+            },
+        );
+
+        let error = RuntimeAdapters::default()
+            .execute(definition, &node, &inputs)
+            .expect_err("table_merge should require per-table keys");
+        match error {
+            AdapterError::InvalidConfig { message, .. } => {
+                assert_eq!(
+                    message,
+                    "table_merge received table `customers_dim` in `items`, but `merge_keys_by_table` has no entry for it. Configured table keys: `orders_fact`."
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[test]

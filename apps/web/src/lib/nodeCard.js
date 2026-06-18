@@ -626,7 +626,11 @@ export function getNodeCardDefinition(definition) {
     return null
   }
 
-  return definition.ui?.node_card ?? BUILTIN_NODE_CARD_FALLBACKS[definition.type_id] ?? buildGenericNodeCard(definition)
+  const nodeCard = definition.ui?.node_card ?? BUILTIN_NODE_CARD_FALLBACKS[definition.type_id] ?? buildGenericNodeCard(definition)
+
+  return definition.type_id === 'table_merge'
+    ? withTableMergeKeyNodeCardRow(nodeCard)
+    : nodeCard
 }
 
 export function getNodeCardWidth(definition) {
@@ -691,6 +695,38 @@ function buildGenericNodeCard(definition) {
       width: definition?.ui?.default_width ?? 320,
       density: 'comfortable'
     }
+  }
+}
+
+function withTableMergeKeyNodeCardRow(nodeCard) {
+  if (!nodeCard) {
+    return nodeCard
+  }
+
+  const mergeKeyRow = {
+    row_id: 'merge_key_summary',
+    kind: 'kv',
+    label: 'Key',
+    value: { source: 'derived', path: 'table_merge_key_summary' },
+    formatter: 'text',
+    icon_key: 'metric',
+    truncate: false
+  }
+  const rows = Array.isArray(nodeCard.rows) ? [...nodeCard.rows] : []
+  const existingIndex = rows.findIndex((row) =>
+    ['merge_key_summary', 'merge_key', 'merge_keys', 'merge_keys_by_table'].includes(row?.row_id)
+  )
+
+  if (existingIndex >= 0) {
+    rows[existingIndex] = mergeKeyRow
+  } else {
+    const policyIndex = rows.findIndex((row) => row?.row_id === 'write_policy')
+    rows.splice(policyIndex >= 0 ? policyIndex + 1 : rows.length, 0, mergeKeyRow)
+  }
+
+  return {
+    ...nodeCard,
+    rows
   }
 }
 
@@ -806,6 +842,11 @@ function buildNodeCardContext({ workflow, node, nodeDefinitions }) {
     workflow,
     node?.node_id
   )
+  const tableMergeCard = buildTableMergeCardDerivedValues(
+    workflow,
+    node?.node_id,
+    node?.config ?? {}
+  )
   const mapCard = buildMapCardDerivedValues(node?.config ?? {})
 
   return {
@@ -837,10 +878,75 @@ function buildNodeCardContext({ workflow, node, nodeDefinitions }) {
       dolt_diff_range: doltDiffExportCard.range,
       load_bundle_mode: loadToDuckDbCard.bundleMode,
       load_merge_context: loadToDuckDbCard.mergeContext,
+      table_merge_input_mode: tableMergeCard.inputMode,
+      table_merge_key_summary: tableMergeCard.keySummary,
       map_item_count: mapCard.itemCount,
       map_scope: mapCard.scope
     }
   }
+}
+
+function buildTableMergeCardDerivedValues(workflow, nodeId, config = {}) {
+  const mergeKeysByTable = normalizeNodeCardMergeKeysByTable(config.merge_keys_by_table)
+  const mergeKeyColumns = normalizeNodeCardMergeKeyColumns(config.merge_key_columns)
+  const inputMode = resolveTableMergeCardInputMode(workflow, nodeId, mergeKeysByTable)
+
+  if (inputMode === 'collection') {
+    const keyedTableCount = Object.values(mergeKeysByTable).filter((keys) => keys.length > 0).length
+
+    return {
+      inputMode,
+      keySummary:
+        keyedTableCount > 0
+          ? `${keyedTableCount} table mapping${keyedTableCount === 1 ? '' : 's'}`
+          : 'missing'
+    }
+  }
+
+  return {
+    inputMode,
+    keySummary: mergeKeyColumns.length > 0 ? mergeKeyColumns.join(', ') : 'missing'
+  }
+}
+
+function resolveTableMergeCardInputMode(workflow, nodeId, mergeKeysByTable = {}) {
+  if (!workflow || !nodeId) {
+    return Object.keys(mergeKeysByTable).length > 0 ? 'collection' : 'single'
+  }
+
+  const incomingEdge = workflow.edges?.find(
+    (edge) => edge.target_node_id === nodeId && ['items', 'table'].includes(edge.target_port_id)
+  )
+
+  if (incomingEdge?.target_port_id === 'items') {
+    return 'collection'
+  }
+
+  return Object.keys(mergeKeysByTable).length > 0 ? 'collection' : 'single'
+}
+
+function normalizeNodeCardMergeKeysByTable(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {}
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([tableName, keys]) => [tableName.trim(), normalizeNodeCardMergeKeyColumns(keys)])
+      .filter(([tableName, keys]) => tableName && keys.length > 0)
+  )
+}
+
+function normalizeNodeCardMergeKeyColumns(value) {
+  if (Array.isArray(value)) {
+    return [...new Set(value.map((entry) => (typeof entry === 'string' ? entry.trim() : '')).filter(Boolean))]
+  }
+
+  if (typeof value === 'string') {
+    return [...new Set(value.split(',').map((entry) => entry.trim()).filter(Boolean))]
+  }
+
+  return []
 }
 
 function buildMapCardDerivedValues(config = {}) {

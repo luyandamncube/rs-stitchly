@@ -2103,7 +2103,17 @@ pub fn builtin_node_definitions() -> Vec<NodeDefinition> {
                     "merge_key_columns": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "default": ["symbol", "report_date"]
+                        "default": ["symbol", "report_date"],
+                        "description": "Legacy single-table upsert keys used when the `table` input is connected."
+                    },
+                    "merge_keys_by_table": {
+                        "type": "object",
+                        "default": {},
+                        "description": "Per-table upsert keys used when the `items` collection input is connected.",
+                        "additionalProperties": {
+                            "type": "array",
+                            "items": { "type": "string" }
+                        }
                     },
                     "delete_handling": {
                         "type": "string",

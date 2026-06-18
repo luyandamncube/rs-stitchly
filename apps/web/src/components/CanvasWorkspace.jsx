@@ -4816,6 +4816,69 @@ function CanvasTableMergeManagementPanel({
   const inputCount = definition?.inputs?.length ?? 1;
   const outputCount = definition?.outputs?.length ?? 1;
   const targetSchemaOptions = buildTableMergeSchemaOptions(config.target_schema);
+  const [mergeKeysDraft, setMergeKeysDraft] = useState(() =>
+    formatTableMergeKeysAuthoringConfig(config, runtimeSummary.sourceTables)
+  );
+  const [mergeKeysDraftFeedback, setMergeKeysDraftFeedback] = useState(null);
+  const isCollectionMode = runtimeSummary.inputMode === 'collection';
+
+  useEffect(() => {
+    setMergeKeysDraft(formatTableMergeKeysAuthoringConfig(config, runtimeSummary.sourceTables));
+  }, [node, runtimeSummary.sourceTablesLabel]);
+
+  useEffect(() => {
+    setMergeKeysDraftFeedback(null);
+  }, [node?.node_id]);
+
+  function handleMergeKeysDraftChange(nextDraft) {
+    setMergeKeysDraft(nextDraft);
+    setMergeKeysDraftFeedback(buildTableMergeKeysDraftFeedback(nextDraft, node?.config ?? {}));
+  }
+
+  function handleFormatMergeKeys() {
+    try {
+      const parsedConfig = parseTableMergeKeysAuthoringConfigText(
+        mergeKeysDraft,
+        node?.config ?? {}
+      );
+      setMergeKeysDraft(
+        formatTableMergeKeysAuthoringConfig(parsedConfig, runtimeSummary.sourceTables)
+      );
+      setMergeKeysDraftFeedback({
+        tone: 'success',
+        message: `Formatted merge key JSON for ${buildTableMergeKeysFeedbackTarget(parsedConfig)}.`
+      });
+    } catch (error) {
+      setMergeKeysDraftFeedback({
+        tone: 'error',
+        message: error.message
+      });
+    }
+  }
+
+  function handleApplyMergeKeys() {
+    try {
+      const parsedConfig = parseTableMergeKeysAuthoringConfigText(
+        mergeKeysDraft,
+        node?.config ?? {}
+      );
+      onNodeConfigChange?.((currentConfig) =>
+        applyTableMergeConfigUpdate(currentConfig, parsedConfig)
+      );
+      setMergeKeysDraft(
+        formatTableMergeKeysAuthoringConfig(parsedConfig, runtimeSummary.sourceTables)
+      );
+      setMergeKeysDraftFeedback({
+        tone: 'success',
+        message: `Applied merge key JSON to ${buildTableMergeKeysFeedbackTarget(parsedConfig)}.`
+      });
+    } catch (error) {
+      setMergeKeysDraftFeedback({
+        tone: 'error',
+        message: error.message
+      });
+    }
+  }
 
   return (
     <aside className="canvas-node-panel" aria-label="Node management panel">
@@ -4834,7 +4897,7 @@ function CanvasTableMergeManagementPanel({
 
         <div className="canvas-node-panel__header-meta">
           <span className="canvas-node-panel__meta-dot" aria-hidden="true" />
-          <span>{`1 input · ${outputCount} output${outputCount === 1 ? '' : 's'}`}</span>
+          <span>{`${inputCount} input${inputCount === 1 ? '' : 's'} · ${outputCount} output${outputCount === 1 ? '' : 's'}`}</span>
         </div>
       </header>
 
@@ -4845,6 +4908,10 @@ function CanvasTableMergeManagementPanel({
           </div>
           <div className="canvas-node-panel__code" aria-label="Current merge state">
             <div className="canvas-node-panel__code-line">
+              <span>input_mode</span>
+              <strong>{runtimeSummary.inputModeLabel}</strong>
+            </div>
+            <div className="canvas-node-panel__code-line">
               <span>source_tables</span>
               <strong>{runtimeSummary.sourceTablesLabel}</strong>
             </div>
@@ -4853,8 +4920,8 @@ function CanvasTableMergeManagementPanel({
               <strong>{runtimeSummary.writePolicyLabel}</strong>
             </div>
             <div className="canvas-node-panel__code-line">
-              <span>delete_handling</span>
-              <strong>{runtimeSummary.deleteHandlingLabel}</strong>
+              <span>{isCollectionMode ? 'keys' : 'key'}</span>
+              <strong>{runtimeSummary.mergeKeyLabel}</strong>
             </div>
             <div className="canvas-node-panel__code-line">
               <span>target_schema</span>
@@ -4918,7 +4985,7 @@ function CanvasTableMergeManagementPanel({
 
         <div className="canvas-node-panel__field">
           <div className="canvas-node-panel__field-head">
-            <label htmlFor="canvas-table-merge-key-columns">Merge key</label>
+            <label htmlFor="canvas-table-merge-key-columns">{isCollectionMode ? 'Fallback merge key' : 'Single-table merge key'}</label>
           </div>
           <input
             id="canvas-table-merge-key-columns"
@@ -4930,10 +4997,53 @@ function CanvasTableMergeManagementPanel({
                 })
               )
             }
-            placeholder="symbol, report_date"
+            placeholder={isCollectionMode ? 'optional fallback, e.g. symbol, report_date' : 'symbol, report_date'}
             type="text"
             value={config.merge_key_columns_text}
           />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-table-merge-keys-json">Merge keys by table JSON</label>
+            <span className="canvas-node-panel__hint" aria-hidden="true">
+              i
+            </span>
+          </div>
+          <textarea
+            id="canvas-table-merge-keys-json"
+            className="canvas-node-panel__textarea canvas-node-panel__textarea--code"
+            onChange={(event) => handleMergeKeysDraftChange(event.target.value)}
+            rows={10}
+            spellCheck={false}
+            value={mergeKeysDraft}
+          />
+        </div>
+
+        {mergeKeysDraftFeedback ? (
+          <section
+            aria-live="polite"
+            className={`card-callout${mergeKeysDraftFeedback.tone === 'error' ? ' card-callout--error' : ''}`}
+          >
+            <p>{mergeKeysDraftFeedback.message}</p>
+          </section>
+        ) : null}
+
+        <div className="drawer-action-grid canvas-node-panel__button-grid">
+          <button
+            className="canvas-node-panel__button canvas-node-panel__button--secondary"
+            onClick={handleFormatMergeKeys}
+            type="button"
+          >
+            Format JSON
+          </button>
+          <button
+            className="canvas-node-panel__button canvas-node-panel__button--primary"
+            onClick={handleApplyMergeKeys}
+            type="button"
+          >
+            Apply Merge Keys
+          </button>
         </div>
 
         <div className="canvas-node-panel__field">
@@ -5001,7 +5111,7 @@ function CanvasTableMergeManagementPanel({
         </div>
 
         <div className="canvas-node-panel__footer-row">
-          <span>Merge key</span>
+          <span>{isCollectionMode ? 'Table keys' : 'Merge key'}</span>
           <strong>{runtimeSummary.mergeKeyLabel}</strong>
         </div>
 
@@ -7401,7 +7511,7 @@ function normalizeQualityCheckPanelConfig(node) {
   };
 }
 
-function normalizeTableMergeKeyColumns(value) {
+function normalizeTableMergeKeyList(value) {
   if (Array.isArray(value)) {
     return [...new Set(value.map((entry) => (typeof entry === 'string' ? entry.trim() : '')).filter(Boolean))];
   }
@@ -7410,12 +7520,34 @@ function normalizeTableMergeKeyColumns(value) {
     return [...new Set(value.split(',').map((entry) => entry.trim()).filter(Boolean))];
   }
 
-  return [...DEFAULT_TABLE_MERGE_KEY_COLUMNS];
+  return [];
+}
+
+function normalizeTableMergeKeyColumns(value) {
+  const keys = normalizeTableMergeKeyList(value);
+  return keys.length > 0 ? keys : [...DEFAULT_TABLE_MERGE_KEY_COLUMNS];
+}
+
+function normalizeTableMergeKeysByTable(value) {
+  const source = value && typeof value === 'object' && !Array.isArray(value)
+    ? value
+    : {};
+
+  return Object.fromEntries(
+    Object.entries(source)
+      .map(([tableName, keys]) => {
+        const normalizedTableName = typeof tableName === 'string' ? tableName.trim() : '';
+        const normalizedKeys = normalizeTableMergeKeyList(keys);
+        return [normalizedTableName, normalizedKeys];
+      })
+      .filter(([tableName, keys]) => tableName && keys.length > 0)
+  );
 }
 
 function normalizeTableMergePanelConfig(node) {
   const config = node?.config ?? {};
   const mergeKeyColumns = normalizeTableMergeKeyColumns(config.merge_key_columns);
+  const mergeKeysByTable = normalizeTableMergeKeysByTable(config.merge_keys_by_table);
 
   return {
     delete_handling:
@@ -7425,6 +7557,7 @@ function normalizeTableMergePanelConfig(node) {
     execution: normalizeNodeExecutionTimingConfig(config),
     merge_key_columns: mergeKeyColumns,
     merge_key_columns_text: mergeKeyColumns.join(', '),
+    merge_keys_by_table: mergeKeysByTable,
     schema_drift_behavior:
       config.schema_drift_behavior === 'allow_additive_changes'
         ? config.schema_drift_behavior
@@ -7978,6 +8111,7 @@ function applyTableMergeConfigUpdate(currentConfig = {}, patch = {}) {
     merge_key_columns: normalizeTableMergeKeyColumns(
       next.merge_key_columns_text ?? next.merge_key_columns
     ),
+    merge_keys_by_table: normalizeTableMergeKeysByTable(next.merge_keys_by_table),
     schema_drift_behavior:
       next.schema_drift_behavior === 'allow_additive_changes'
         ? next.schema_drift_behavior
@@ -8693,19 +8827,33 @@ function buildSqlTransformRuntimeSummary(config, workflow, nodeId) {
 
 function buildTableMergeRuntimeSummary(config, workflow, nodeId) {
   const sourceContext = resolveConnectedTableMergePanelContext(workflow, nodeId);
+  const inputMode = sourceContext?.inputMode ?? 'single';
   const sourceTables = sourceContext?.sourceTables ?? [];
+  const mergeKeysByTable = normalizeTableMergeKeysByTable(config?.merge_keys_by_table);
+  const keyedTableCount = Object.keys(mergeKeysByTable).length;
+  const missingKeyTables = sourceTables.filter(
+    (tableName) => !mergeKeysByTable[tableName]?.length
+  );
 
   return {
     deleteHandlingLabel: describeTableMergeDeleteHandling(config?.delete_handling),
+    inputMode,
+    inputModeLabel: inputMode === 'collection' ? 'Table collection' : 'Single table',
     mergeKeyLabel:
-      sourceTables.length > 0 && config?.merge_key_columns?.length > 0
-        ? config.merge_key_columns.join(', ')
+      inputMode === 'collection'
+        ? keyedTableCount > 0
+          ? missingKeyTables.length > 0 && sourceTables.length > 0
+            ? `${keyedTableCount} table mapping${keyedTableCount === 1 ? '' : 's'} · ${missingKeyTables.length} missing`
+            : `${keyedTableCount} table mapping${keyedTableCount === 1 ? '' : 's'}`
+          : 'No per-table keys'
         : config?.merge_key_columns?.length > 0
           ? config.merge_key_columns.join(', ')
           : 'No merge key',
+    missingKeyTables,
     schemaDriftLabel: describeTableMergeSchemaDriftBehavior(
       config?.schema_drift_behavior
     ),
+    sourceTables,
     sourceTablesLabel:
       sourceTables.length === 0
         ? 'awaiting staged tables'
@@ -9306,13 +9454,18 @@ function resolveConnectedTableMergePanelContext(workflow, nodeId) {
     return null;
   }
 
-  const incomingEdge = workflow.edges?.find(
-    (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'table'
-  );
+  const incomingEdge =
+    workflow.edges?.find(
+      (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'items'
+    ) ??
+    workflow.edges?.find(
+      (edge) => edge.target_node_id === nodeId && edge.target_port_id === 'table'
+    );
   if (!incomingEdge) {
     return null;
   }
 
+  const inputMode = incomingEdge.target_port_id === 'items' ? 'collection' : 'single';
   const sourceNode = workflow.nodes?.find((node) => node.node_id === incomingEdge.source_node_id);
   if (!sourceNode) {
     return null;
@@ -9322,8 +9475,20 @@ function resolveConnectedTableMergePanelContext(workflow, nodeId) {
     const sourceConfig = normalizeLoadToDuckDbPanelConfig(sourceNode);
 
     return {
+      inputMode,
       sourceSchema: sourceConfig.target_schema,
       sourceTables: resolveConnectedLoadToDuckDbPanelTableNames(workflow, sourceNode.node_id),
+      sourceTypeId: sourceNode.type_id
+    };
+  }
+
+  if (sourceNode.type_id === 'map') {
+    const mapContext = resolveConnectedMapPanelContext(workflow, sourceNode.node_id);
+
+    return {
+      inputMode: 'collection',
+      sourceSchema: mapContext.sourceSchema,
+      sourceTables: mapContext.sourceTables,
       sourceTypeId: sourceNode.type_id
     };
   }
@@ -9332,6 +9497,7 @@ function resolveConnectedTableMergePanelContext(workflow, nodeId) {
     const sourceConfig = normalizeTableInputPanelConfig(sourceNode);
 
     return {
+      inputMode,
       sourceSchema: sourceConfig.schema_name,
       sourceTables: [sourceConfig.table_name],
       sourceTypeId: sourceNode.type_id
@@ -9340,10 +9506,21 @@ function resolveConnectedTableMergePanelContext(workflow, nodeId) {
 
   if (sourceNode.type_id === 'sql_transform') {
     const sourceConfig = normalizeSqlTransformPanelConfig(sourceNode);
+    const upstreamContext = resolveConnectedSqlTransformPanelContext(workflow, sourceNode.node_id);
+    const upstreamTables = upstreamContext?.sourceTables?.length
+      ? upstreamContext.sourceTables
+      : [upstreamContext?.sourceTable ?? 'table_name'];
+    const outputTables =
+      incomingEdge.source_port_id === 'items'
+        ? upstreamTables.map((tableName) =>
+          renderSqlTransformOutputTableName(sourceConfig, tableName, 'collection')
+        )
+        : [renderSqlTransformOutputTableName(sourceConfig, upstreamTables[0], 'single')];
 
     return {
+      inputMode,
       sourceSchema: sourceConfig.target_schema,
-      sourceTables: [renderSqlTransformOutputTableName(sourceConfig)],
+      sourceTables: outputTables,
       sourceTypeId: sourceNode.type_id
     };
   }
@@ -10337,6 +10514,108 @@ function buildTableMergeSchemaOptions(activeSchema) {
   }
 
   return options;
+}
+
+
+function formatTableMergeKeysAuthoringConfig(config, sourceTables = []) {
+  const normalizedConfig = normalizeTableMergePanelConfig({ config });
+  const configuredKeys = normalizeTableMergeKeysByTable(normalizedConfig.merge_keys_by_table);
+  const inferredKeys = Object.fromEntries(
+    sourceTables
+      .filter((tableName) => typeof tableName === 'string' && tableName.trim())
+      .map((tableName) => [tableName.trim(), configuredKeys[tableName.trim()] ?? []])
+  );
+  const mergeKeysByTable = Object.keys(configuredKeys).length > 0 ? configuredKeys : inferredKeys;
+
+  return JSON.stringify({ merge_keys_by_table: mergeKeysByTable }, null, 2);
+}
+
+function parseTableMergeKeysAuthoringConfigText(draftText, currentConfig = {}) {
+  let parsed;
+  try {
+    parsed = JSON.parse(draftText);
+  } catch (_error) {
+    throw new Error('Merge keys JSON could not be parsed. Check commas, quotes, and braces.');
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Merge keys JSON must be an object. Use { "merge_keys_by_table": { ... } }.');
+  }
+
+  const rawMergeKeys =
+    parsed.merge_keys_by_table && typeof parsed.merge_keys_by_table === 'object' && !Array.isArray(parsed.merge_keys_by_table)
+      ? parsed.merge_keys_by_table
+      : parsed;
+  const mergeKeysByTable = {};
+
+  for (const [tableName, rawKeys] of Object.entries(rawMergeKeys)) {
+    if (tableName === 'merge_keys_by_table') {
+      continue;
+    }
+
+    const normalizedTableName = tableName.trim();
+    if (!normalizedTableName) {
+      throw new Error('Each merge key entry must have a non-empty table name.');
+    }
+
+    if (!Array.isArray(rawKeys) && typeof rawKeys !== 'string') {
+      throw new Error(`Table ${normalizedTableName} merge keys must be an array of column names.`);
+    }
+
+    const keys = normalizeTableMergeKeyList(rawKeys);
+    if (keys.length === 0) {
+      throw new Error(`Table ${normalizedTableName} needs at least one merge key column.`);
+    }
+
+    mergeKeysByTable[normalizedTableName] = keys;
+  }
+
+  return {
+    ...normalizeTableMergePanelConfig({ config: currentConfig }),
+    ...currentConfig,
+    merge_keys_by_table: mergeKeysByTable
+  };
+}
+
+function buildTableMergeKeysDraftFeedback(draftText, currentConfig = {}) {
+  try {
+    const parsedConfig = parseTableMergeKeysAuthoringConfigText(draftText, currentConfig);
+    return {
+      tone: 'success',
+      message: buildTableMergeKeysLintSummary(parsedConfig)
+    };
+  } catch (error) {
+    return {
+      tone: 'error',
+      message:
+        error instanceof Error ? error.message : 'Merge keys JSON could not be parsed.'
+    };
+  }
+}
+
+function buildTableMergeKeysLintSummary(config) {
+  const mergeKeysByTable = normalizeTableMergeKeysByTable(config?.merge_keys_by_table);
+  const tableNames = Object.keys(mergeKeysByTable);
+  const totalKeyColumns = Object.values(mergeKeysByTable).reduce(
+    (count, keys) => count + keys.length,
+    0
+  );
+
+  if (tableNames.length === 0) {
+    return 'Merge keys JSON is valid, but no per-table keys are configured yet.';
+  }
+
+  return `Merge keys JSON looks valid for ${tableNames.length} table${tableNames.length === 1 ? '' : 's'} with ${totalKeyColumns} key column${totalKeyColumns === 1 ? '' : 's'}.`;
+}
+
+function buildTableMergeKeysFeedbackTarget(config) {
+  const tableCount = Object.keys(normalizeTableMergeKeysByTable(config?.merge_keys_by_table)).length;
+
+  if (tableCount === 0) {
+    return '0 tables';
+  }
+
+  return `${tableCount} table${tableCount === 1 ? '' : 's'}`;
 }
 
 function buildTableOutputResultShape(config, workflow = null, nodeId = null) {

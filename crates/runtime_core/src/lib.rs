@@ -276,6 +276,36 @@ impl RuntimeService {
                 }
             }
 
+            if node.type_id == "table_merge" {
+                let items_key = (node.node_id.clone(), "items".to_string());
+                let items_input_count = incoming_counts.get(&items_key).copied().unwrap_or_default();
+                let write_policy = node
+                    .config
+                    .get("write_policy")
+                    .and_then(Value::as_str)
+                    .unwrap_or("upsert");
+                let has_merge_keys_by_table = node
+                    .config
+                    .get("merge_keys_by_table")
+                    .and_then(Value::as_object)
+                    .map(|entries| !entries.is_empty())
+                    .unwrap_or(false);
+
+                if items_input_count > 0 && write_policy == "upsert" && !has_merge_keys_by_table {
+                    errors.push(issue(
+                        "missing_table_merge_keys_by_table",
+                        format!(
+                            "Node `{}` receives a table collection on `items` with `write_policy=upsert`; configure `merge_keys_by_table` with keys for each table.",
+                            node.node_id
+                        ),
+                        Some(format!(
+                            "workflow.nodes.{}.config.merge_keys_by_table",
+                            node.node_id
+                        )),
+                    ));
+                }
+            }
+
             if node.type_id == "send_email" {
                 let body_mode = node.config.get("body_mode").and_then(Value::as_str);
                 let body_key = (node.node_id.clone(), "body".to_string());
@@ -2761,6 +2791,50 @@ fn validate_node_config(node: &WorkflowNode) -> Option<ValidationIssue> {
                             ),
                             Some(format!(
                                 "workflow.nodes.{}.config.merge_key_columns",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            if let Some(merge_keys_by_table) = node.config.get("merge_keys_by_table") {
+                match merge_keys_by_table {
+                    Value::Object(entries)
+                        if entries.iter().all(|(table_name, columns)| {
+                            !table_name.trim().is_empty()
+                                && columns.as_array().map(|columns| {
+                                    !columns.is_empty()
+                                        && columns.iter().all(|column| {
+                                            column
+                                                .as_str()
+                                                .map(|value| !value.trim().is_empty())
+                                                .unwrap_or(false)
+                                        })
+                                }).unwrap_or(false)
+                        }) => {}
+                    Value::Object(_) => {
+                        return Some(issue(
+                            "invalid_table_merge_keys_by_table",
+                            format!(
+                                "Node `{}` expects `merge_keys_by_table` to map table names to non-empty arrays of non-empty key column strings.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.merge_keys_by_table",
+                                node.node_id
+                            )),
+                        ));
+                    }
+                    _ => {
+                        return Some(issue(
+                            "invalid_table_merge_keys_by_table",
+                            format!(
+                                "Node `{}` expects `merge_keys_by_table` to be an object like `{{ \"orders_fact\": [\"order_id\"] }}`.",
+                                node.node_id
+                            ),
+                            Some(format!(
+                                "workflow.nodes.{}.config.merge_keys_by_table",
                                 node.node_id
                             )),
                         ));

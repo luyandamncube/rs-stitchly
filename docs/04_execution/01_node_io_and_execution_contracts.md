@@ -249,6 +249,20 @@ Its current runtime contract is:
 - output `manifest` is a `dataset_ref` with `kind: dolt_dump_table_manifest`
 - manifest `tables` entries include `source_table`, bundle-relative `file_path`, and optional `row_count`
 
+### `load_to_duckdb` And `table_merge`
+
+`load_to_duckdb` may stage Dolt tables under physical names such as `rates__us_treasury__delta`.
+
+Its table reference metadata preserves the logical identity separately:
+
+- `logical_table_name` is the durable table identity when available
+- `source_table_name` is the upstream source table name
+- `physical_table_name` is the workflow-local staging table name
+- `source_repo` and `load_kind` describe the source repository and snapshot/delta load mode
+- legacy `source_table` remains present for older consumers
+
+For `table_merge.items`, the staging table is only the physical source. In collection upsert mode, `merge_keys_by_table` should normally be keyed by logical table name. Runtime lookup order is logical table name, source table name, physical table name, then legacy aliases.
+
 ## Node Implementation Definition Of Done
 
 When a node becomes real, implementation work should usually include:

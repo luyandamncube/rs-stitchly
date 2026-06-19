@@ -2759,7 +2759,6 @@ mod tests {
         assert!(!tables_output.multiple);
     }
 
-
     #[test]
     fn sql_transform_exposes_legacy_and_collection_ports() {
         let definitions = builtin_node_definitions();
@@ -2799,8 +2798,6 @@ mod tests {
         assert_eq!(items_output.data_type, DataType::TableRefCollection);
         assert!(!items_output.multiple);
     }
-
-
 
     #[test]
     fn table_merge_exposes_legacy_and_collection_ports() {

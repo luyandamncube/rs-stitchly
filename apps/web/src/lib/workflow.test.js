@@ -937,6 +937,23 @@ describe('createCanvasElements', () => {
     ).toBe(true)
   })
 
+  it('allows load to duckdb collection output to connect into table merge collection input', () => {
+    const workflow = buildTableMergeCollectionWorkflow()
+
+    expect(
+      canConnect(
+        {
+          source: 'load_to_duckdb',
+          sourceHandle: 'tables',
+          target: 'table_merge',
+          targetHandle: 'items'
+        },
+        workflow,
+        nodeDefinitionFixture.node_definitions
+      )
+    ).toBe(true)
+  })
+
   it('maps checkpoint read nodes onto their dedicated canvas node type', () => {
     const workflow = buildCheckpointReadWorkflow()
     const graph = createCanvasElements(

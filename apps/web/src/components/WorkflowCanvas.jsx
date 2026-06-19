@@ -3512,7 +3512,13 @@ function buildNodeBodyConnection(connectionState, workflow, nodeDefinitions) {
     (sourceDefinition.outputs.length === 1 ? sourceDefinition.outputs[0].port_id : null)
   const targetHandleId =
     connectionState?.toHandle?.id ??
-    (targetDefinition.inputs.length === 1 ? targetDefinition.inputs[0].port_id : null)
+    resolveSingleCompatibleTargetHandle(
+      sourceNodeId,
+      sourceHandleId,
+      targetNodeId,
+      workflow,
+      nodeDefinitions
+    )
 
   if (!sourceHandleId || !targetHandleId) {
     return null
@@ -3575,7 +3581,13 @@ function buildPointerDropConnection(event, connectStart, workflow, nodeDefinitio
     (definition) => definition.type_id === targetNode?.type_id
   )
   const targetHandleId =
-    targetDefinition?.inputs.length === 1 ? targetDefinition.inputs[0].port_id : null
+    resolveSingleCompatibleTargetHandle(
+      connectStart.nodeId,
+      connectStart.handleId,
+      targetNodeId,
+      workflow,
+      nodeDefinitions
+    )
 
   if (!connectStart.nodeId || !connectStart.handleId || !targetHandleId) {
     return null
@@ -3587,6 +3599,43 @@ function buildPointerDropConnection(event, connectStart, workflow, nodeDefinitio
     target: targetNodeId,
     targetHandle: targetHandleId
   }
+}
+
+function resolveSingleCompatibleTargetHandle(
+  sourceNodeId,
+  sourceHandleId,
+  targetNodeId,
+  workflow,
+  nodeDefinitions
+) {
+  if (!sourceNodeId || !sourceHandleId || !targetNodeId || !workflow) {
+    return null
+  }
+
+  const targetNode = workflow.nodes?.find((node) => node.node_id === targetNodeId)
+  const targetDefinition = nodeDefinitions.find(
+    (definition) => definition.type_id === targetNode?.type_id
+  )
+  const targetInputs = targetDefinition?.inputs ?? []
+
+  if (targetInputs.length === 1) {
+    return targetInputs[0].port_id
+  }
+
+  const compatibleInputs = targetInputs.filter((input) =>
+    canConnect(
+      {
+        source: sourceNodeId,
+        sourceHandle: sourceHandleId,
+        target: targetNodeId,
+        targetHandle: input.port_id
+      },
+      workflow,
+      nodeDefinitions
+    )
+  )
+
+  return compatibleInputs.length === 1 ? compatibleInputs[0].port_id : null
 }
 
 function findHandleTargetFromStack(stack, sourceNodeId) {

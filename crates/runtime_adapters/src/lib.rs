@@ -997,6 +997,69 @@ fn normalize_merge_keys_by_table(
         .collect::<BTreeMap<_, _>>()
 }
 
+fn table_reference_metadata_string(
+    table_payload: &TableReferencePayload,
+    key: &str,
+) -> Option<String> {
+    table_payload
+        .metadata
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|metadata| metadata.get(key))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn push_unique_table_identity_candidate(candidates: &mut Vec<String>, value: Option<String>) {
+    let Some(value) = value else {
+        return;
+    };
+    if !candidates
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(&value))
+    {
+        candidates.push(value);
+    }
+}
+
+fn table_merge_identity_candidates(table_payload: &TableReferencePayload) -> Vec<String> {
+    let mut candidates = Vec::new();
+    push_unique_table_identity_candidate(
+        &mut candidates,
+        table_reference_metadata_string(table_payload, "logical_table_name"),
+    );
+    push_unique_table_identity_candidate(
+        &mut candidates,
+        table_reference_metadata_string(table_payload, "source_table_name"),
+    );
+    push_unique_table_identity_candidate(
+        &mut candidates,
+        normalize_non_empty_string(Some(table_payload.table_name.clone())),
+    );
+    push_unique_table_identity_candidate(
+        &mut candidates,
+        normalize_non_empty_string(Some(table_payload.output_alias.clone())),
+    );
+    push_unique_table_identity_candidate(
+        &mut candidates,
+        table_reference_metadata_string(table_payload, "source_table"),
+    );
+    push_unique_table_identity_candidate(
+        &mut candidates,
+        table_reference_metadata_string(table_payload, "physical_table_name"),
+    );
+
+    candidates
+}
+
+fn table_merge_logical_target_table_name(table_payload: &TableReferencePayload) -> String {
+    table_reference_metadata_string(table_payload, "logical_table_name")
+        .or_else(|| table_reference_metadata_string(table_payload, "source_table_name"))
+        .unwrap_or_else(|| table_payload.table_name.trim().to_string())
+}
+
 fn merge_keys_for_collection_table(
     node_id: &str,
     table_payload: &TableReferencePayload,
@@ -1007,13 +1070,9 @@ fn merge_keys_for_collection_table(
         return Ok(Vec::new());
     }
 
-    if let Some(keys) = merge_keys_by_table.get(table_payload.table_name.trim()) {
-        return Ok(keys.clone());
-    }
-
-    let output_alias = table_payload.output_alias.trim();
-    if !output_alias.is_empty() && output_alias != table_payload.table_name.trim() {
-        if let Some(keys) = merge_keys_by_table.get(output_alias) {
+    let candidates = table_merge_identity_candidates(table_payload);
+    for candidate in &candidates {
+        if let Some(keys) = merge_keys_by_table.get(candidate) {
             return Ok(keys.clone());
         }
     }
@@ -1035,8 +1094,10 @@ fn merge_keys_for_collection_table(
     Err(AdapterError::InvalidConfig {
         node_id: node_id.to_string(),
         message: format!(
-            "table_merge received table `{}` in `items`, but `merge_keys_by_table` has no entry for it. Configured table keys: `{}`.",
-            table_payload.table_name, configured_tables
+            "table_merge received table `{}` in `items`, but `merge_keys_by_table` has no entry for any identity candidate: `{}`. Configured table keys: `{}`.",
+            table_payload.table_name,
+            candidates.join("`, `"),
+            configured_tables
         ),
     })
 }
@@ -3944,13 +4005,13 @@ fn resolve_sql_transform_output_table_name(
     if output_table_name.is_empty() {
         return Err(AdapterError::InvalidConfig {
             node_id: node_id.to_string(),
-            message: "sql_transform output table name template rendered an empty value.".to_string(),
+            message: "sql_transform output table name template rendered an empty value."
+                .to_string(),
         });
     }
 
     Ok(output_table_name.to_string())
 }
-
 
 fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
     haystack
@@ -4108,6 +4169,7 @@ fn persist_table_merge_tables(
     for (source_schema_name, source_table_name) in
         source_tables_from_table_reference(table_payload, node_id)?
     {
+        let target_table_name = table_merge_logical_target_table_name(table_payload);
         let source_columns = load_duckdb_table_column_names(
             connection,
             &source_schema_name,
@@ -4131,10 +4193,10 @@ fn persist_table_merge_tables(
         let qualified_target = format!(
             "{}.{}",
             target_schema_identifier,
-            quote_duckdb_identifier(&source_table_name)
+            quote_duckdb_identifier(&target_table_name)
         );
         let target_exists =
-            duckdb_table_exists(connection, target_schema, &source_table_name, node_id)?;
+            duckdb_table_exists(connection, target_schema, &target_table_name, node_id)?;
 
         match write_policy {
             TableMergeWritePolicy::SnapshotReplace => {
@@ -4146,7 +4208,7 @@ fn persist_table_merge_tables(
                     .map_err(|error| AdapterError::ExecutionFailed {
                         node_id: node_id.to_string(),
                         message: format!(
-                            "failed to snapshot-replace `{target_schema}.{source_table_name}` from `{source_schema_name}.{source_table_name}`: {error}"
+                            "failed to snapshot-replace `{target_schema}.{target_table_name}` from `{source_schema_name}.{source_table_name}`: {error}"
                         ),
                     })?;
             }
@@ -4160,7 +4222,7 @@ fn persist_table_merge_tables(
                         .map_err(|error| AdapterError::ExecutionFailed {
                             node_id: node_id.to_string(),
                             message: format!(
-                                "failed to create append target `{target_schema}.{source_table_name}` from `{source_schema_name}.{source_table_name}`: {error}"
+                                "failed to create append target `{target_schema}.{target_table_name}` from `{source_schema_name}.{source_table_name}`: {error}"
                             ),
                         })?;
                 } else {
@@ -4173,7 +4235,7 @@ fn persist_table_merge_tables(
                         .map_err(|error| AdapterError::ExecutionFailed {
                             node_id: node_id.to_string(),
                             message: format!(
-                                "failed to append staged rows into `{target_schema}.{source_table_name}`: {error}"
+                                "failed to append staged rows into `{target_schema}.{target_table_name}`: {error}"
                             ),
                         })?;
                 }
@@ -4188,7 +4250,7 @@ fn persist_table_merge_tables(
                         .map_err(|error| AdapterError::ExecutionFailed {
                             node_id: node_id.to_string(),
                             message: format!(
-                                "failed to create bootstrap merge target `{target_schema}.{source_table_name}` from `{source_schema_name}.{source_table_name}`: {error}"
+                                "failed to create bootstrap merge target `{target_schema}.{target_table_name}` from `{source_schema_name}.{source_table_name}`: {error}"
                             ),
                         })?;
                     continue;
@@ -4229,14 +4291,14 @@ fn persist_table_merge_tables(
                     return Err(AdapterError::ExecutionFailed {
                         node_id: node_id.to_string(),
                         message: format!(
-                            "upsert merge into `{target_schema}.{source_table_name}` requires at least one merge key column."
+                            "upsert merge into `{target_schema}.{target_table_name}` requires at least one merge key column."
                         ),
                     });
                 }
                 let target_columns = load_duckdb_table_column_names(
                     connection,
                     target_schema,
-                    &source_table_name,
+                    &target_table_name,
                     node_id,
                 )?;
                 let available_target_columns = target_columns
@@ -4257,7 +4319,7 @@ fn persist_table_merge_tables(
                     return Err(AdapterError::ExecutionFailed {
                         node_id: node_id.to_string(),
                         message: format!(
-                            "merge key(s) `{}` do not exist on durable target table `{target_schema}.{source_table_name}`. Existing target columns: `{}`.",
+                            "merge key(s) `{}` do not exist on durable target table `{target_schema}.{target_table_name}`. Existing target columns: `{}`.",
                             missing_target_merge_keys.join(", "),
                             target_columns.join("`, `")
                         ),
@@ -4290,7 +4352,7 @@ fn persist_table_merge_tables(
                         .map_err(|error| AdapterError::ExecutionFailed {
                             node_id: node_id.to_string(),
                             message: format!(
-                                "failed to apply delete markers into `{target_schema}.{source_table_name}`: {error}"
+                                "failed to apply delete markers into `{target_schema}.{target_table_name}`: {error}"
                             ),
                         })?;
                 }
@@ -4331,7 +4393,7 @@ fn persist_table_merge_tables(
                     .map_err(|error| AdapterError::ExecutionFailed {
                         node_id: node_id.to_string(),
                         message: format!(
-                            "failed to upsert `{target_schema}.{source_table_name}` from `{source_schema_name}.{source_table_name}`: {error}"
+                            "failed to upsert `{target_schema}.{target_table_name}` from `{source_schema_name}.{source_table_name}`: {error}"
                         ),
                     })?;
             }
@@ -4605,6 +4667,11 @@ fn execute_load_to_duckdb(
         .map(|table| {
             let mut value = json!({
                 "source_table": table.source_table,
+                "logical_table_name": table.source_table,
+                "source_table_name": table.source_table,
+                "source_repo": &resolved_bundle.repository,
+                "load_kind": table.load_mode,
+                "physical_table_name": table.staging_table_name,
                 "target_table": format!("{target_schema}.{}", table.staging_table_name),
                 "load_mode": table.load_mode,
                 "file_path": table.file_path,
@@ -4653,7 +4720,17 @@ fn execute_load_to_duckdb(
 
     let mut primary_metadata = shared_load_metadata.clone();
     if let Some(metadata_object) = primary_metadata.as_object_mut() {
-        metadata_object.insert("loaded_tables".to_string(), Value::Array(loaded_tables_metadata.clone()));
+        metadata_object.insert(
+            "loaded_tables".to_string(),
+            Value::Array(loaded_tables_metadata.clone()),
+        );
+        if let Some(primary_table_metadata) =
+            loaded_tables_metadata.first().and_then(Value::as_object)
+        {
+            for (key, value) in primary_table_metadata {
+                metadata_object.insert(key.clone(), value.clone());
+            }
+        }
     }
 
     let table_reference_values = resolved_bundle
@@ -4669,10 +4746,19 @@ fn execute_load_to_duckdb(
                     }
                 }
                 metadata_object.insert("source_table".to_string(), json!(&table.source_table));
+                metadata_object
+                    .insert("logical_table_name".to_string(), json!(&table.source_table));
+                metadata_object.insert("source_table_name".to_string(), json!(&table.source_table));
                 metadata_object.insert(
-                    "target_schema".to_string(),
-                    json!(target_schema),
+                    "source_repo".to_string(),
+                    json!(&resolved_bundle.repository),
                 );
+                metadata_object.insert("load_kind".to_string(), json!(table.load_mode));
+                metadata_object.insert(
+                    "physical_table_name".to_string(),
+                    json!(&table.staging_table_name),
+                );
+                metadata_object.insert("target_schema".to_string(), json!(target_schema));
                 metadata_object.insert(
                     "target_table_name".to_string(),
                     json!(&table.staging_table_name),
@@ -4706,8 +4792,14 @@ fn execute_load_to_duckdb(
 
     let mut collection_metadata = shared_load_metadata.clone();
     if let Some(metadata_object) = collection_metadata.as_object_mut() {
-        metadata_object.insert("table_count".to_string(), json!(table_reference_values.len()));
-        metadata_object.insert("loaded_tables".to_string(), Value::Array(loaded_tables_metadata.clone()));
+        metadata_object.insert(
+            "table_count".to_string(),
+            json!(table_reference_values.len()),
+        );
+        metadata_object.insert(
+            "loaded_tables".to_string(),
+            Value::Array(loaded_tables_metadata.clone()),
+        );
     }
 
     let mut outputs = PortValues::new();
@@ -4853,14 +4945,23 @@ fn execute_table_merge_single_table(
         Some(Value::Object(object)) => Value::Object(object),
         Some(_) | None => json!({}),
     };
+    let physical_table_name = table_payload.table_name.trim().to_string();
+    let target_table_name = table_merge_logical_target_table_name(&table_payload);
     if let Some(metadata_object) = metadata.as_object_mut() {
         metadata_object.insert(
             "source_schema".to_string(),
             json!(table_payload.schema_name.clone()),
         );
-        metadata_object.insert("source_table".to_string(), json!(table_payload.table_name.clone()));
+        metadata_object.insert(
+            "source_table".to_string(),
+            json!(physical_table_name.clone()),
+        );
+        metadata_object.insert(
+            "physical_table_name".to_string(),
+            json!(physical_table_name.clone()),
+        );
         metadata_object.insert("target_schema".to_string(), json!(target_schema));
-        metadata_object.insert("target_table".to_string(), json!(table_payload.table_name.clone()));
+        metadata_object.insert("target_table".to_string(), json!(target_table_name.clone()));
         metadata_object.insert("merge_kind".to_string(), json!("table_merge"));
         metadata_object.insert("write_policy".to_string(), json!(write_policy_label));
         metadata_object.insert(
@@ -4912,8 +5013,8 @@ fn execute_table_merge_single_table(
         kind: "table_reference".to_string(),
         catalog: table_payload.catalog,
         schema_name: target_schema.to_string(),
-        table_name: table_payload.table_name,
-        output_alias: table_payload.output_alias,
+        table_name: target_table_name.clone(),
+        output_alias: target_table_name,
         selected_columns: table_payload.selected_columns,
         row_filter: table_payload.row_filter,
         row_limit: table_payload.row_limit,
@@ -4987,10 +5088,12 @@ fn execute_table_merge(
             });
         }
 
-        let table_payload: TableReferencePayload = serde_json::from_value(table_input.value.clone())
-            .map_err(|error| AdapterError::ExecutionFailed {
-                node_id: node.node_id.clone(),
-                message: format!("invalid table reference payload: {error}"),
+        let table_payload: TableReferencePayload =
+            serde_json::from_value(table_input.value.clone()).map_err(|error| {
+                AdapterError::ExecutionFailed {
+                    node_id: node.node_id.clone(),
+                    message: format!("invalid table reference payload: {error}"),
+                }
             })?;
         let (output_payload, _merged_table_count, log_line) = execute_table_merge_single_table(
             &node.node_id,
@@ -5176,7 +5279,12 @@ fn execute_sql_transform_single_table(
     )?;
 
     if !materialize_as_table
-        && duckdb_table_exists(connection, target_schema, output_table_name.as_str(), node_id)?
+        && duckdb_table_exists(
+            connection,
+            target_schema,
+            output_table_name.as_str(),
+            node_id,
+        )?
     {
         return Err(AdapterError::ExecutionFailed {
             node_id: node_id.to_string(),
@@ -5323,10 +5431,12 @@ fn execute_sql_transform(
             });
         }
 
-        let table_payload: TableReferencePayload = serde_json::from_value(table_input.value.clone())
-            .map_err(|error| AdapterError::ExecutionFailed {
-                node_id: node.node_id.clone(),
-                message: format!("invalid table reference payload: {error}"),
+        let table_payload: TableReferencePayload =
+            serde_json::from_value(table_input.value.clone()).map_err(|error| {
+                AdapterError::ExecutionFailed {
+                    node_id: node.node_id.clone(),
+                    message: format!("invalid table reference payload: {error}"),
+                }
             })?;
         let (output_payload, log_line) = execute_sql_transform_single_table(
             &node.node_id,
@@ -5791,10 +5901,12 @@ fn execute_quality_check(
             });
         }
 
-        let table_payload: TableReferencePayload = serde_json::from_value(table_input.value.clone())
-            .map_err(|error| AdapterError::ExecutionFailed {
-                node_id: node.node_id.clone(),
-                message: format!("invalid table reference payload: {error}"),
+        let table_payload: TableReferencePayload =
+            serde_json::from_value(table_input.value.clone()).map_err(|error| {
+                AdapterError::ExecutionFailed {
+                    node_id: node.node_id.clone(),
+                    message: format!("invalid table reference payload: {error}"),
+                }
             })?;
         let (output_payload, outcome) =
             execute_quality_check_single_table(&node.node_id, &config, table_payload)?;
@@ -6119,7 +6231,8 @@ fn execute_checkpoint_write(
         (Some(_), Some(_)) => {
             return Err(AdapterError::ExecutionFailed {
                 node_id: node.node_id.clone(),
-                message: "checkpoint_write accepts either `table` or `items`, not both.".to_string(),
+                message: "checkpoint_write accepts either `table` or `items`, not both."
+                    .to_string(),
             });
         }
         (None, None) => {
@@ -6139,17 +6252,15 @@ fn execute_checkpoint_write(
             });
         }
 
-        let table_payload: TableReferencePayload = serde_json::from_value(table_input.value.clone())
-            .map_err(|error| AdapterError::ExecutionFailed {
-                node_id: node.node_id.clone(),
-                message: format!("invalid table reference payload: {error}"),
+        let table_payload: TableReferencePayload =
+            serde_json::from_value(table_input.value.clone()).map_err(|error| {
+                AdapterError::ExecutionFailed {
+                    node_id: node.node_id.clone(),
+                    message: format!("invalid table reference payload: {error}"),
+                }
             })?;
-        let (output_payload, outcome) = execute_checkpoint_write_single_table(
-            &node.node_id,
-            &config,
-            table_payload,
-            context,
-        )?;
+        let (output_payload, outcome) =
+            execute_checkpoint_write_single_table(&node.node_id, &config, table_payload, context)?;
         let output_value = serde_json::to_value(&output_payload).map_err(|error| {
             AdapterError::ExecutionFailed {
                 node_id: node.node_id.clone(),
@@ -6176,7 +6287,8 @@ fn execute_checkpoint_write(
     if collection_input.data_type != DataType::TableRefCollection {
         return Err(AdapterError::ExecutionFailed {
             node_id: node.node_id.clone(),
-            message: "checkpoint_write expects a `table_ref_collection` input on `items`.".to_string(),
+            message: "checkpoint_write expects a `table_ref_collection` input on `items`."
+                .to_string(),
         });
     }
 
@@ -6211,19 +6323,24 @@ fn execute_checkpoint_write(
     let mut ingest_modes = Vec::new();
 
     for table_payload in collection_payload.table_refs {
-        let (output_payload, outcome) = execute_checkpoint_write_single_table(
-            &node.node_id,
-            &config,
-            table_payload,
-            context,
-        )?;
-        if !repositories.iter().any(|candidate: &String| candidate == &outcome.repository) {
+        let (output_payload, outcome) =
+            execute_checkpoint_write_single_table(&node.node_id, &config, table_payload, context)?;
+        if !repositories
+            .iter()
+            .any(|candidate: &String| candidate == &outcome.repository)
+        {
             repositories.push(outcome.repository.clone());
         }
-        if !branches.iter().any(|candidate: &String| candidate == &outcome.branch) {
+        if !branches
+            .iter()
+            .any(|candidate: &String| candidate == &outcome.branch)
+        {
             branches.push(outcome.branch.clone());
         }
-        if !commits.iter().any(|candidate: &String| candidate == &outcome.current_commit) {
+        if !commits
+            .iter()
+            .any(|candidate: &String| candidate == &outcome.current_commit)
+        {
             commits.push(outcome.current_commit.clone());
         }
         if !ingest_modes
@@ -9600,6 +9717,23 @@ mod tests {
             table_refs[2]["metadata"]["source_table"],
             json!("earnings_history")
         );
+        assert_eq!(
+            table_refs[2]["metadata"]["logical_table_name"],
+            json!("earnings_history")
+        );
+        assert_eq!(
+            table_refs[2]["metadata"]["source_table_name"],
+            json!("earnings_history")
+        );
+        assert_eq!(
+            table_refs[2]["metadata"]["source_repo"],
+            json!("post-no-preference/earnings")
+        );
+        assert_eq!(table_refs[2]["metadata"]["load_kind"], json!("snapshot"));
+        assert_eq!(
+            table_refs[2]["metadata"]["physical_table_name"],
+            json!("earnings__earnings_history__snapshot")
+        );
         assert_eq!(table_refs[2]["metadata"]["row_count"], json!(30));
         assert_eq!(
             table_refs[0]["metadata"]["repository"],
@@ -10231,8 +10365,50 @@ mod tests {
             json!(true)
         );
         assert_eq!(
+            payload.value["metadata"]["logical_table_name"],
+            json!("option_chain")
+        );
+        assert_eq!(
+            payload.value["metadata"]["source_table_name"],
+            json!("option_chain")
+        );
+        assert_eq!(
+            payload.value["metadata"]["source_repo"],
+            json!("post-no-preference/options")
+        );
+        assert_eq!(payload.value["metadata"]["load_kind"], json!("delta"));
+        assert_eq!(
+            payload.value["metadata"]["physical_table_name"],
+            json!("options__option_chain__delta")
+        );
+        assert_eq!(
             payload.value["load_manifest_ref"]["path"],
             json!("artifacts/load_to_duckdb/options/ac31f0b_to_b91c2aa/load_manifest.json")
+        );
+
+        let collection_payload = load_result
+            .outputs
+            .get("tables")
+            .expect("tables collection output should be present");
+        let table_refs = collection_payload.value["table_refs"]
+            .as_array()
+            .expect("table_refs should be an array");
+        assert_eq!(
+            table_refs[0]["metadata"]["logical_table_name"],
+            json!("option_chain")
+        );
+        assert_eq!(
+            table_refs[0]["metadata"]["source_table_name"],
+            json!("option_chain")
+        );
+        assert_eq!(
+            table_refs[0]["metadata"]["source_repo"],
+            json!("post-no-preference/options")
+        );
+        assert_eq!(table_refs[0]["metadata"]["load_kind"], json!("delta"));
+        assert_eq!(
+            table_refs[0]["metadata"]["physical_table_name"],
+            json!("options__option_chain__delta")
         );
     }
 
@@ -10305,7 +10481,6 @@ mod tests {
             ]
         );
     }
-
 
     #[test]
     fn table_merge_merges_table_reference_collection() {
@@ -10415,11 +10590,17 @@ mod tests {
             .expect("items output should be present");
         assert_eq!(payload.data_type, DataType::TableRefCollection);
         assert_eq!(payload.value["kind"], json!("table_reference_collection"));
-        assert_eq!(payload.value["metadata"]["merge_kind"], json!("table_merge"));
+        assert_eq!(
+            payload.value["metadata"]["merge_kind"],
+            json!("table_merge")
+        );
         assert_eq!(payload.value["metadata"]["target_schema"], json!("tables"));
         assert_eq!(payload.value["metadata"]["merged_item_count"], json!(2));
         assert_eq!(payload.value["metadata"]["merged_table_count"], json!(2));
-        assert_eq!(payload.value["manifest_ref"]["artifact_id"], json!("manifest-1"));
+        assert_eq!(
+            payload.value["manifest_ref"]["artifact_id"],
+            json!("manifest-1")
+        );
 
         let table_refs = payload.value["table_refs"]
             .as_array()
@@ -10427,16 +10608,37 @@ mod tests {
         assert_eq!(table_refs.len(), 2);
         assert_eq!(table_refs[0]["schema_name"], json!("tables"));
         assert_eq!(table_refs[0]["table_name"], json!("rates_raw__normalized"));
-        assert_eq!(table_refs[0]["metadata"]["source_schema"], json!("staging_curated"));
-        assert_eq!(table_refs[0]["metadata"]["source_table"], json!("rates_raw__normalized"));
+        assert_eq!(
+            table_refs[0]["metadata"]["source_schema"],
+            json!("staging_curated")
+        );
+        assert_eq!(
+            table_refs[0]["metadata"]["source_table"],
+            json!("rates_raw__normalized")
+        );
         assert_eq!(table_refs[0]["metadata"]["target_schema"], json!("tables"));
-        assert_eq!(table_refs[0]["metadata"]["target_table"], json!("rates_raw__normalized"));
-        assert_eq!(table_refs[0]["metadata"]["dolt_source_table"], json!("rates_raw"));
-        assert_eq!(table_refs[0]["metadata"]["merge_kind"], json!("table_merge"));
+        assert_eq!(
+            table_refs[0]["metadata"]["target_table"],
+            json!("rates_raw__normalized")
+        );
+        assert_eq!(
+            table_refs[0]["metadata"]["dolt_source_table"],
+            json!("rates_raw")
+        );
+        assert_eq!(
+            table_refs[0]["metadata"]["merge_kind"],
+            json!("table_merge")
+        );
         assert_eq!(table_refs[1]["schema_name"], json!("tables"));
         assert_eq!(table_refs[1]["table_name"], json!("fx_raw__normalized"));
-        assert_eq!(table_refs[1]["metadata"]["dolt_source_table"], json!("fx_raw"));
-        assert_eq!(table_refs[1]["metadata"]["repository"], json!("post-no-preference/rates"));
+        assert_eq!(
+            table_refs[1]["metadata"]["dolt_source_table"],
+            json!("fx_raw")
+        );
+        assert_eq!(
+            table_refs[1]["metadata"]["repository"],
+            json!("post-no-preference/rates")
+        );
 
         let connection = DuckDbConnection::open(&duckdb_path).expect("duckdb should reopen");
         let rates_count: i64 = connection
@@ -10456,7 +10658,9 @@ mod tests {
         assert_eq!(rates_count, 1);
         assert_eq!(fx_count, 1);
         assert!(result.logs.iter().any(|line| {
-            line.contains("Prepared table_merge collection into `tables` with 2 output table reference(s).")
+            line.contains(
+                "Prepared table_merge collection into `tables` with 2 output table reference(s).",
+            )
         }));
 
         let _ = fs::remove_dir_all(&workflow_root);
@@ -10600,6 +10804,240 @@ mod tests {
     }
 
     #[test]
+    fn table_merge_collection_uses_logical_table_metadata_for_keys_and_targets() {
+        let registry = builtin_node_definitions();
+        let definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "table_merge")
+            .expect("table_merge definition");
+        let workflow_root = unique_test_workflow_root("table_merge_collection_logical_metadata");
+        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        fs::create_dir_all(duckdb_path.parent().expect("duckdb parent should exist"))
+            .expect("duckdb parent directory should be created");
+        let connection = DuckDbConnection::open(&duckdb_path).expect("duckdb should open");
+        connection
+            .execute_batch(
+                "create schema staging;
+                 create schema tables;
+                 create table staging.rates__us_treasury__delta (
+                   date date,
+                   tenor varchar,
+                   yield_pct double
+                 );
+                 insert into staging.rates__us_treasury__delta values
+                   ('2026-06-11', '2Y', 4.75);
+                 create table tables.us_treasury (
+                   date date,
+                   tenor varchar,
+                   yield_pct double
+                 );
+                 insert into tables.us_treasury values
+                   ('2026-06-11', '2Y', 4.50);",
+            )
+            .expect("source and target tables should be created");
+        drop(connection);
+
+        let node = WorkflowNode {
+            node_id: "table_merge".to_string(),
+            type_id: "table_merge".to_string(),
+            definition_version: 1,
+            label: None,
+            config: json!({
+                "target_schema": "tables",
+                "write_policy": "upsert",
+                "merge_keys_by_table": {
+                    "us_treasury": ["date", "tenor"]
+                },
+                "delete_handling": "apply_delete_markers",
+                "schema_drift_behavior": "fail_and_require_review"
+            }),
+            position: NodePosition::default(),
+        };
+        let mut inputs = PortValues::new();
+        inputs.insert(
+            "items".to_string(),
+            TypedValue {
+                data_type: DataType::TableRefCollection,
+                value: json!({
+                    "kind": "table_reference_collection",
+                    "table_refs": [
+                        {
+                            "kind": "table_reference",
+                            "catalog": "workflow.duckdb",
+                            "schema_name": "staging",
+                            "table_name": "rates__us_treasury__delta",
+                            "output_alias": "rates__us_treasury__delta",
+                            "metadata": {
+                                "logical_table_name": "us_treasury",
+                                "source_table_name": "us_treasury",
+                                "source_table": "us_treasury",
+                                "source_repo": "post-no-preference/rates",
+                                "load_kind": "delta",
+                                "physical_table_name": "rates__us_treasury__delta"
+                            }
+                        }
+                    ]
+                }),
+            },
+        );
+        let context = AdapterExecutionContext {
+            workflow_duckdb_path: Some(duckdb_path.clone()),
+            ..AdapterExecutionContext::default()
+        };
+
+        let result = RuntimeAdapters::default()
+            .execute_with_context(definition, &node, &inputs, &context)
+            .expect("table_merge collection should use logical metadata");
+        let payload = result
+            .outputs
+            .get("items")
+            .expect("items output should be present");
+        assert_eq!(
+            payload.value["table_refs"][0]["schema_name"],
+            json!("tables")
+        );
+        assert_eq!(
+            payload.value["table_refs"][0]["table_name"],
+            json!("us_treasury")
+        );
+        assert_eq!(
+            payload.value["table_refs"][0]["metadata"]["target_table"],
+            json!("us_treasury")
+        );
+        assert_eq!(
+            payload.value["table_refs"][0]["metadata"]["physical_table_name"],
+            json!("rates__us_treasury__delta")
+        );
+        assert_eq!(
+            payload.value["table_refs"][0]["metadata"]["merge_key_columns"],
+            json!(["date", "tenor"])
+        );
+
+        let connection = DuckDbConnection::open(&duckdb_path).expect("duckdb should reopen");
+        let yield_pct: f64 = connection
+            .query_row(
+                "select yield_pct from tables.us_treasury where date = '2026-06-11' and tenor = '2Y'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("logical durable table should query");
+        assert_eq!(yield_pct, 4.75);
+        let physical_target_exists = duckdb_table_exists(
+            &connection,
+            "tables",
+            "rates__us_treasury__delta",
+            "table_merge",
+        )
+        .expect("physical target lookup should succeed");
+        assert!(!physical_target_exists);
+
+        let _ = fs::remove_dir_all(&workflow_root);
+    }
+
+    #[test]
+    fn table_merge_collection_still_accepts_physical_table_merge_keys() {
+        let registry = builtin_node_definitions();
+        let definition = registry
+            .iter()
+            .find(|definition| definition.type_id == "table_merge")
+            .expect("table_merge definition");
+        let workflow_root = unique_test_workflow_root("table_merge_collection_physical_keys");
+        let duckdb_path = workflow_root.join("db").join("workflow.duckdb");
+        fs::create_dir_all(duckdb_path.parent().expect("duckdb parent should exist"))
+            .expect("duckdb parent directory should be created");
+        let connection = DuckDbConnection::open(&duckdb_path).expect("duckdb should open");
+        connection
+            .execute_batch(
+                "create schema staging;
+                 create schema tables;
+                 create table staging.rates__us_treasury__delta (
+                   date date,
+                   tenor varchar,
+                   yield_pct double
+                 );
+                 insert into staging.rates__us_treasury__delta values
+                   ('2026-06-11', '2Y', 4.75);
+                 create table tables.rates__us_treasury__delta (
+                   date date,
+                   tenor varchar,
+                   yield_pct double
+                 );
+                 insert into tables.rates__us_treasury__delta values
+                   ('2026-06-11', '2Y', 4.50);",
+            )
+            .expect("source and physical target tables should be created");
+        drop(connection);
+
+        let node = WorkflowNode {
+            node_id: "table_merge".to_string(),
+            type_id: "table_merge".to_string(),
+            definition_version: 1,
+            label: None,
+            config: json!({
+                "target_schema": "tables",
+                "write_policy": "upsert",
+                "merge_keys_by_table": {
+                    "rates__us_treasury__delta": ["date", "tenor"]
+                },
+                "delete_handling": "apply_delete_markers",
+                "schema_drift_behavior": "fail_and_require_review"
+            }),
+            position: NodePosition::default(),
+        };
+        let mut inputs = PortValues::new();
+        inputs.insert(
+            "items".to_string(),
+            TypedValue {
+                data_type: DataType::TableRefCollection,
+                value: json!({
+                    "kind": "table_reference_collection",
+                    "table_refs": [
+                        {
+                            "kind": "table_reference",
+                            "catalog": "workflow.duckdb",
+                            "schema_name": "staging",
+                            "table_name": "rates__us_treasury__delta",
+                            "output_alias": "rates__us_treasury__delta"
+                        }
+                    ]
+                }),
+            },
+        );
+        let context = AdapterExecutionContext {
+            workflow_duckdb_path: Some(duckdb_path.clone()),
+            ..AdapterExecutionContext::default()
+        };
+
+        let result = RuntimeAdapters::default()
+            .execute_with_context(definition, &node, &inputs, &context)
+            .expect("table_merge collection should still use physical keys");
+        let payload = result
+            .outputs
+            .get("items")
+            .expect("items output should be present");
+        assert_eq!(
+            payload.value["table_refs"][0]["table_name"],
+            json!("rates__us_treasury__delta")
+        );
+        assert_eq!(
+            payload.value["table_refs"][0]["metadata"]["merge_key_columns"],
+            json!(["date", "tenor"])
+        );
+
+        let connection = DuckDbConnection::open(&duckdb_path).expect("duckdb should reopen");
+        let yield_pct: f64 = connection
+            .query_row(
+                "select yield_pct from tables.rates__us_treasury__delta where date = '2026-06-11' and tenor = '2Y'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("physical durable table should query");
+        assert_eq!(yield_pct, 4.75);
+
+        let _ = fs::remove_dir_all(&workflow_root);
+    }
+
+    #[test]
     fn table_merge_collection_requires_merge_keys_by_table_for_upserts() {
         let registry = builtin_node_definitions();
         let definition = registry
@@ -10649,7 +11087,7 @@ mod tests {
             AdapterError::InvalidConfig { message, .. } => {
                 assert_eq!(
                     message,
-                    "table_merge received table `customers_dim` in `items`, but `merge_keys_by_table` has no entry for it. Configured table keys: `orders_fact`."
+                    "table_merge received table `customers_dim` in `items`, but `merge_keys_by_table` has no entry for any identity candidate: `customers_dim`. Configured table keys: `orders_fact`."
                 );
             }
             other => panic!("unexpected error: {other:?}"),
@@ -10861,7 +11299,6 @@ mod tests {
         let _ = fs::remove_dir_all(&workflow_root);
     }
 
-
     #[test]
     fn sql_transform_maps_table_reference_collection() {
         let registry = builtin_node_definitions();
@@ -10967,9 +11404,18 @@ mod tests {
             .expect("items output should be present");
         assert_eq!(payload.data_type, DataType::TableRefCollection);
         assert_eq!(payload.value["kind"], json!("table_reference_collection"));
-        assert_eq!(payload.value["metadata"]["transform_kind"], json!("sql_transform"));
-        assert_eq!(payload.value["metadata"]["transformed_table_count"], json!(2));
-        assert_eq!(payload.value["manifest_ref"]["artifact_id"], json!("manifest-1"));
+        assert_eq!(
+            payload.value["metadata"]["transform_kind"],
+            json!("sql_transform")
+        );
+        assert_eq!(
+            payload.value["metadata"]["transformed_table_count"],
+            json!(2)
+        );
+        assert_eq!(
+            payload.value["manifest_ref"]["artifact_id"],
+            json!("manifest-1")
+        );
 
         let table_refs = payload.value["table_refs"]
             .as_array()
@@ -10977,13 +11423,25 @@ mod tests {
         assert_eq!(table_refs.len(), 2);
         assert_eq!(table_refs[0]["schema_name"], json!("staging_curated"));
         assert_eq!(table_refs[0]["table_name"], json!("rates_raw__normalized"));
-        assert_eq!(table_refs[0]["metadata"]["source_table"], json!("rates_raw"));
-        assert_eq!(table_refs[0]["metadata"]["transform_kind"], json!("sql_transform"));
-        assert_eq!(table_refs[0]["metadata"]["target_table"], json!("rates_raw__normalized"));
+        assert_eq!(
+            table_refs[0]["metadata"]["source_table"],
+            json!("rates_raw")
+        );
+        assert_eq!(
+            table_refs[0]["metadata"]["transform_kind"],
+            json!("sql_transform")
+        );
+        assert_eq!(
+            table_refs[0]["metadata"]["target_table"],
+            json!("rates_raw__normalized")
+        );
         assert_eq!(table_refs[1]["schema_name"], json!("staging_curated"));
         assert_eq!(table_refs[1]["table_name"], json!("fx_raw__normalized"));
         assert_eq!(table_refs[1]["metadata"]["source_table"], json!("fx_raw"));
-        assert_eq!(table_refs[1]["metadata"]["repository"], json!("post-no-preference/rates"));
+        assert_eq!(
+            table_refs[1]["metadata"]["repository"],
+            json!("post-no-preference/rates")
+        );
 
         let connection = DuckDbConnection::open(&duckdb_path).expect("duckdb should reopen");
         let rates_count: i64 = connection
@@ -11525,20 +11983,43 @@ unpivot (
             .expect("items output should be present");
         assert_eq!(payload.data_type, DataType::TableRefCollection);
         assert_eq!(payload.value["kind"], json!("table_reference_collection"));
-        assert_eq!(payload.value["metadata"]["quality_check"]["kind"], json!("quality_gate_collection_result"));
-        assert_eq!(payload.value["metadata"]["quality_check"]["gate_status"], json!("warn"));
-        assert_eq!(payload.value["metadata"]["quality_check"]["input_count"], json!(2));
-        assert_eq!(payload.value["metadata"]["quality_check"]["warned_table_count"], json!(2));
-        assert_eq!(payload.value["manifest_ref"]["artifact_id"], json!("manifest-1"));
+        assert_eq!(
+            payload.value["metadata"]["quality_check"]["kind"],
+            json!("quality_gate_collection_result")
+        );
+        assert_eq!(
+            payload.value["metadata"]["quality_check"]["gate_status"],
+            json!("warn")
+        );
+        assert_eq!(
+            payload.value["metadata"]["quality_check"]["input_count"],
+            json!(2)
+        );
+        assert_eq!(
+            payload.value["metadata"]["quality_check"]["warned_table_count"],
+            json!(2)
+        );
+        assert_eq!(
+            payload.value["manifest_ref"]["artifact_id"],
+            json!("manifest-1")
+        );
 
         let table_refs = payload.value["table_refs"]
             .as_array()
             .expect("table_refs should be an array");
         assert_eq!(table_refs.len(), 2);
-        assert_eq!(table_refs[0]["metadata"]["quality_check"]["gate_status"], json!("warn"));
-        assert_eq!(table_refs[1]["metadata"]["quality_check"]["approved_table_set"], json!(["tables.eps_history"]));
+        assert_eq!(
+            table_refs[0]["metadata"]["quality_check"]["gate_status"],
+            json!("warn")
+        );
+        assert_eq!(
+            table_refs[1]["metadata"]["quality_check"]["approved_table_set"],
+            json!(["tables.eps_history"])
+        );
         assert!(result.logs.iter().any(|line| {
-            line.contains("Applied quality gate to 2 table reference(s) with collection status `warn`.")
+            line.contains(
+                "Applied quality gate to 2 table reference(s) with collection status `warn`.",
+            )
         }));
     }
 
@@ -11638,12 +12119,30 @@ unpivot (
             .expect("items output should be present");
         assert_eq!(payload.data_type, DataType::TableRefCollection);
         assert_eq!(payload.value["kind"], json!("table_reference_collection"));
-        assert_eq!(payload.value["metadata"]["checkpoint_write"]["kind"], json!("checkpoint_write_collection_result"));
-        assert_eq!(payload.value["metadata"]["checkpoint_write"]["checkpoint_table"], json!("tables.ingest_checkpoints"));
-        assert_eq!(payload.value["metadata"]["checkpoint_write"]["input_count"], json!(2));
-        assert_eq!(payload.value["metadata"]["checkpoint_write"]["write_timing"], json!("after_quality_gate"));
-        assert_eq!(payload.value["metadata"]["checkpoint_write"]["last_synced_commits"], json!(["a34ef9c"]));
-        assert_eq!(payload.value["manifest_ref"]["artifact_id"], json!("manifest-1"));
+        assert_eq!(
+            payload.value["metadata"]["checkpoint_write"]["kind"],
+            json!("checkpoint_write_collection_result")
+        );
+        assert_eq!(
+            payload.value["metadata"]["checkpoint_write"]["checkpoint_table"],
+            json!("tables.ingest_checkpoints")
+        );
+        assert_eq!(
+            payload.value["metadata"]["checkpoint_write"]["input_count"],
+            json!(2)
+        );
+        assert_eq!(
+            payload.value["metadata"]["checkpoint_write"]["write_timing"],
+            json!("after_quality_gate")
+        );
+        assert_eq!(
+            payload.value["metadata"]["checkpoint_write"]["last_synced_commits"],
+            json!(["a34ef9c"])
+        );
+        assert_eq!(
+            payload.value["manifest_ref"]["artifact_id"],
+            json!("manifest-1")
+        );
 
         let table_refs = payload.value["table_refs"]
             .as_array()

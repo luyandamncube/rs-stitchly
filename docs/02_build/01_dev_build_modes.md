@@ -18,16 +18,16 @@ scripts/dev_ui_agent.sh timings server-light
 scripts/dev_ui_agent.sh restart --no-open --light
 ```
 
-Light mode builds `runtime_server` with `--no-default-features --features bundled-duckdb`. The server composes `RuntimeService::default()` instead of `runtime_adapters::RuntimeAdapters`, so workflow validation and lightweight text/preview/email execution remain available without compiling the concrete adapter crate.
+Light mode builds `runtime_server` with `--no-default-features`. The server composes `RuntimeService::default()` instead of `runtime_adapters::RuntimeAdapters`, and it omits DuckDB-backed workspace catalog storage. Workflow validation and lightweight text/preview/email execution remain available without compiling concrete adapters, DuckDB, libduckdb-sys, or Arrow.
 
-Light mode does not remove every DuckDB compile edge yet. `runtime_server` still owns workspace/catalog storage paths that use the `duckdb` crate. It does remove the adapter-heavy edge where `load_to_duckdb`, table adapters, SQL transform, and related runtime adapters enter the server binary.
+In light mode, workspace catalog endpoints remain mounted but return HTTP 503 because they require the `duckdb-storage` feature. Use full backend mode when catalog browsing, table deletion, DuckDB run mirroring, or real table execution is part of the work.
 
 ## DuckDB Linkage
 
 The default build enables bundled DuckDB so the app works without a system DuckDB install:
 
 ```toml
-runtime_server default features = ["bundled-duckdb", "full-adapters"]
+runtime_server default features = ["duckdb-storage", "bundled-duckdb", "full-adapters"]
 ```
 
 The current `duckdb`/`libduckdb-sys` crate feature graph makes parquet support imply bundled DuckDB:
@@ -36,12 +36,12 @@ The current `duckdb`/`libduckdb-sys` crate feature graph makes parquet support i
 duckdb/parquet -> libduckdb-sys/parquet -> bundled
 ```
 
-That means a non-bundled DuckDB experiment is only meaningful for the light server/storage path right now:
+That means a non-bundled DuckDB experiment is only meaningful for the server storage path without full adapters right now:
 
 ```bash
 scripts/dev_ui_agent.sh check server-system-duckdb
 scripts/dev_ui_agent.sh timings server-system-duckdb
-cargo +nightly -Znext-lockfile-bump build -p runtime_server --bin stitchly-server --no-default-features
+cargo +nightly -Znext-lockfile-bump build -p runtime_server --bin stitchly-server --no-default-features --features duckdb-storage
 ```
 
-Use that only when a compatible system DuckDB is installed and discoverable through `pkg-config` or `vcpkg`. Full adapter mode still compiles bundled DuckDB because parquet-backed adapters require it with the current dependency version.
+`server-system-duckdb` builds `runtime_server` with `--no-default-features --features duckdb-storage`. Use it only when a compatible system DuckDB is installed and discoverable through `pkg-config` or `vcpkg`. Full adapter mode still compiles bundled DuckDB because parquet-backed adapters require it with the current dependency version.

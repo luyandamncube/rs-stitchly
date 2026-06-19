@@ -783,11 +783,11 @@ backend_cargo_feature_args_for_target() {
   case "$target" in
     server-light|runtime-server-light|runtime_server_light|backend-light|light)
       echo "--no-default-features"
-      echo "--features"
-      echo "bundled-duckdb"
       ;;
     server-system-duckdb|runtime-server-system-duckdb|runtime_server_system_duckdb|system-duckdb)
       echo "--no-default-features"
+      echo "--features"
+      echo "duckdb-storage"
       ;;
     *)
       ;;

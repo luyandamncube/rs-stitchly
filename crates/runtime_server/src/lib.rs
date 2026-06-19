@@ -32,6 +32,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+#[cfg(feature = "duckdb-storage")]
 use duckdb::Connection as DuckDbConnection;
 use futures::{stream, StreamExt};
 use platform::{AuthenticatedSession, PlatformStore};
@@ -1041,6 +1042,7 @@ async fn update_workflow_state(
         (status = 404, description = "Workspace not found.", body = ErrorResponse)
     )
 )]
+#[cfg(feature = "duckdb-storage")]
 async fn list_workspace_catalogs(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1068,6 +1070,7 @@ async fn list_workspace_catalogs(
         (status = 404, description = "Schema not found.", body = ErrorResponse)
     )
 )]
+#[cfg(feature = "duckdb-storage")]
 async fn get_workspace_catalog_schema(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1101,6 +1104,7 @@ async fn get_workspace_catalog_schema(
         (status = 404, description = "Table not found.", body = ErrorResponse)
     )
 )]
+#[cfg(feature = "duckdb-storage")]
 async fn get_workspace_catalog_table(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1134,6 +1138,7 @@ async fn get_workspace_catalog_table(
         (status = 404, description = "Table not found.", body = ErrorResponse)
     )
 )]
+#[cfg(feature = "duckdb-storage")]
 async fn preview_workspace_catalog_table_delete(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1173,6 +1178,7 @@ async fn preview_workspace_catalog_table_delete(
         (status = 404, description = "Table not found.", body = ErrorResponse)
     )
 )]
+#[cfg(feature = "duckdb-storage")]
 async fn delete_workspace_catalog_table(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1206,6 +1212,7 @@ async fn delete_workspace_catalog_table(
         (status = 404, description = "Workflow not found.", body = ErrorResponse)
     )
 )]
+#[cfg(feature = "duckdb-storage")]
 async fn run_workspace_catalog_query(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1219,6 +1226,127 @@ async fn run_workspace_catalog_query(
         .map_err(map_catalog_query_error)?
         .ok_or_else(|| ApiError::not_found(format!("Workspace `{workspace_id}` was not found.")))?;
     Ok(Json(response))
+}
+
+#[cfg(not(feature = "duckdb-storage"))]
+#[utoipa::path(
+    get,
+    path = "/api/workspaces/{workspace_id}/catalog",
+    tag = "Catalog",
+    params(("workspace_id" = String, Path, description = "Workspace identifier.")),
+    responses((status = 503, description = "Catalog endpoints are unavailable in light builds.", body = ErrorResponse))
+)]
+async fn list_workspace_catalogs(
+    State(_state): State<AppState>,
+    _headers: HeaderMap,
+    Path(_workspace_id): Path<String>,
+) -> Result<Json<WorkspaceCatalogResponse>, ApiError> {
+    Err(catalog_unavailable_in_light_build())
+}
+
+#[cfg(not(feature = "duckdb-storage"))]
+#[utoipa::path(
+    get,
+    path = "/api/workspaces/{workspace_id}/catalog/schemas/{schema_name}",
+    tag = "Catalog",
+    params(
+        ("workspace_id" = String, Path, description = "Workspace identifier."),
+        ("schema_name" = String, Path, description = "DuckDB schema name.")
+    ),
+    responses((status = 503, description = "Catalog endpoints are unavailable in light builds.", body = ErrorResponse))
+)]
+async fn get_workspace_catalog_schema(
+    State(_state): State<AppState>,
+    _headers: HeaderMap,
+    Path((_workspace_id, _schema_name)): Path<(String, String)>,
+) -> Result<Json<WorkspaceCatalogSchemaResponse>, ApiError> {
+    Err(catalog_unavailable_in_light_build())
+}
+
+#[cfg(not(feature = "duckdb-storage"))]
+#[utoipa::path(
+    get,
+    path = "/api/workspaces/{workspace_id}/catalog/schemas/{schema_name}/tables/{table_name}",
+    tag = "Catalog",
+    params(
+        ("workspace_id" = String, Path, description = "Workspace identifier."),
+        ("schema_name" = String, Path, description = "DuckDB schema name."),
+        ("table_name" = String, Path, description = "DuckDB table name.")
+    ),
+    responses((status = 503, description = "Catalog endpoints are unavailable in light builds.", body = ErrorResponse))
+)]
+async fn get_workspace_catalog_table(
+    State(_state): State<AppState>,
+    _headers: HeaderMap,
+    Path((_workspace_id, _schema_name, _table_name)): Path<(String, String, String)>,
+) -> Result<Json<WorkspaceCatalogTableResponse>, ApiError> {
+    Err(catalog_unavailable_in_light_build())
+}
+
+#[cfg(not(feature = "duckdb-storage"))]
+#[utoipa::path(
+    get,
+    path = "/api/workspaces/{workspace_id}/catalog/schemas/{schema_name}/tables/{table_name}/delete-preview",
+    tag = "Catalog",
+    params(
+        ("workspace_id" = String, Path, description = "Workspace identifier."),
+        ("schema_name" = String, Path, description = "DuckDB schema name."),
+        ("table_name" = String, Path, description = "DuckDB table name.")
+    ),
+    responses((status = 503, description = "Catalog endpoints are unavailable in light builds.", body = ErrorResponse))
+)]
+async fn preview_workspace_catalog_table_delete(
+    State(_state): State<AppState>,
+    _headers: HeaderMap,
+    Path((_workspace_id, _schema_name, _table_name)): Path<(String, String, String)>,
+) -> Result<Json<WorkspaceCatalogDeleteTablePreviewResponse>, ApiError> {
+    Err(catalog_unavailable_in_light_build())
+}
+
+#[cfg(not(feature = "duckdb-storage"))]
+#[utoipa::path(
+    delete,
+    path = "/api/workspaces/{workspace_id}/catalog/schemas/{schema_name}/tables/{table_name}",
+    tag = "Catalog",
+    params(
+        ("workspace_id" = String, Path, description = "Workspace identifier."),
+        ("schema_name" = String, Path, description = "DuckDB schema name."),
+        ("table_name" = String, Path, description = "DuckDB table name.")
+    ),
+    responses((status = 503, description = "Catalog endpoints are unavailable in light builds.", body = ErrorResponse))
+)]
+async fn delete_workspace_catalog_table(
+    State(_state): State<AppState>,
+    _headers: HeaderMap,
+    Path((_workspace_id, _schema_name, _table_name)): Path<(String, String, String)>,
+) -> Result<Json<WorkspaceCatalogDeleteTableResponse>, ApiError> {
+    Err(catalog_unavailable_in_light_build())
+}
+
+#[cfg(not(feature = "duckdb-storage"))]
+#[utoipa::path(
+    post,
+    path = "/api/workspaces/{workspace_id}/catalog/query",
+    tag = "Catalog",
+    params(("workspace_id" = String, Path, description = "Workspace identifier.")),
+    request_body = WorkspaceCatalogQueryRequest,
+    responses((status = 503, description = "Catalog endpoints are unavailable in light builds.", body = ErrorResponse))
+)]
+async fn run_workspace_catalog_query(
+    State(_state): State<AppState>,
+    _headers: HeaderMap,
+    Path(_workspace_id): Path<String>,
+    Json(_request): Json<WorkspaceCatalogQueryRequest>,
+) -> Result<Json<WorkspaceCatalogQueryResponse>, ApiError> {
+    Err(catalog_unavailable_in_light_build())
+}
+
+#[cfg(not(feature = "duckdb-storage"))]
+fn catalog_unavailable_in_light_build() -> ApiError {
+    ApiError::unavailable(
+        "Workspace catalog endpoints require a backend built with DuckDB storage enabled."
+            .to_string(),
+    )
 }
 
 #[utoipa::path(
@@ -2587,6 +2715,7 @@ fn allocate_testing_workflow_root(test_name: &str) -> Result<(PathBuf, PathBuf),
     Ok((workflow_root, workflow_duckdb_path))
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn collect_testing_loaded_table_counts(
     workflow_duckdb_path: &FsPath,
     table_output: &workflow_schema::TypedValue,
@@ -2625,6 +2754,15 @@ fn collect_testing_loaded_table_counts(
     Ok(counts)
 }
 
+#[cfg(not(feature = "duckdb-storage"))]
+fn collect_testing_loaded_table_counts(
+    _workflow_duckdb_path: &FsPath,
+    _table_output: &workflow_schema::TypedValue,
+) -> Result<Vec<TestingLoadedTableCount>, ApiError> {
+    Ok(Vec::new())
+}
+
+#[cfg(feature = "duckdb-storage")]
 fn collect_testing_loaded_table_targets(
     table_output: &workflow_schema::TypedValue,
 ) -> Vec<(String, String, String)> {
@@ -2685,6 +2823,7 @@ fn collect_testing_loaded_table_targets(
     }
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn quote_testing_duckdb_identifier(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
 }
@@ -3482,6 +3621,7 @@ fn map_workflow_persistence_error(error: anyhow::Error) -> ApiError {
     }
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn map_catalog_query_error(error: anyhow::Error) -> ApiError {
     let message = error.to_string();
     if message.contains("Enter a SQL query")

@@ -89,6 +89,8 @@ Preserve this behavior unless the user explicitly asks to tune build parallelism
 
 The repo has `rust-toolchain.toml` set to `nightly` so bare Cargo and rust-analyzer use the same toolchain family as the dev script. The script does not refresh nightly unless `STITCHLY_CARGO_UPDATE_TOOLCHAIN=1`.
 
+`server-light` uses `runtime_server --no-default-features`; it is intended for UI/control-plane loops and does not compile concrete runtime adapters or DuckDB-backed catalog storage. Use `server` for full local behavior, and `server-system-duckdb` only for explicit non-bundled DuckDB storage experiments.
+
 ### One Cargo command at a time
 
 Never run multiple Cargo commands concurrently in this repo. Do not start `cargo check`, `cargo build`, and `cargo test` at the same time. Cargo target-dir lock contention is expensive here and can make debugging much slower.

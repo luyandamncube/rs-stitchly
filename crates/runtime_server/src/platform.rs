@@ -10,31 +10,40 @@ use api_contract::{
     AuthSessionResponse, DeleteWorkflowResponse, DeleteWorkspaceResponse, EventTargetKind,
     LogLevel, RunErrorCategory, RunEvent, RunEventType, RunLogEntry, RunSnapshot,
     SessionUserSummary, TriggerKind, WorkflowListResponse, WorkflowResponse, WorkflowStateResponse,
-    WorkflowSummary, WorkspaceCatalogColumnSummary, WorkspaceCatalogDatabaseSummary,
+    WorkflowSummary, WorkspaceConnectionSummary, WorkspaceConnectionsResponse,
+    WorkspaceListResponse, WorkspaceMembershipRole, WorkspaceSummary,
+};
+#[cfg(feature = "duckdb-storage")]
+use api_contract::{
+    WorkspaceCatalogColumnSummary, WorkspaceCatalogDatabaseSummary,
     WorkspaceCatalogDeleteTablePreviewResponse, WorkspaceCatalogDeleteTableResponse,
     WorkspaceCatalogQueryColumn, WorkspaceCatalogQueryResponse, WorkspaceCatalogResponse,
     WorkspaceCatalogSchemaResponse, WorkspaceCatalogSchemaSummary, WorkspaceCatalogTableResponse,
     WorkspaceCatalogTableSummary, WorkspaceCatalogTableUsageNode,
-    WorkspaceCatalogTableUsageWorkflow, WorkspaceConnectionSummary, WorkspaceConnectionsResponse,
-    WorkspaceListResponse, WorkspaceMembershipRole, WorkspaceSummary,
+    WorkspaceCatalogTableUsageWorkflow,
 };
 use argon2::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
 use chrono::{Duration, Utc};
+#[cfg(feature = "duckdb-storage")]
 use duckdb::{types::ValueRef, AccessMode, Config, Connection as DuckDbConnection, OptionalExt};
 use rand_core::OsRng;
 use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
-use workflow_schema::{DataType, TypedValue, WorkflowDefinition, WorkflowNode};
+#[cfg(feature = "duckdb-storage")]
+use workflow_schema::{DataType, TypedValue};
+use workflow_schema::{WorkflowDefinition, WorkflowNode};
 
 const DEMO_EMAIL: &str = "builder@stitchly.dev";
 const DEMO_PASSWORD: &str = "stitchly";
 const DEMO_DISPLAY_NAME: &str = "Builder";
 const SESSION_TTL_DAYS: i64 = 30;
 const WORKSPACE_DUCKDB_FILE_NAME: &str = "workspace.duckdb";
+#[cfg(feature = "duckdb-storage")]
 const WORKFLOW_DUCKDB_FILE_NAME: &str = "workflow.duckdb";
+#[cfg(feature = "duckdb-storage")]
 const WORKFLOW_DUCKDB_MIRROR_TABLE_SQL: &str = "
         create table if not exists runs.workflow_runs (
             run_id varchar not null,
@@ -93,6 +102,7 @@ const WORKFLOW_DUCKDB_MIRROR_TABLE_SQL: &str = "
         );
 ";
 
+#[cfg(feature = "duckdb-storage")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum MirroredTableOutputWriteMode {
@@ -100,6 +110,7 @@ enum MirroredTableOutputWriteMode {
     Replace,
 }
 
+#[cfg(feature = "duckdb-storage")]
 #[derive(Clone, Debug, serde::Deserialize)]
 struct MirroredTableReferencePayload {
     schema_name: String,
@@ -112,6 +123,7 @@ struct MirroredTableReferencePayload {
     row_limit: Option<u64>,
 }
 
+#[cfg(feature = "duckdb-storage")]
 #[derive(Clone, Debug, serde::Deserialize)]
 struct MirroredTableSchemaColumnPayload {
     name: String,
@@ -125,6 +137,7 @@ struct MirroredTableSchemaColumnPayload {
     default: Option<String>,
 }
 
+#[cfg(feature = "duckdb-storage")]
 #[derive(Clone, Debug, serde::Deserialize)]
 struct MirroredTableSchemaDefinitionPayload {
     columns: Vec<MirroredTableSchemaColumnPayload>,
@@ -138,6 +151,7 @@ struct MirroredTableSchemaDefinitionPayload {
     _if_target_exists: Option<String>,
 }
 
+#[cfg(feature = "duckdb-storage")]
 #[derive(Clone, Debug, serde::Deserialize)]
 struct MirroredTableSchemaTargetPayload {
     #[serde(rename = "schema_name")]
@@ -156,6 +170,7 @@ struct MirroredTableSchemaTargetPayload {
     _if_target_exists: Option<String>,
 }
 
+#[cfg(feature = "duckdb-storage")]
 #[derive(Clone, Debug, serde::Deserialize)]
 struct MirroredTableOutputPayload {
     kind: String,
@@ -180,6 +195,7 @@ struct MirroredTableOutputPayload {
     include_written_at: bool,
 }
 
+#[cfg(feature = "duckdb-storage")]
 #[derive(Clone, Debug)]
 struct CatalogTableWorkflowUpdate {
     workflow_id: String,
@@ -187,6 +203,7 @@ struct CatalogTableWorkflowUpdate {
     definition: WorkflowDefinition,
 }
 
+#[cfg(feature = "duckdb-storage")]
 #[derive(Clone, Debug)]
 struct CatalogTableDeletePlan {
     workflow_id: String,
@@ -200,18 +217,21 @@ struct CatalogTableDeletePlan {
     workflow_updates: Vec<CatalogTableWorkflowUpdate>,
 }
 
+#[cfg(feature = "duckdb-storage")]
 #[derive(Clone, Debug)]
 struct StoredWorkspaceCatalog {
     workspace_id: String,
     workspace_name: String,
 }
 
+#[cfg(feature = "duckdb-storage")]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LegacyWorkflowDuckDbImportReport {
     pub imported_tables: Vec<String>,
     pub skipped_tables: Vec<String>,
 }
 
+#[cfg(feature = "duckdb-storage")]
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct LegacyWorkflowDuckDbTableRef {
     schema_name: String,
@@ -294,6 +314,7 @@ impl PlatformStore {
         };
         store.initialize()?;
         store.bootstrap_existing_workspace_storage()?;
+        #[cfg(feature = "duckdb-storage")]
         store.cleanup_existing_legacy_workflow_duckdbs()?;
         Ok(store)
     }
@@ -1068,6 +1089,7 @@ impl PlatformStore {
         Ok(WorkflowListResponse { workflows })
     }
 
+    #[cfg(feature = "duckdb-storage")]
     pub fn list_workspace_catalogs(
         &self,
         user_id: &str,
@@ -1093,6 +1115,7 @@ impl PlatformStore {
         Ok(WorkspaceCatalogResponse { catalogs })
     }
 
+    #[cfg(feature = "duckdb-storage")]
     pub fn import_legacy_workflow_duckdb_tables(
         &self,
         user_id: &str,
@@ -1155,6 +1178,7 @@ impl PlatformStore {
         }
     }
 
+    #[cfg(feature = "duckdb-storage")]
     pub fn get_workspace_catalog_schema(
         &self,
         user_id: &str,
@@ -1183,6 +1207,7 @@ impl PlatformStore {
         }))
     }
 
+    #[cfg(feature = "duckdb-storage")]
     pub fn get_workspace_catalog_table(
         &self,
         user_id: &str,
@@ -1221,6 +1246,7 @@ impl PlatformStore {
         }))
     }
 
+    #[cfg(feature = "duckdb-storage")]
     pub fn preview_workspace_catalog_table_delete(
         &self,
         user_id: &str,
@@ -1260,6 +1286,7 @@ impl PlatformStore {
         }))
     }
 
+    #[cfg(feature = "duckdb-storage")]
     pub fn delete_workspace_catalog_table(
         &self,
         user_id: &str,
@@ -1336,6 +1363,7 @@ impl PlatformStore {
         }))
     }
 
+    #[cfg(feature = "duckdb-storage")]
     pub fn run_workspace_catalog_query(
         &self,
         user_id: &str,
@@ -1723,9 +1751,12 @@ impl PlatformStore {
         let connection = self.connection();
         persist_run_snapshot_row(&connection, workspace_id, requested_by_user_id, snapshot)?;
         drop(connection);
-        if should_sync_workspace_duckdb_run(snapshot) {
-            if let Err(error) = self.sync_workspace_duckdb_run(workspace_id, snapshot) {
-                warn_workspace_duckdb_run_sync_failure(workspace_id, snapshot, &error);
+        #[cfg(feature = "duckdb-storage")]
+        {
+            if should_sync_workspace_duckdb_run(snapshot) {
+                if let Err(error) = self.sync_workspace_duckdb_run(workspace_id, snapshot) {
+                    warn_workspace_duckdb_run_sync_failure(workspace_id, snapshot, &error);
+                }
             }
         }
         Ok(())
@@ -1746,9 +1777,12 @@ impl PlatformStore {
         }
         tx.commit()?;
         drop(connection);
-        if should_sync_workspace_duckdb_run(snapshot) {
-            if let Err(error) = self.sync_workspace_duckdb_run(workspace_id, snapshot) {
-                warn_workspace_duckdb_run_sync_failure(workspace_id, snapshot, &error);
+        #[cfg(feature = "duckdb-storage")]
+        {
+            if should_sync_workspace_duckdb_run(snapshot) {
+                if let Err(error) = self.sync_workspace_duckdb_run(workspace_id, snapshot) {
+                    warn_workspace_duckdb_run_sync_failure(workspace_id, snapshot, &error);
+                }
             }
         }
         Ok(())
@@ -1988,6 +2022,7 @@ impl PlatformStore {
             )
         })?;
 
+        #[cfg(feature = "duckdb-storage")]
         initialize_workflow_duckdb_if_absent(&db_dir.join(WORKSPACE_DUCKDB_FILE_NAME))?;
 
         Ok(())
@@ -2019,6 +2054,7 @@ impl PlatformStore {
         Ok(())
     }
 
+    #[cfg(feature = "duckdb-storage")]
     fn cleanup_existing_legacy_workflow_duckdbs(&self) -> anyhow::Result<()> {
         let workflow_storage_roots = {
             let connection = self.connection();
@@ -2107,8 +2143,11 @@ impl PlatformStore {
             )
         })?;
 
-        let legacy_duckdb_path = workflow_root.join("db").join(WORKFLOW_DUCKDB_FILE_NAME);
-        cleanup_legacy_workflow_duckdb_file(&legacy_duckdb_path)?;
+        #[cfg(feature = "duckdb-storage")]
+        {
+            let legacy_duckdb_path = workflow_root.join("db").join(WORKFLOW_DUCKDB_FILE_NAME);
+            cleanup_legacy_workflow_duckdb_file(&legacy_duckdb_path)?;
+        }
 
         Ok(())
     }
@@ -2372,6 +2411,7 @@ pub struct StoredRunRecord {
     pub snapshot_json: String,
 }
 
+#[cfg(feature = "duckdb-storage")]
 #[derive(Debug)]
 struct StoredCatalogWorkflow {
     workflow_id: String,
@@ -2379,6 +2419,7 @@ struct StoredCatalogWorkflow {
     storage_owner_user_id: Option<String>,
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn load_workspace_catalog(
     connection: &Connection,
     workspace_id: &str,
@@ -2399,6 +2440,7 @@ fn load_workspace_catalog(
         .with_context(|| format!("workspace `{workspace_id}` was not found"))
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn list_catalog_workflows(
     connection: &Connection,
     workspace_id: &str,
@@ -2423,6 +2465,7 @@ fn list_catalog_workflows(
     Ok(workflows)
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn open_catalog_duckdb(database_path: &Path) -> anyhow::Result<DuckDbConnection> {
     initialize_workflow_duckdb(database_path)?;
     DuckDbConnection::open(database_path).with_context(|| {
@@ -2433,6 +2476,7 @@ fn open_catalog_duckdb(database_path: &Path) -> anyhow::Result<DuckDbConnection>
     })
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn load_workspace_catalog_summaries(
     duckdb: &DuckDbConnection,
 ) -> anyhow::Result<Vec<WorkspaceCatalogSchemaSummary>> {
@@ -2475,6 +2519,7 @@ fn load_workspace_catalog_summaries(
     Ok(schemas)
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn load_workspace_catalog_table_summaries(
     duckdb: &DuckDbConnection,
     schema_name: &str,
@@ -2515,6 +2560,7 @@ fn load_workspace_catalog_table_summaries(
     Ok(tables)
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn protected_workspace_catalog_table_reason(schema_name: &str, table_name: &str) -> Option<String> {
     match (schema_name.trim(), table_name.trim()) {
         ("runs", "workflow_runs")
@@ -2528,6 +2574,7 @@ fn protected_workspace_catalog_table_reason(schema_name: &str, table_name: &str)
     }
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn load_active_workflow_definition(
     connection: &Connection,
     workspace_id: &str,
@@ -2556,6 +2603,7 @@ fn load_active_workflow_definition(
     Ok(Some((current_version, definition)))
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn clear_deleted_catalog_table_node_references(
     workflow_definition: &mut WorkflowDefinition,
     schema_name: &str,
@@ -2620,6 +2668,7 @@ fn clear_deleted_catalog_table_node_references(
     nodes
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn build_catalog_table_delete_plan(
     connection: &Connection,
     workspace_id: &str,
@@ -2695,6 +2744,7 @@ fn build_catalog_table_delete_plan(
     })
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn persist_catalog_table_workflow_updates(
     connection: &mut Connection,
     workspace_id: &str,
@@ -2739,6 +2789,7 @@ fn persist_catalog_table_workflow_updates(
     Ok(())
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn workspace_catalog_schema_exists(
     duckdb: &DuckDbConnection,
     schema_name: &str,
@@ -2757,6 +2808,7 @@ fn workspace_catalog_schema_exists(
     Ok(exists.is_some())
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn workspace_catalog_table_exists(
     duckdb: &DuckDbConnection,
     schema_name: &str,
@@ -2777,6 +2829,7 @@ fn workspace_catalog_table_exists(
     Ok(exists.is_some())
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn import_attached_legacy_workflow_duckdb_tables(
     duckdb: &DuckDbConnection,
     legacy_tables: &[LegacyWorkflowDuckDbTableRef],
@@ -2831,6 +2884,7 @@ fn import_attached_legacy_workflow_duckdb_tables(
     })
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn existing_workspace_catalog_tables_for_legacy_import(
     duckdb: &DuckDbConnection,
     legacy_tables: &[LegacyWorkflowDuckDbTableRef],
@@ -2848,10 +2902,12 @@ fn existing_workspace_catalog_tables_for_legacy_import(
     Ok(existing_tables)
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn format_catalog_table_name(schema_name: &str, table_name: &str) -> String {
     format!("{schema_name}.{table_name}")
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn load_workspace_catalog_columns(
     duckdb: &DuckDbConnection,
     schema_name: &str,
@@ -2879,6 +2935,7 @@ fn load_workspace_catalog_columns(
     Ok(columns)
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn normalize_workspace_catalog_query(query: &str) -> anyhow::Result<String> {
     let trimmed = query.trim();
     let without_trailing_semicolons = trimmed.trim_end_matches(';').trim();
@@ -2906,12 +2963,14 @@ fn normalize_workspace_catalog_query(query: &str) -> anyhow::Result<String> {
     Ok(without_trailing_semicolons.to_string())
 }
 
+#[cfg(feature = "duckdb-storage")]
 #[derive(serde::Deserialize)]
 struct DuckDbDescribeColumn {
     column_name: String,
     column_type: String,
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn open_catalog_duckdb_read_only(database_path: &Path) -> anyhow::Result<DuckDbConnection> {
     DuckDbConnection::open_with_flags(
         database_path,
@@ -2925,6 +2984,7 @@ fn open_catalog_duckdb_read_only(database_path: &Path) -> anyhow::Result<DuckDbC
     })
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn map_duckdb_catalog_query_error(error: duckdb::Error) -> anyhow::Error {
     let detail = error.to_string();
     let detail = if detail.contains("Out of Memory Error") {
@@ -2938,6 +2998,7 @@ fn map_duckdb_catalog_query_error(error: duckdb::Error) -> anyhow::Error {
     anyhow!("DuckDB query failed: {detail}")
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn describe_workspace_catalog_query(
     database_path: &Path,
     query: &str,
@@ -2966,6 +3027,7 @@ fn describe_workspace_catalog_query(
         .collect())
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn execute_workspace_catalog_query_rows(
     database_path: &Path,
     query: &str,
@@ -2995,6 +3057,7 @@ fn execute_workspace_catalog_query_rows(
     Ok(rows)
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn stringify_catalog_query_cell_ref(value: ValueRef<'_>) -> Option<String> {
     match value {
         ValueRef::Null => None,
@@ -3304,6 +3367,7 @@ fn lookup_workspace_storage_owner_user_id(
         .ok_or_else(|| anyhow!("workspace `{workspace_id}` does not have a storage owner"))
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn persist_workspace_duckdb_run_snapshot(
     database_path: &Path,
     workspace_id: &str,
@@ -3494,6 +3558,7 @@ fn persist_workspace_duckdb_run_snapshot(
     Ok(())
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn summarize_typed_value_preview(value: &TypedValue) -> Option<String> {
     if let Some(text) = value.as_text() {
         return Some(truncate_for_preview(text, 160));
@@ -3504,14 +3569,17 @@ fn summarize_typed_value_preview(value: &TypedValue) -> Option<String> {
         .map(|text| truncate_for_preview(text.as_str(), 160))
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn quote_duckdb_identifier(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn quote_duckdb_string_literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn extract_mirrored_table_output_payload(
     node_run: &api_contract::NodeRunSnapshot,
 ) -> anyhow::Result<Option<MirroredTableOutputPayload>> {
@@ -3573,6 +3641,7 @@ fn extract_mirrored_table_output_payload(
     Ok(Some(payload))
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn ensure_mirrored_table_output_table(
     connection: &DuckDbConnection,
     payload: &MirroredTableOutputPayload,
@@ -3632,6 +3701,7 @@ fn ensure_mirrored_table_output_table(
     Ok(qualified_table)
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn insert_mirrored_table_output_row(
     connection: &DuckDbConnection,
     qualified_table: &str,
@@ -3679,6 +3749,7 @@ fn insert_mirrored_table_output_row(
     Ok(())
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn build_mirrored_schema_table_columns_from_definition(
     columns: &[MirroredTableSchemaColumnPayload],
     primary_key: &[String],
@@ -3796,6 +3867,7 @@ fn build_mirrored_schema_table_columns_from_definition(
     Ok(column_definitions.join(", "))
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn build_mirrored_source_table_select(
     payload: &MirroredTableOutputPayload,
     run_id: &str,
@@ -3864,6 +3936,7 @@ fn build_mirrored_source_table_select(
     Ok(sql)
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn materialize_mirrored_schema_table_output(
     connection: &DuckDbConnection,
     payload: &MirroredTableOutputPayload,
@@ -3931,6 +4004,7 @@ fn materialize_mirrored_schema_table_output(
     Ok(())
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn materialize_mirrored_source_table_output(
     connection: &DuckDbConnection,
     payload: &MirroredTableOutputPayload,
@@ -3961,6 +4035,7 @@ fn materialize_mirrored_source_table_output(
     Ok(())
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn materialize_mirrored_table_output(
     connection: &DuckDbConnection,
     snapshot: &RunSnapshot,
@@ -4050,6 +4125,7 @@ fn materialize_mirrored_table_output(
     Ok(())
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn should_sync_workspace_duckdb_run(snapshot: &RunSnapshot) -> bool {
     if !workspace_duckdb_run_sync_enabled() {
         return false;
@@ -4061,6 +4137,7 @@ fn should_sync_workspace_duckdb_run(snapshot: &RunSnapshot) -> bool {
     )
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn warn_workspace_duckdb_run_sync_failure(
     workspace_id: &str,
     snapshot: &RunSnapshot,
@@ -4074,6 +4151,7 @@ fn warn_workspace_duckdb_run_sync_failure(
     );
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn workspace_duckdb_run_sync_enabled() -> bool {
     #[cfg(test)]
     if let Some(enabled) =
@@ -4090,12 +4168,13 @@ fn workspace_duckdb_run_sync_enabled() -> bool {
     matches!(enabled_value.as_deref(), Some("1" | "true" | "yes" | "on"))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "duckdb-storage"))]
 thread_local! {
     static WORKSPACE_DUCKDB_RUN_SYNC_ENABLED_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
         const { std::cell::Cell::new(None) };
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn truncate_for_preview(value: &str, max_chars: usize) -> String {
     let mut preview = value.trim().chars().take(max_chars).collect::<String>();
     if value.chars().count() > max_chars {
@@ -4599,6 +4678,7 @@ fn unique_test_storage_root() -> PathBuf {
     std::env::temp_dir().join(format!("stitchly-test-storage-{}", Uuid::new_v4().simple()))
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn initialize_workflow_duckdb(database_path: &Path) -> anyhow::Result<()> {
     let connection = DuckDbConnection::open(database_path)
         .with_context(|| format!("failed to open duckdb at `{}`", database_path.display()))?;
@@ -4615,6 +4695,7 @@ fn initialize_workflow_duckdb(database_path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn initialize_workflow_duckdb_if_absent(database_path: &Path) -> anyhow::Result<()> {
     if database_path.exists() {
         return Ok(());
@@ -4623,6 +4704,7 @@ fn initialize_workflow_duckdb_if_absent(database_path: &Path) -> anyhow::Result<
     initialize_workflow_duckdb(database_path)
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn reset_workspace_duckdb_run_mirror_tables(database_path: &Path) -> anyhow::Result<()> {
     let connection = DuckDbConnection::open(database_path).with_context(|| {
         format!(
@@ -4645,6 +4727,7 @@ fn reset_workspace_duckdb_run_mirror_tables(database_path: &Path) -> anyhow::Res
     Ok(())
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn workspace_duckdb_run_mirror_tables_have_primary_keys(
     database_path: &Path,
 ) -> anyhow::Result<bool> {
@@ -4669,6 +4752,7 @@ fn workspace_duckdb_run_mirror_tables_have_primary_keys(
     Ok(primary_key_count > 0)
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn quarantine_workflow_duckdb_file(
     database_path: &Path,
     reason: &str,
@@ -4676,6 +4760,7 @@ fn quarantine_workflow_duckdb_file(
     quarantine_duckdb_file(database_path, "corrupt", reason)
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn quarantine_duckdb_file(
     database_path: &Path,
     quarantine_kind: &str,
@@ -4724,6 +4809,7 @@ fn quarantine_duckdb_file(
     Ok(Some(quarantine_path))
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn remove_duckdb_file_and_sidecars(database_path: &Path) -> anyhow::Result<()> {
     if database_path.exists() {
         fs::remove_file(database_path).with_context(|| {
@@ -4749,12 +4835,14 @@ fn remove_duckdb_file_and_sidecars(database_path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn duckdb_sidecar_path(database_path: &Path, sidecar_extension: &str) -> PathBuf {
     let mut sidecar_path = database_path.as_os_str().to_owned();
     sidecar_path.push(format!(".{sidecar_extension}"));
     PathBuf::from(sidecar_path)
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn cleanup_legacy_workflow_duckdb_file(database_path: &Path) -> anyhow::Result<Option<PathBuf>> {
     if !database_path.exists() {
         return Ok(None);
@@ -4791,6 +4879,7 @@ fn cleanup_legacy_workflow_duckdb_file(database_path: &Path) -> anyhow::Result<O
     Ok(None)
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn checkpoint_legacy_workflow_duckdb(database_path: &Path) -> anyhow::Result<()> {
     let connection = DuckDbConnection::open(database_path).with_context(|| {
         format!(
@@ -4803,10 +4892,12 @@ fn checkpoint_legacy_workflow_duckdb(database_path: &Path) -> anyhow::Result<()>
         .context("legacy workflow DuckDB checkpoint failed")
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn legacy_workflow_duckdb_has_user_tables(database_path: &Path) -> anyhow::Result<bool> {
     Ok(!list_legacy_workflow_duckdb_user_tables(database_path)?.is_empty())
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn list_legacy_workflow_duckdb_user_tables(
     database_path: &Path,
 ) -> anyhow::Result<Vec<LegacyWorkflowDuckDbTableRef>> {
@@ -4840,6 +4931,7 @@ fn list_legacy_workflow_duckdb_user_tables(
         .collect())
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn is_legacy_workflow_duckdb_system_table(schema_name: &str, table_name: &str) -> bool {
     matches!(
         (schema_name, table_name),
@@ -4850,6 +4942,7 @@ fn is_legacy_workflow_duckdb_system_table(schema_name: &str, table_name: &str) -
     )
 }
 
+#[cfg(feature = "duckdb-storage")]
 impl PlatformStore {
     fn sync_workspace_duckdb_run(
         &self,
@@ -7912,6 +8005,7 @@ fn run_status_to_db(status: &api_contract::RunStatus) -> &'static str {
     }
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn node_run_status_to_db(status: &api_contract::NodeRunStatus) -> &'static str {
     match status {
         api_contract::NodeRunStatus::Pending => "pending",
@@ -7935,6 +8029,7 @@ fn trigger_kind_to_db(kind: &TriggerKind) -> &'static str {
     }
 }
 
+#[cfg(feature = "duckdb-storage")]
 fn data_type_to_db(data_type: &workflow_schema::DataType) -> &'static str {
     match data_type {
         workflow_schema::DataType::Bytes => "bytes",

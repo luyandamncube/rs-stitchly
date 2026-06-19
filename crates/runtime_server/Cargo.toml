@@ -4,8 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["bundled-duckdb", "full-adapters"]
-bundled-duckdb = ["duckdb/bundled"]
+default = ["duckdb-storage", "bundled-duckdb", "full-adapters"]
+duckdb-storage = ["dep:duckdb"]
+bundled-duckdb = ["duckdb-storage", "duckdb/bundled"]
 full-adapters = ["dep:runtime_adapters"]
 
 [dependencies]
@@ -14,7 +15,7 @@ api_contract = { path = "../api_contract" }
 argon2 = "0.5.3"
 axum = { workspace = true }
 chrono = { workspace = true }
-duckdb = { version = "1.2.2", default-features = false }
+duckdb = { version = "1.2.2", default-features = false, optional = true }
 futures = { workspace = true }
 node_registry = { path = "../node_registry" }
 rand_core = { version = "0.6.4", features = ["getrandom"] }

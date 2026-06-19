@@ -10,6 +10,7 @@ chrono = { workspace = true }
 duckdb = { version = "1.2.2", features = ["bundled", "parquet"] }
 node_registry = { path = "../node_registry" }
 reqwest = { version = "0.12.24", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+runtime_adapter_contract = { path = "../runtime_adapter_contract" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

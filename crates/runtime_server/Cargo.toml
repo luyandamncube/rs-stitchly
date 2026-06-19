@@ -3,17 +3,24 @@ name = "runtime_server"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["bundled-duckdb", "full-adapters"]
+bundled-duckdb = ["duckdb/bundled"]
+full-adapters = ["dep:runtime_adapters"]
+
 [dependencies]
 anyhow = { workspace = true }
 api_contract = { path = "../api_contract" }
 argon2 = "0.5.3"
 axum = { workspace = true }
 chrono = { workspace = true }
-duckdb = { version = "1.2.2", features = ["bundled", "parquet"] }
+duckdb = { version = "1.2.2", default-features = false }
 futures = { workspace = true }
+node_registry = { path = "../node_registry" }
 rand_core = { version = "0.6.4", features = ["getrandom"] }
 reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls"] }
 rusqlite = { version = "0.32.1", features = ["bundled"] }
+runtime_adapters = { path = "../runtime_adapters", optional = true }
 runtime_core = { path = "../runtime_core" }
 serde = { workspace = true }
 serde_json = { workspace = true }

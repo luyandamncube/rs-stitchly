@@ -17,19 +17,22 @@ use api_contract::{
 };
 use chrono::Utc;
 use node_registry::NodeRegistry;
-use runtime_adapters::{AdapterError, AdapterExecutionContext, PortValues, RuntimeAdapters};
+use runtime_adapter_contract::{
+    AdapterError, AdapterExecutionContext, NodeExecutionResult, NodeExecutor, PortValues,
+};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use thiserror::Error;
 use tokio::sync::{broadcast, Notify, RwLock};
 use tokio::task;
 use tokio::time::{sleep, Duration};
 use uuid::Uuid;
-use workflow_schema::{WorkflowDefinition, WorkflowNode, CURRENT_SCHEMA_VERSION};
+use workflow_schema::{TypedValue, WorkflowDefinition, WorkflowNode, CURRENT_SCHEMA_VERSION};
 
 #[derive(Clone)]
 pub struct RuntimeService {
     registry: Arc<NodeRegistry>,
-    adapters: Arc<RuntimeAdapters>,
+    adapters: Arc<dyn NodeExecutor>,
     state: Arc<RwLock<RuntimeState>>,
     connections: Arc<Vec<ConnectionSummary>>,
 }
@@ -76,6 +79,267 @@ pub enum RuntimeError {
     RunNotFound(String),
 }
 
+#[derive(Clone, Debug, Default)]
+struct LightRuntimeExecutor;
+
+#[derive(Deserialize)]
+struct LightTextInputConfig {
+    text: String,
+    #[serde(default)]
+    include_line_breaks: Option<bool>,
+    #[serde(default)]
+    preserve_whitespace: Option<bool>,
+    #[serde(default)]
+    trim_mode: Option<LightTextTrimMode>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum LightTextTrimMode {
+    Automatic,
+    Trim,
+    Exact,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum LightTransformOperation {
+    Identity,
+    Uppercase,
+    Trim,
+}
+
+#[derive(Deserialize)]
+struct LightTextTransformConfig {
+    #[serde(default)]
+    operation: Option<LightTransformOperation>,
+}
+
+#[derive(Deserialize)]
+struct LightPreviewOutputConfig {
+    #[serde(default)]
+    title: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct LightSendEmailConfig {
+    to: String,
+    subject: String,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(default)]
+    body_mode: Option<LightSendEmailBodyMode>,
+    #[serde(default)]
+    body_text: Option<String>,
+    #[serde(default)]
+    connection_id: Option<String>,
+    #[serde(default)]
+    content_type: Option<String>,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum LightSendEmailBodyMode {
+    Input,
+    Custom,
+}
+
+impl NodeExecutor for LightRuntimeExecutor {
+    fn execute_with_context(
+        &self,
+        definition: &node_registry::NodeDefinition,
+        node: &WorkflowNode,
+        inputs: &PortValues,
+        _context: &AdapterExecutionContext,
+    ) -> Result<NodeExecutionResult, AdapterError> {
+        match definition.type_id.as_str() {
+            "text_input" => execute_light_text_input(node),
+            "text_transform" => execute_light_text_transform(node, inputs),
+            "preview_output" => execute_light_preview_output(node, inputs),
+            "send_email" => execute_light_send_email(node, inputs),
+            _ => Err(AdapterError::UnsupportedNode(definition.type_id.clone())),
+        }
+    }
+}
+
+fn execute_light_text_input(node: &WorkflowNode) -> Result<NodeExecutionResult, AdapterError> {
+    let config: LightTextInputConfig =
+        serde_json::from_value(node.config.clone()).map_err(|error| {
+            AdapterError::InvalidConfig {
+                node_id: node.node_id.clone(),
+                message: error.to_string(),
+            }
+        })?;
+
+    let mut text = config.text.replace("\r\n", "\n").replace('\r', "\n");
+
+    if !config.include_line_breaks.unwrap_or(true) {
+        text = text.replace('\n', " ");
+    }
+
+    if !config.preserve_whitespace.unwrap_or(true) {
+        text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    }
+
+    let text = match config.trim_mode {
+        Some(LightTextTrimMode::Exact) => text,
+        Some(LightTextTrimMode::Trim) => text.trim().to_string(),
+        Some(LightTextTrimMode::Automatic) | None => {
+            if config.preserve_whitespace.unwrap_or(true) {
+                text
+            } else {
+                text.trim().to_string()
+            }
+        }
+    };
+
+    let mut outputs = PortValues::new();
+    outputs.insert("text".to_string(), TypedValue::text(text.clone()));
+
+    Ok(NodeExecutionResult {
+        outputs,
+        logs: vec![format!(
+            "Loaded {} characters from text input.",
+            text.chars().count()
+        )],
+    })
+}
+
+fn execute_light_text_transform(
+    node: &WorkflowNode,
+    inputs: &PortValues,
+) -> Result<NodeExecutionResult, AdapterError> {
+    let config: LightTextTransformConfig =
+        serde_json::from_value(node.config.clone()).map_err(|error| {
+            AdapterError::InvalidConfig {
+                node_id: node.node_id.clone(),
+                message: error.to_string(),
+            }
+        })?;
+    let input = inputs
+        .get("source")
+        .ok_or_else(|| AdapterError::MissingInput {
+            node_id: node.node_id.clone(),
+            port: "source".to_string(),
+        })?
+        .as_text()
+        .ok_or_else(|| AdapterError::TextTypeMismatch {
+            node_id: node.node_id.clone(),
+            port: "source".to_string(),
+        })?;
+
+    let operation = config
+        .operation
+        .unwrap_or(LightTransformOperation::Identity);
+    let (output_text, operation_name) = match operation {
+        LightTransformOperation::Identity => (input.to_string(), "identity"),
+        LightTransformOperation::Uppercase => (input.to_uppercase(), "uppercase"),
+        LightTransformOperation::Trim => (input.trim().to_string(), "trim"),
+    };
+
+    let mut outputs = PortValues::new();
+    outputs.insert("text".to_string(), TypedValue::text(output_text));
+
+    Ok(NodeExecutionResult {
+        outputs,
+        logs: vec![format!("Applied `{operation_name}` text transform.")],
+    })
+}
+
+fn execute_light_preview_output(
+    node: &WorkflowNode,
+    inputs: &PortValues,
+) -> Result<NodeExecutionResult, AdapterError> {
+    let config: LightPreviewOutputConfig =
+        serde_json::from_value(node.config.clone()).map_err(|error| {
+            AdapterError::InvalidConfig {
+                node_id: node.node_id.clone(),
+                message: error.to_string(),
+            }
+        })?;
+    let input = inputs
+        .get("text")
+        .ok_or_else(|| AdapterError::MissingInput {
+            node_id: node.node_id.clone(),
+            port: "text".to_string(),
+        })?
+        .as_text()
+        .ok_or_else(|| AdapterError::TextTypeMismatch {
+            node_id: node.node_id.clone(),
+            port: "text".to_string(),
+        })?;
+    let heading = config.title.unwrap_or_else(|| "Preview".to_string());
+
+    Ok(NodeExecutionResult {
+        outputs: PortValues::new(),
+        logs: vec![format!("{heading}: {input}")],
+    })
+}
+
+fn execute_light_send_email(
+    node: &WorkflowNode,
+    inputs: &PortValues,
+) -> Result<NodeExecutionResult, AdapterError> {
+    let config: LightSendEmailConfig =
+        serde_json::from_value(node.config.clone()).map_err(|error| {
+            AdapterError::InvalidConfig {
+                node_id: node.node_id.clone(),
+                message: error.to_string(),
+            }
+        })?;
+    let upstream_body = match inputs.get("body") {
+        Some(value) => Some(
+            value
+                .as_text()
+                .ok_or_else(|| AdapterError::TextTypeMismatch {
+                    node_id: node.node_id.clone(),
+                    port: "body".to_string(),
+                })?
+                .to_string(),
+        ),
+        None => None,
+    };
+    let configured_body = config
+        .body_text
+        .clone()
+        .or(config.body.clone())
+        .unwrap_or_default();
+    let body_mode = config.body_mode.unwrap_or_else(|| {
+        if upstream_body.is_some() || configured_body.trim().is_empty() {
+            LightSendEmailBodyMode::Input
+        } else {
+            LightSendEmailBodyMode::Custom
+        }
+    });
+    let body = match body_mode {
+        LightSendEmailBodyMode::Input => {
+            upstream_body.ok_or_else(|| AdapterError::MissingInput {
+                node_id: node.node_id.clone(),
+                port: "body".to_string(),
+            })?
+        }
+        LightSendEmailBodyMode::Custom => {
+            if configured_body.trim().is_empty() {
+                return Err(AdapterError::InvalidConfig {
+                    node_id: node.node_id.clone(),
+                    message: "custom body mode requires non-empty `body_text`.".to_string(),
+                });
+            }
+            configured_body
+        }
+    };
+    let content_type = config.content_type.as_deref().unwrap_or("text/plain");
+    let connection_id = config.connection_id.as_deref().unwrap_or("default_mailer");
+
+    Ok(NodeExecutionResult {
+        outputs: PortValues::new(),
+        logs: vec![format!(
+            "Queued {content_type} email via `{connection_id}` to {} with subject `{}`: {}",
+            config.to, config.subject, body
+        )],
+    })
+}
+
 impl Default for RuntimeService {
     fn default() -> Self {
         Self::new(NodeRegistry::builtin())
@@ -84,9 +348,16 @@ impl Default for RuntimeService {
 
 impl RuntimeService {
     pub fn new(registry: NodeRegistry) -> Self {
+        Self::with_executor(registry, LightRuntimeExecutor::default())
+    }
+
+    pub fn with_executor<E>(registry: NodeRegistry, executor: E) -> Self
+    where
+        E: NodeExecutor + 'static,
+    {
         Self {
             registry: Arc::new(registry),
-            adapters: Arc::new(RuntimeAdapters::default()),
+            adapters: Arc::new(executor),
             state: Arc::new(RwLock::new(RuntimeState {
                 runs: HashMap::new(),
             })),
@@ -278,7 +549,8 @@ impl RuntimeService {
 
             if node.type_id == "table_merge" {
                 let items_key = (node.node_id.clone(), "items".to_string());
-                let items_input_count = incoming_counts.get(&items_key).copied().unwrap_or_default();
+                let items_input_count =
+                    incoming_counts.get(&items_key).copied().unwrap_or_default();
                 let write_policy = node
                     .config
                     .get("write_policy")
@@ -2803,15 +3075,18 @@ fn validate_node_config(node: &WorkflowNode) -> Option<ValidationIssue> {
                     Value::Object(entries)
                         if entries.iter().all(|(table_name, columns)| {
                             !table_name.trim().is_empty()
-                                && columns.as_array().map(|columns| {
-                                    !columns.is_empty()
-                                        && columns.iter().all(|column| {
-                                            column
-                                                .as_str()
-                                                .map(|value| !value.trim().is_empty())
-                                                .unwrap_or(false)
-                                        })
-                                }).unwrap_or(false)
+                                && columns
+                                    .as_array()
+                                    .map(|columns| {
+                                        !columns.is_empty()
+                                            && columns.iter().all(|column| {
+                                                column
+                                                    .as_str()
+                                                    .map(|value| !value.trim().is_empty())
+                                                    .unwrap_or(false)
+                                            })
+                                    })
+                                    .unwrap_or(false)
                         }) => {}
                     Value::Object(_) => {
                         return Some(issue(
@@ -3164,6 +3439,13 @@ mod tests {
 
     use super::{RuntimeService, INTERNAL_PARAM_WORKFLOW_DUCKDB_PATH};
 
+    fn runtime_with_full_adapters() -> RuntimeService {
+        RuntimeService::with_executor(
+            node_registry::NodeRegistry::builtin(),
+            runtime_adapters::RuntimeAdapters::default(),
+        )
+    }
+
     fn unique_test_duckdb_path(label: &str) -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -3326,7 +3608,7 @@ mod tests {
 
     #[tokio::test]
     async fn dolt_repo_source_can_feed_dolt_dump_during_runtime_execution() {
-        let runtime = RuntimeService::default();
+        let runtime = runtime_with_full_adapters();
         let workflow = WorkflowDefinition {
             schema_version: 1,
             workflow_id: "wf_dolt_repo_source_dump_runtime".to_string(),
@@ -3394,7 +3676,7 @@ mod tests {
 
     #[tokio::test]
     async fn bootstrap_dolt_ingest_persists_staging_merge_and_checkpoint_tables() {
-        let runtime = RuntimeService::default();
+        let runtime = runtime_with_full_adapters();
         let duckdb_path = unique_test_duckdb_path("bootstrap_dolt_ingest");
         let workflow = WorkflowDefinition {
             schema_version: 1,

@@ -12,12 +12,20 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::Utc;
 use duckdb::Connection as DuckDbConnection;
 use node_registry::NodeDefinition;
+pub use runtime_adapter_contract::{
+    AdapterError, AdapterExecutionContext, NodeExecutionResult, NodeExecutor, PortValues,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use thiserror::Error;
 use workflow_schema::{DataType, TypedValue, WorkflowNode};
 
-pub type PortValues = BTreeMap<String, TypedValue>;
+mod load_to_duckdb_core;
+
+use load_to_duckdb_core::{
+    build_load_to_duckdb_file_projection_sql as build_load_to_duckdb_file_projection_sql_from_columns,
+    build_load_to_duckdb_manifest_path, build_load_to_duckdb_staging_table_name,
+    quote_duckdb_identifier, quote_duckdb_string_literal, LoadToDuckDbFileProjection,
+};
 
 fn panic_payload_to_string(payload: Box<dyn Any + Send + 'static>) -> String {
     if let Some(message) = payload.downcast_ref::<&str>() {
@@ -32,41 +40,6 @@ fn panic_payload_to_string(payload: Box<dyn Any + Send + 'static>) -> String {
 
 #[derive(Clone, Debug, Default)]
 pub struct RuntimeAdapters;
-
-#[derive(Clone, Debug, Default)]
-pub struct AdapterExecutionContext {
-    pub workflow_id: Option<String>,
-    pub run_id: Option<String>,
-    pub workspace_duckdb_path: Option<PathBuf>,
-    pub workflow_root_path: Option<PathBuf>,
-    pub workflow_files_root: Option<PathBuf>,
-    pub workflow_duckdb_path: Option<PathBuf>,
-    pub disable_live_dolt: bool,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct NodeExecutionResult {
-    pub outputs: PortValues,
-    pub logs: Vec<String>,
-}
-
-#[derive(Debug, Error)]
-pub enum AdapterError {
-    #[error("invalid config for node `{node_id}`: {message}")]
-    InvalidConfig { node_id: String, message: String },
-    #[error("missing input port `{port}` for node `{node_id}`")]
-    MissingInput { node_id: String, port: String },
-    #[error("text value expected on port `{port}` for node `{node_id}`")]
-    TextTypeMismatch { node_id: String, port: String },
-    #[error("dataset ref value expected on port `{port}` for node `{node_id}`")]
-    DatasetRefTypeMismatch { node_id: String, port: String },
-    #[error("connection failed for node `{node_id}`: {message}")]
-    ConnectionFailed { node_id: String, message: String },
-    #[error("execution failed for node `{node_id}`: {message}")]
-    ExecutionFailed { node_id: String, message: String },
-    #[error("unsupported node type `{0}`")]
-    UnsupportedNode(String),
-}
 
 impl RuntimeAdapters {
     pub fn execute(
@@ -112,6 +85,18 @@ impl RuntimeAdapters {
             "send_email" => execute_send_email(node, inputs),
             _ => Err(AdapterError::UnsupportedNode(definition.type_id.clone())),
         }
+    }
+}
+
+impl NodeExecutor for RuntimeAdapters {
+    fn execute_with_context(
+        &self,
+        definition: &NodeDefinition,
+        node: &WorkflowNode,
+        inputs: &PortValues,
+        context: &AdapterExecutionContext,
+    ) -> Result<NodeExecutionResult, AdapterError> {
+        RuntimeAdapters::execute_with_context(self, definition, node, inputs, context)
     }
 }
 
@@ -2387,57 +2372,19 @@ fn build_load_to_duckdb_file_projection_sql(
     source_table: &str,
     node_id: &str,
 ) -> Result<String, AdapterError> {
-    let source_columns = load_duckdb_query_column_names(connection, scan_sql, node_id)?
-        .into_iter()
-        .map(|column| column.to_ascii_lowercase())
-        .collect::<Vec<_>>();
-    let mut metadata_projections = Vec::new();
+    let source_columns = load_duckdb_query_column_names(connection, scan_sql, node_id)?;
 
-    let mut push_metadata_projection = |column_name: &str, expression: String| {
-        if !source_columns.contains(&column_name.to_ascii_lowercase()) {
-            metadata_projections.push(format!(
-                "{expression} as {}",
-                quote_duckdb_identifier(column_name)
-            ));
-        }
-    };
-
-    push_metadata_projection("source_repo", quote_duckdb_string_literal(repository));
-    push_metadata_projection("source_table", quote_duckdb_string_literal(source_table));
-    push_metadata_projection("batch_id", quote_duckdb_string_literal(current_commit));
-    push_metadata_projection(
-        "ingested_at",
-        "cast(current_timestamp as timestamp)".to_string(),
-    );
-    push_metadata_projection("bundle_kind", quote_duckdb_string_literal(bundle_kind));
-    if let Some(previous_commit) = previous_commit {
-        push_metadata_projection(
-            "previous_commit",
-            quote_duckdb_string_literal(previous_commit),
-        );
-    }
-    push_metadata_projection(
-        "current_commit",
-        quote_duckdb_string_literal(current_commit),
-    );
-    push_metadata_projection(
-        "delete_rows_present",
-        if delete_rows_present {
-            "true".to_string()
-        } else {
-            "false".to_string()
+    Ok(build_load_to_duckdb_file_projection_sql_from_columns(
+        scan_sql,
+        &source_columns,
+        &LoadToDuckDbFileProjection {
+            repository,
+            bundle_kind,
+            current_commit,
+            previous_commit,
+            delete_rows_present,
+            source_table,
         },
-    );
-
-    if metadata_projections.is_empty() {
-        return Ok(format!(
-            "select source_data.* from ({scan_sql}) as source_data"
-        ));
-    }
-
-    Ok(format!(
-        "select source_data.*, {} from ({scan_sql}) as source_data",
-        metadata_projections.join(", ")
     ))
 }
 
@@ -3620,14 +3567,6 @@ fn open_recovering_runtime_workflow_duckdb_for_load(
             Ok(Some((recreated_connection, quarantine_path)))
         }
     }
-}
-
-fn quote_duckdb_identifier(identifier: &str) -> String {
-    format!("\"{}\"", identifier.replace('"', "\"\""))
-}
-
-fn quote_duckdb_string_literal(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
 }
 
 fn build_duckdb_column_definition_sql(
@@ -6555,30 +6494,6 @@ fn resolve_load_to_duckdb_diff_bundle(
         repo_family,
         repository,
     })
-}
-
-fn build_load_to_duckdb_manifest_path(
-    repo_family: &str,
-    bundle_kind: &str,
-    previous_commit: Option<&str>,
-    current_commit: &str,
-) -> String {
-    if bundle_kind == "dolt_diff_export_bundle" {
-        format!(
-            "artifacts/load_to_duckdb/{repo_family}/{}_to_{current_commit}/load_manifest.json",
-            previous_commit.unwrap_or("pending_checkpoint")
-        )
-    } else {
-        format!("artifacts/load_to_duckdb/{repo_family}/{current_commit}/load_manifest.json")
-    }
-}
-
-fn build_load_to_duckdb_staging_table_name(
-    repo_family: &str,
-    source_table: &str,
-    suffix: &str,
-) -> String {
-    format!("{repo_family}__{source_table}__{suffix}")
 }
 
 fn build_load_to_duckdb_staging_columns(

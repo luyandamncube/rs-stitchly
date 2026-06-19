@@ -62,6 +62,19 @@ pub struct AppState {
     google_auth: Option<GoogleAuthClient>,
 }
 
+#[cfg(feature = "full-adapters")]
+pub fn default_runtime_service() -> RuntimeService {
+    RuntimeService::with_executor(
+        node_registry::NodeRegistry::builtin(),
+        runtime_adapters::RuntimeAdapters::default(),
+    )
+}
+
+#[cfg(not(feature = "full-adapters"))]
+pub fn default_runtime_service() -> RuntimeService {
+    RuntimeService::default()
+}
+
 const GOOGLE_TOKEN_ENDPOINT: &str = "https://oauth2.googleapis.com/token";
 const GOOGLE_USERINFO_ENDPOINT: &str = "https://openidconnect.googleapis.com/v1/userinfo";
 const OPENAPI_DOC_PATH: &str = "/api-docs/openapi.json";

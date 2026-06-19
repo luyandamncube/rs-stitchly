@@ -12,12 +12,15 @@ This file is the first stop for agents. Keep it short. Load deeper docs only whe
 - `crates/workflow_schema`: canonical workflow graph model and validation types.
 - `crates/api_contract`: request/response and run/event payload contracts crossing the frontend/backend boundary.
 - `crates/node_registry`: built-in node definitions and browser-safe node metadata.
+- `crates/runtime_adapter_contract`: lightweight adapter trait, execution context, result, and error types used by runtime orchestration.
 - `crates/runtime_core`: planning, scheduling, run state, events, logs, cancellation, and runtime orchestration.
 - `crates/runtime_adapters`: built-in node adapter implementations and integration/runtime bridges.
 - `crates/runtime_server`: Axum HTTP/SSE API surface, workspace/workflow endpoints, platform paths.
 - `tests`: shared fixtures and cross-crate integration tests.
 - `design_lab`: isolated static UI studies; not production app code.
 - `docs`: long-lived product and engineering memory.
+
+For dev build modes, light backend builds, and DuckDB linkage tradeoffs, see `docs/02_build/01_dev_build_modes.md`.
 
 ## Context Routing
 
@@ -61,9 +64,18 @@ Prefer the project startup/debug script over ad hoc Cargo commands:
 
 ```bash
 scripts/dev_ui_agent.sh check
+scripts/dev_ui_agent.sh check node-registry
+scripts/dev_ui_agent.sh check adapter-contract
+scripts/dev_ui_agent.sh check adapters
+scripts/dev_ui_agent.sh check core
+scripts/dev_ui_agent.sh check server
+scripts/dev_ui_agent.sh check server-light
+scripts/dev_ui_agent.sh check server-system-duckdb
 scripts/dev_ui_agent.sh test <test-name>
 scripts/dev_ui_agent.sh build
+scripts/dev_ui_agent.sh build server-light
 scripts/dev_ui_agent.sh timings
+scripts/dev_ui_agent.sh timings adapters
 scripts/dev_ui_agent.sh restart --no-open
 ```
 
@@ -74,6 +86,8 @@ CARGO_BUILD_JOBS=1 cargo +nightly -Znext-lockfile-bump ... -j 1
 ```
 
 Preserve this behavior unless the user explicitly asks to tune build parallelism.
+
+The repo has `rust-toolchain.toml` set to `nightly` so bare Cargo and rust-analyzer use the same toolchain family as the dev script. The script does not refresh nightly unless `STITCHLY_CARGO_UPDATE_TOOLCHAIN=1`.
 
 ### One Cargo command at a time
 
@@ -113,7 +127,17 @@ Use the cheapest validation that proves the change.
    scripts/dev_ui_agent.sh check
    ```
 
-   For crate-local Rust changes, a narrower `cargo check -p <crate>` may be cheaper until the project script exposes named check targets. Keep Cargo commands sequential.
+   For crate-local Rust changes, prefer named checks:
+
+   ```bash
+   scripts/dev_ui_agent.sh check node-registry
+   scripts/dev_ui_agent.sh check adapter-contract
+   scripts/dev_ui_agent.sh check adapters
+   scripts/dev_ui_agent.sh check core
+   scripts/dev_ui_agent.sh check server
+   scripts/dev_ui_agent.sh check server-light
+   scripts/dev_ui_agent.sh check server-system-duckdb
+   ```
 
 4. If a specific Rust test is relevant, run:
 
@@ -148,6 +172,20 @@ scripts/dev_ui_agent.sh restart --no-open
 ```
 
 Use `npm run dev:ui:no-open` only when explicitly validating the package-script path.
+
+### Compile timings
+
+Use timing targets to investigate compile bottlenecks without broadening the build more than needed:
+
+```bash
+scripts/dev_ui_agent.sh timings node-registry
+scripts/dev_ui_agent.sh timings adapter-contract
+scripts/dev_ui_agent.sh timings adapters
+scripts/dev_ui_agent.sh timings core
+scripts/dev_ui_agent.sh timings server
+scripts/dev_ui_agent.sh timings server-light
+scripts/dev_ui_agent.sh timings server-system-duckdb
+```
 
 ### Reporting validation
 

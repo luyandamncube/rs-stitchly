@@ -4,7 +4,7 @@ use std::{env, fs, net::SocketAddr, path::Path};
 async fn main() -> anyhow::Result<()> {
     load_local_env_file(".env.server")?;
 
-    let runtime = runtime_core::RuntimeService::default();
+    let runtime = runtime_server::default_runtime_service();
     let database_path =
         env::var("STITCHLY_DB_PATH").unwrap_or_else(|_| ".stitchly/platform.sqlite3".to_string());
     let platform = runtime_server::platform::PlatformStore::open(&database_path)?;

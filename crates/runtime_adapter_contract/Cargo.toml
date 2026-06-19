@@ -1,0 +1,9 @@
+[package]
+name = "runtime_adapter_contract"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+node_registry = { path = "../node_registry" }
+thiserror = { workspace = true }
+workflow_schema = { path = "../workflow_schema" }

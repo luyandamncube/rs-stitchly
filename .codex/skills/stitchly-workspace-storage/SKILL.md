@@ -37,7 +37,7 @@ Use this skill for auth/session behavior, workspace routing, workflow CRUD, loca
 
 ## Validation
 
-- Backend storage/API changes: run the narrow affected package check or test first; load `.codex/skills/stitchly-rust-quality/references/compile-routing.md` when choosing between server check, backend build, and restart.
+- Backend storage/API changes: run the narrow affected package check or test first, usually `scripts/dev_ui_agent.sh check server`; load `.codex/skills/stitchly-rust-quality/references/compile-routing.md` when choosing between server check, backend build, and restart.
 - Frontend workspace/catalog changes: run `corepack pnpm --dir apps/web test --run`.
 - Cross-stack catalog behavior may need the dev UI script: `scripts/dev_ui_agent.sh restart --no-open`, or `scripts/dev_ui_agent.sh restart --no-open --skip-build` when the existing backend binary is enough.
 

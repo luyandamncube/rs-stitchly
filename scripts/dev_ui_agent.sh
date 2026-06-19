@@ -20,6 +20,7 @@ BACKEND_BIND_ADDR="${STITCHLY_SERVER_ADDR:-127.0.0.1:3000}"
 UI_BIND_HOST="${STITCHLY_UI_HOST:-127.0.0.1}"
 UI_PORT="${STITCHLY_UI_PORT:-5173}"
 BACKEND_ENV_FILE="$ROOT_DIR/.env.server"
+BACKEND_FEATURE_MODE="${STITCHLY_BACKEND_FEATURE_MODE:-full}"
 AUTO_INSTALL_PREREQS="${STITCHLY_AUTO_INSTALL_PREREQS:-1}"
 DOLT_LINUX_INSTALL_URL="${STITCHLY_DOLT_LINUX_INSTALL_URL:-https://github.com/dolthub/dolt/releases/latest/download/install.sh}"
 NVM_INSTALL_URL="${STITCHLY_NVM_INSTALL_URL:-https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh}"
@@ -66,20 +67,22 @@ mkdir -p "$PID_DIR" "$LOG_DIR" "$DOLT_HOME_DIR"
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/dev_ui_agent.sh up [--no-open] [--skip-build] [--verbose] [--trace]
-  scripts/dev_ui_agent.sh restart [--no-open] [--skip-build] [--verbose] [--trace]
+  scripts/dev_ui_agent.sh up [--no-open] [--skip-build] [--light] [--verbose] [--trace]
+  scripts/dev_ui_agent.sh restart [--no-open] [--skip-build] [--light] [--verbose] [--trace]
   scripts/dev_ui_agent.sh down
   scripts/dev_ui_agent.sh status
   scripts/dev_ui_agent.sh open
 
 Backend compile/debug helpers:
-  scripts/dev_ui_agent.sh check [--verbose] [--trace]
-      Run cargo check for runtime_server using the same nightly/lockfile/job defaults.
+  scripts/dev_ui_agent.sh check [TARGET] [--verbose] [--trace]
+      Run cargo check for a backend crate using the same nightly/lockfile/job defaults.
+      Targets: server (default), server-light, server-system-duckdb, node-registry, adapter-contract, adapters, core
   scripts/dev_ui_agent.sh test [TEST_FILTER] [--verbose] [--trace] [-- TEST_ARGS...]
       Run cargo test for runtime_server. If TEST_FILTER is provided, only matching tests run.
-  scripts/dev_ui_agent.sh timings [--verbose] [--trace]
-      Build runtime_server with --timings and print the cargo timings report directory.
-  scripts/dev_ui_agent.sh build [--verbose] [--trace]
+  scripts/dev_ui_agent.sh timings [TARGET] [--verbose] [--trace]
+      Run Cargo with --timings for a backend target and print the report directory.
+      Targets: server (default), server-light, server-system-duckdb, node-registry, adapter-contract, adapters, core
+  scripts/dev_ui_agent.sh build [server|server-light|server-system-duckdb] [--verbose] [--trace]
       Build only the runtime_server stitchly-server binary; does not start services.
   scripts/dev_ui_agent.sh clear-cargo-lock [--verbose] [--trace]
       Stop processes currently holding Cargo's build-directory lock, if any.
@@ -114,6 +117,10 @@ Environment overrides:
   STITCHLY_CARGO_UPDATE_TOOLCHAIN
                              Refresh the configured Rust toolchain before backend builds.
                              Default: 0
+  STITCHLY_BACKEND_FEATURE_MODE
+                             Backend feature mode for up/restart/build. Use "full" or "light".
+                             "light" excludes concrete runtime_adapters from the server binary.
+                             Default: full
   STITCHLY_SCCACHE_ENABLED
                              Use sccache as RUSTC_WRAPPER when sccache is on PATH.
                              Default: 1
@@ -735,11 +742,82 @@ run_backend_cargo_args() {
   run_cargo_command_capture env CARGO_BUILD_JOBS="$CARGO_BUILD_JOBS" cargo "${cargo_args[@]}"
 }
 
+backend_cargo_package_for_target() {
+  local target="${1:-server}"
+
+  case "$target" in
+    ""|server|runtime-server|runtime_server|backend)
+      echo "runtime_server"
+      ;;
+    server-light|runtime-server-light|runtime_server_light|backend-light|light)
+      echo "runtime_server"
+      ;;
+    server-system-duckdb|runtime-server-system-duckdb|runtime_server_system_duckdb|system-duckdb)
+      echo "runtime_server"
+      ;;
+    node-registry|node_registry|registry)
+      echo "node_registry"
+      ;;
+    adapter-contract|adapter_contract|runtime-adapter-contract|runtime_adapter_contract|contract)
+      echo "runtime_adapter_contract"
+      ;;
+    adapters|runtime-adapters|runtime_adapters)
+      echo "runtime_adapters"
+      ;;
+    core|runtime-core|runtime_core)
+      echo "runtime_core"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+print_backend_target_help() {
+  echo "Valid targets: server, server-light, server-system-duckdb, node-registry, adapter-contract, adapters, core"
+}
+
+backend_cargo_feature_args_for_target() {
+  local target="${1:-server}"
+
+  case "$target" in
+    server-light|runtime-server-light|runtime_server_light|backend-light|light)
+      echo "--no-default-features"
+      echo "--features"
+      echo "bundled-duckdb"
+      ;;
+    server-system-duckdb|runtime-server-system-duckdb|runtime_server_system_duckdb|system-duckdb)
+      echo "--no-default-features"
+      ;;
+    *)
+      ;;
+  esac
+}
+
+backend_cargo_target_from_feature_mode() {
+  case "$BACKEND_FEATURE_MODE" in
+    ""|full)
+      echo "server"
+      ;;
+    light)
+      echo "server-light"
+      ;;
+    *)
+      echo "Unknown STITCHLY_BACKEND_FEATURE_MODE: $BACKEND_FEATURE_MODE" >&2
+      echo "Use \"full\" or \"light\"." >&2
+      return 1
+      ;;
+  esac
+}
+
 cargo_build_backend_binary() {
+  local target="${1:-server}"
   local status
   local cargo_args=()
+  local feature_args=()
 
   prepare_backend_cargo_base_args
+  mapfile -t feature_args < <(backend_cargo_feature_args_for_target "$target")
 
   cargo_args=(
     "${CARGO_BASE_ARGS[@]}"
@@ -747,6 +825,7 @@ cargo_build_backend_binary() {
     -j "$CARGO_BUILD_JOBS"
     -p runtime_server
     --bin stitchly-server
+    "${feature_args[@]}"
   )
 
   run_backend_cargo_args "${cargo_args[@]}"
@@ -756,16 +835,31 @@ cargo_build_backend_binary() {
 }
 
 cargo_check_runtime_server() {
+  cargo_check_backend_target "server"
+}
+
+cargo_check_backend_target() {
+  local target="${1:-server}"
   local status
   local cargo_args=()
+  local feature_args=()
+  local package
 
   prepare_backend_cargo_base_args
+
+  if ! package="$(backend_cargo_package_for_target "$target")"; then
+    echo "Unknown check target: $target"
+    print_backend_target_help
+    return 1
+  fi
+  mapfile -t feature_args < <(backend_cargo_feature_args_for_target "$target")
 
   cargo_args=(
     "${CARGO_BASE_ARGS[@]}"
     check
     -j "$CARGO_BUILD_JOBS"
-    -p runtime_server
+    -p "$package"
+    "${feature_args[@]}"
   )
 
   run_backend_cargo_args "${cargo_args[@]}"
@@ -802,19 +896,45 @@ cargo_test_runtime_server() {
 }
 
 cargo_timings_runtime_server() {
+  cargo_timings_backend_target "server"
+}
+
+cargo_timings_backend_target() {
+  local target="${1:-server}"
   local status
   local cargo_args=()
+  local feature_args=()
+  local package
 
   prepare_backend_cargo_base_args
 
-  cargo_args=(
-    "${CARGO_BASE_ARGS[@]}"
-    build
-    -j "$CARGO_BUILD_JOBS"
-    -p runtime_server
-    --bin stitchly-server
-    --timings
-  )
+  if ! package="$(backend_cargo_package_for_target "$target")"; then
+    echo "Unknown timings target: $target"
+    print_backend_target_help
+    return 1
+  fi
+  mapfile -t feature_args < <(backend_cargo_feature_args_for_target "$target")
+
+  if [[ "$package" == "runtime_server" ]]; then
+    cargo_args=(
+      "${CARGO_BASE_ARGS[@]}"
+      build
+      -j "$CARGO_BUILD_JOBS"
+      -p runtime_server
+      --bin stitchly-server
+      "${feature_args[@]}"
+      --timings
+    )
+  else
+    cargo_args=(
+      "${CARGO_BASE_ARGS[@]}"
+      check
+      -j "$CARGO_BUILD_JOBS"
+      -p "$package"
+      "${feature_args[@]}"
+      --timings
+    )
+  fi
 
   run_backend_cargo_args "${cargo_args[@]}"
   status=$?
@@ -1113,6 +1233,9 @@ wait_for_ready() {
 
 start_backend() {
   local skip_build="${1:-0}"
+  local backend_build_target
+
+  backend_build_target="$(backend_cargo_target_from_feature_mode)"
 
   clear_stale_pid_file "$BACKEND_PID_FILE"
 
@@ -1145,6 +1268,7 @@ start_backend() {
 
   echo "Starting backend on $BACKEND_BIND_ADDR"
   log_verbose "Backend build log: $BACKEND_LOG_FILE"
+  log_verbose "Backend feature mode: $BACKEND_FEATURE_MODE"
   if [[ "$skip_build" != "0" ]]; then
     if [[ ! -x "$ROOT_DIR/target/debug/stitchly-server" ]]; then
       echo "Cannot skip backend build because target/debug/stitchly-server does not exist."
@@ -1156,7 +1280,7 @@ start_backend() {
     wait_for_cargo_build_lock
     (
       cd "$ROOT_DIR"
-      run_with_log_capture "Backend build" "$BACKEND_LOG_FILE" cargo_build_backend_binary
+      run_with_log_capture "Backend build" "$BACKEND_LOG_FILE" cargo_build_backend_binary "$backend_build_target"
     )
   fi
   (
@@ -1318,6 +1442,9 @@ start_agent() {
       --skip-build)
         skip_backend_build=1
         ;;
+      --light)
+        BACKEND_FEATURE_MODE="light"
+        ;;
       --verbose|--trace)
         ;;
       *)
@@ -1331,6 +1458,7 @@ start_agent() {
   if verbose_enabled; then
     echo "[verbose] Startup flags: verbose=$VERBOSE trace=$TRACE no_open=$((1 - should_open))"
     echo "[verbose] Backend skip build: $skip_backend_build"
+    echo "[verbose] Backend feature mode: $BACKEND_FEATURE_MODE"
     echo "[verbose] State directory: $STATE_DIR"
   fi
 
@@ -1357,16 +1485,27 @@ start_agent() {
 run_backend_build_command() {
   local invalid_args=()
   local arg
+  local target_arg=""
+  local build_target
 
   for arg in "$@"; do
     case "$arg" in
       --verbose|--trace)
         ;;
+      --light)
+        target_arg="server-light"
+        ;;
       *)
-        invalid_args+=("$arg")
+        if [[ -z "$target_arg" ]]; then
+          target_arg="$arg"
+        else
+          invalid_args+=("$arg")
+        fi
         ;;
     esac
   done
+
+  build_target="${target_arg:-$(backend_cargo_target_from_feature_mode)}"
 
   if (( ${#invalid_args[@]} > 0 )); then
     echo "Unknown option(s) for build: ${invalid_args[*]}"
@@ -1374,32 +1513,9 @@ run_backend_build_command() {
     return 1
   fi
 
-  ensure_state_dirs_writable
-  ensure_backend_prerequisites
-  wait_for_cargo_build_lock
-  (
-    cd "$ROOT_DIR"
-    cargo_build_backend_binary
-  )
-}
-
-run_backend_check_command() {
-  local invalid_args=()
-  local arg
-
-  for arg in "$@"; do
-    case "$arg" in
-      --verbose|--trace)
-        ;;
-      *)
-        invalid_args+=("$arg")
-        ;;
-    esac
-  done
-
-  if (( ${#invalid_args[@]} > 0 )); then
-    echo "Unknown option(s) for check: ${invalid_args[*]}"
-    usage
+  if ! backend_cargo_package_for_target "$build_target" >/dev/null; then
+    echo "Unknown build target: $build_target"
+    print_backend_target_help
     return 1
   fi
 
@@ -1408,7 +1524,50 @@ run_backend_check_command() {
   wait_for_cargo_build_lock
   (
     cd "$ROOT_DIR"
-    cargo_check_runtime_server
+    cargo_build_backend_binary "$build_target"
+  )
+}
+
+run_backend_check_command() {
+  local invalid_args=()
+  local arg
+  local target_arg=""
+  local check_target="server"
+
+  for arg in "$@"; do
+    case "$arg" in
+      --verbose|--trace)
+        ;;
+      *)
+        if [[ -z "$target_arg" ]]; then
+          target_arg="$arg"
+        else
+          invalid_args+=("$arg")
+        fi
+        ;;
+    esac
+  done
+
+  check_target="${target_arg:-server}"
+
+  if (( ${#invalid_args[@]} > 0 )); then
+    echo "Unknown option(s) for check: ${invalid_args[*]}"
+    usage
+    return 1
+  fi
+
+  if ! backend_cargo_package_for_target "$check_target" >/dev/null; then
+    echo "Unknown check target: $check_target"
+    print_backend_target_help
+    return 1
+  fi
+
+  ensure_state_dirs_writable
+  ensure_backend_prerequisites
+  wait_for_cargo_build_lock
+  (
+    cd "$ROOT_DIR"
+    cargo_check_backend_target "$check_target"
   )
 }
 
@@ -1438,20 +1597,34 @@ run_backend_test_command() {
 run_backend_timings_command() {
   local invalid_args=()
   local arg
+  local target_arg=""
+  local timings_target="server"
 
   for arg in "$@"; do
     case "$arg" in
       --verbose|--trace)
         ;;
       *)
-        invalid_args+=("$arg")
+        if [[ -z "$target_arg" ]]; then
+          target_arg="$arg"
+        else
+          invalid_args+=("$arg")
+        fi
         ;;
     esac
   done
 
+  timings_target="${target_arg:-server}"
+
   if (( ${#invalid_args[@]} > 0 )); then
     echo "Unknown option(s) for timings: ${invalid_args[*]}"
     usage
+    return 1
+  fi
+
+  if ! backend_cargo_package_for_target "$timings_target" >/dev/null; then
+    echo "Unknown timings target: $timings_target"
+    print_backend_target_help
     return 1
   fi
 
@@ -1460,7 +1633,7 @@ run_backend_timings_command() {
   wait_for_cargo_build_lock
   (
     cd "$ROOT_DIR"
-    cargo_timings_runtime_server
+    cargo_timings_backend_target "$timings_target"
   )
 }
 

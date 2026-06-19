@@ -7,7 +7,8 @@ edition = "2021"
 api_contract = { path = "../api_contract" }
 chrono = { workspace = true }
 node_registry = { path = "../node_registry" }
-runtime_adapters = { path = "../runtime_adapters" }
+runtime_adapter_contract = { path = "../runtime_adapter_contract" }
+serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
@@ -16,3 +17,4 @@ workflow_schema = { path = "../workflow_schema" }
 
 [dev-dependencies]
 duckdb = { version = "1.2.2", features = ["bundled", "parquet"] }
+runtime_adapters = { path = "../runtime_adapters" }

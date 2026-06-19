@@ -1844,6 +1844,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "runtime_adapter_contract"
+version = "0.1.0"
+dependencies = [
+ "node_registry",
+ "thiserror 1.0.69",
+ "workflow_schema",
+]
+
+[[package]]
 name = "runtime_adapters"
 version = "0.1.0"
 dependencies = [
@@ -1853,6 +1862,7 @@ dependencies = [
  "duckdb",
  "node_registry",
  "reqwest",
+ "runtime_adapter_contract",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -1867,7 +1877,9 @@ dependencies = [
  "chrono",
  "duckdb",
  "node_registry",
+ "runtime_adapter_contract",
  "runtime_adapters",
+ "serde",
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
@@ -1887,8 +1899,10 @@ dependencies = [
  "duckdb",
  "futures",
  "http-body-util",
+ "node_registry",
  "rand_core 0.6.4",
  "reqwest",
+ "runtime_adapters",
  "runtime_core",
  "rusqlite",
  "serde",

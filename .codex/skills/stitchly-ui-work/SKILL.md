@@ -38,6 +38,7 @@ Do not load `docs/02_build/00_llm_build_prompt.md` for normal UI work.
 3. Check design-lab precedents before inventing a new visual pattern.
 4. Keep production UI aligned with approved lab patterns; do not wire backend behavior into `design_lab`.
 5. For substantial UI changes, run `corepack pnpm --dir apps/web test --run` and `corepack pnpm --dir apps/web typecheck` when practical.
+6. Do not run Rust validation for frontend-only or design-lab-only changes. Load `.codex/skills/stitchly-rust-quality/references/compile-routing.md` only when API contracts or backend behavior are touched.
 
 ## Token Traps
 

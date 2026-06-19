@@ -38,9 +38,12 @@ Use this skill when adding or changing a node type, node definition, node UI, ad
 
 ## Validation
 
-- Rust contract/runtime changes: run `cargo test --workspace` or affected package tests.
+- Node metadata-only changes: prefer `cargo check -p node_registry` or the future named script check before server builds.
+- Adapter behavior changes: prefer `cargo check -p runtime_adapters`; expect DuckDB/parquet to pull Arrow crates.
+- Rust contract/runtime changes: run affected package tests first; use `cargo test --workspace` only when the change is cross-crate or risky.
 - Frontend node UI changes: run `corepack pnpm --dir apps/web test --run`.
 - Fixture changes: inspect generated or copied JSON carefully for drift.
+- For detailed compile routing, load `.codex/skills/stitchly-rust-quality/references/compile-routing.md`.
 
 ## Token Traps
 

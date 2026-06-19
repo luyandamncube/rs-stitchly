@@ -18,6 +18,8 @@ Use this skill for Rust implementation and review work. Apply concise, repo-spec
 
 Search by type name, endpoint path, node type ID, event type, or config key before reading broad file ranges.
 
+For compile and validation selection, load `references/compile-routing.md` when the task touches Rust build behavior, slow compile paths, node metadata versus adapter work, or when choosing between crate-local checks, backend build, and full restart.
+
 ## Core Checks
 
 - Prefer borrowing over cloning, but do not fight the borrow checker into obscure code.
@@ -66,6 +68,7 @@ Search by type name, endpoint path, node type ID, event type, or config key befo
 - Use integration tests in `tests/integration` for cross-crate runtime/API behavior.
 - Update shared fixtures when contract output changes.
 - Use descriptive test names that state behavior, not implementation detail.
+- Choose the narrowest compile target that proves the change; do not build `runtime_server` just to validate node metadata or frontend-only edits.
 
 Run when practical:
 

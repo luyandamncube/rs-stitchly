@@ -53,6 +53,8 @@ Update the decision log only when a durable product or architecture direction ch
 
 Stitchly has expensive Rust dependencies, including DuckDB-backed paths. Validation must be cheap, sequential, and targeted.
 
+For Rust validation routing, agents should prefer the narrowest crate or frontend check that proves the change. If using a Stitchly skill and the choice is unclear, load `.codex/skills/stitchly-rust-quality/references/compile-routing.md`.
+
 ### Use the project script first
 
 Prefer the project startup/debug script over ad hoc Cargo commands:
@@ -110,6 +112,8 @@ Use the cheapest validation that proves the change.
    ```bash
    scripts/dev_ui_agent.sh check
    ```
+
+   For crate-local Rust changes, a narrower `cargo check -p <crate>` may be cheaper until the project script exposes named check targets. Keep Cargo commands sequential.
 
 4. If a specific Rust test is relevant, run:
 

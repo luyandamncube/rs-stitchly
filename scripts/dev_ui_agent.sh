@@ -30,6 +30,7 @@ NVM_INSTALL_URL="${STITCHLY_NVM_INSTALL_URL:-https://raw.githubusercontent.com/n
 CARGO_BUILD_JOBS="${STITCHLY_CARGO_BUILD_JOBS:-1}"
 CARGO_TOOLCHAIN="${STITCHLY_CARGO_TOOLCHAIN:-nightly}"
 CARGO_USE_NEXT_LOCKFILE_BUMP="${STITCHLY_CARGO_USE_NEXT_LOCKFILE_BUMP:-1}"
+CARGO_UPDATE_TOOLCHAIN="${STITCHLY_CARGO_UPDATE_TOOLCHAIN:-0}"
 SCCACHE_ENABLED="${STITCHLY_SCCACHE_ENABLED:-1}"
 MIN_NODE_MAJOR="${STITCHLY_MIN_NODE_MAJOR:-18}"
 
@@ -65,8 +66,8 @@ mkdir -p "$PID_DIR" "$LOG_DIR" "$DOLT_HOME_DIR"
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/dev_ui_agent.sh up [--no-open] [--verbose] [--trace]
-  scripts/dev_ui_agent.sh restart [--no-open] [--verbose] [--trace]
+  scripts/dev_ui_agent.sh up [--no-open] [--skip-build] [--verbose] [--trace]
+  scripts/dev_ui_agent.sh restart [--no-open] [--skip-build] [--verbose] [--trace]
   scripts/dev_ui_agent.sh down
   scripts/dev_ui_agent.sh status
   scripts/dev_ui_agent.sh open
@@ -110,6 +111,9 @@ Environment overrides:
                              Rust toolchain used for backend build. Default: nightly
   STITCHLY_CARGO_USE_NEXT_LOCKFILE_BUMP
                              Use -Znext-lockfile-bump for Cargo.lock v4. Default: 1
+  STITCHLY_CARGO_UPDATE_TOOLCHAIN
+                             Refresh the configured Rust toolchain before backend builds.
+                             Default: 0
   STITCHLY_SCCACHE_ENABLED
                              Use sccache as RUSTC_WRAPPER when sccache is on PATH.
                              Default: 1
@@ -317,9 +321,30 @@ start_verbose_heartbeat() {
   local interval="$3"
 
   (
+    set +e
     local elapsed=0
+    local sleep_pid=""
+
+    cleanup_heartbeat() {
+      trap - TERM INT EXIT
+      if [[ -n "$sleep_pid" ]]; then
+        kill "$sleep_pid" 2>/dev/null || true
+      fi
+      exit 0
+    }
+
+    trap cleanup_heartbeat TERM INT EXIT
+
     while true; do
-      sleep "$interval"
+      sleep "$interval" &
+      sleep_pid=$!
+      wait "$sleep_pid"
+      local sleep_status=$?
+      sleep_pid=""
+      if (( sleep_status != 0 )); then
+        exit 0
+      fi
+
       elapsed=$((elapsed + interval))
 
       local last_line=""
@@ -337,13 +362,19 @@ start_verbose_heartbeat() {
   echo $!
 }
 
+stop_background_process() {
+  local process_pid="$1"
+
+  if [[ -n "$process_pid" ]]; then
+    kill "$process_pid" 2>/dev/null || true
+    wait "$process_pid" 2>/dev/null || true
+  fi
+}
+
 stop_verbose_heartbeat() {
   local heartbeat_pid="$1"
 
-  if [[ -n "$heartbeat_pid" ]]; then
-    kill "$heartbeat_pid" 2>/dev/null || true
-    wait "$heartbeat_pid" 2>/dev/null || true
-  fi
+  stop_background_process "$heartbeat_pid"
 }
 
 run_with_log_capture() {
@@ -355,22 +386,22 @@ run_with_log_capture() {
   prepare_log_file "$log_file"
 
   if verbose_enabled; then
+    local tail_pid=""
+    tail -n +1 -f "$log_file" &
+    tail_pid=$!
     heartbeat_pid="$(start_verbose_heartbeat "$label" "$log_file" "$VERBOSE_HEARTBEAT_SECONDS")"
 
     set +e
-    "$@" 2>&1 | tee "$log_file"
-    local pipe_status=("${PIPESTATUS[@]}")
+    "$@" >>"$log_file" 2>&1
+    local command_status=$?
     set -e
 
     stop_verbose_heartbeat "$heartbeat_pid"
     heartbeat_pid=""
+    stop_background_process "$tail_pid"
+    tail_pid=""
 
-    if (( pipe_status[1] != 0 )); then
-      echo "$label logging failed while writing to: $log_file"
-      return "${pipe_status[1]}"
-    fi
-
-    return "${pipe_status[0]}"
+    return "$command_status"
   else
     "$@" >"$log_file" 2>&1
   fi
@@ -554,6 +585,7 @@ ensure_rust_toolchain() {
     echo "[verbose] Backend cargo toolchain: $CARGO_TOOLCHAIN"
     echo "[verbose] Backend cargo build jobs: $CARGO_BUILD_JOBS"
     echo "[verbose] Backend cargo next-lockfile-bump: $CARGO_USE_NEXT_LOCKFILE_BUMP"
+    echo "[verbose] Backend cargo update toolchain: $CARGO_UPDATE_TOOLCHAIN"
     echo "[verbose] Backend sccache enabled: $SCCACHE_ENABLED"
     if command_exists sccache; then
       echo "[verbose] sccache: $(sccache --version 2>/dev/null || echo 'available')"
@@ -634,6 +666,36 @@ active_rust_toolchain() {
   fi
 }
 
+rust_toolchain_installed() {
+  local toolchain="$1"
+  local installed_toolchain
+
+  while read -r installed_toolchain; do
+    if [[ "$installed_toolchain" == "$toolchain" || "$installed_toolchain" == "$toolchain"-* ]]; then
+      return 0
+    fi
+  done < <(rustup toolchain list 2>/dev/null | awk '{print $1}' || true)
+
+  return 1
+}
+
+ensure_requested_rust_toolchain() {
+  if [[ "$CARGO_UPDATE_TOOLCHAIN" != "0" ]]; then
+    echo "Updating Rust toolchain: $CARGO_TOOLCHAIN"
+    rustup toolchain install "$CARGO_TOOLCHAIN"
+    return 0
+  fi
+
+  if rust_toolchain_installed "$CARGO_TOOLCHAIN"; then
+    log_verbose "Rust toolchain already installed: $CARGO_TOOLCHAIN"
+    log_verbose "Set STITCHLY_CARGO_UPDATE_TOOLCHAIN=1 to refresh it."
+    return 0
+  fi
+
+  echo "Installing Rust toolchain: $CARGO_TOOLCHAIN"
+  rustup toolchain install "$CARGO_TOOLCHAIN"
+}
+
 CARGO_BASE_ARGS=()
 
 prepare_backend_cargo_base_args() {
@@ -647,8 +709,7 @@ prepare_backend_cargo_base_args() {
     return 1
   fi
 
-  echo "Ensuring Rust toolchain is installed: $CARGO_TOOLCHAIN"
-  rustup toolchain install "$CARGO_TOOLCHAIN"
+  ensure_requested_rust_toolchain
 
   CARGO_BASE_ARGS=("+$CARGO_TOOLCHAIN")
 
@@ -957,6 +1018,33 @@ clear_cargo_build_lock() {
   fi
 }
 
+wait_for_cargo_build_lock() {
+  if [[ ! -e "$CARGO_BUILD_LOCK_FILE" ]]; then
+    return 0
+  fi
+
+  local lock_holders
+  lock_holders="$(lsof -t "$CARGO_BUILD_LOCK_FILE" 2>/dev/null | sort -u || true)"
+  if [[ -z "$lock_holders" ]]; then
+    return 0
+  fi
+
+  echo "Detected Cargo build lock at $CARGO_BUILD_LOCK_FILE."
+  echo "Waiting for the active Cargo process to finish before starting another build."
+  if verbose_enabled; then
+    local pid
+    for pid in $lock_holders; do
+      local command_line=""
+      command_line="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
+      echo "[verbose] Cargo lock holder $pid: ${command_line:-unknown command}"
+    done
+  fi
+
+  while lsof -t "$CARGO_BUILD_LOCK_FILE" >/dev/null 2>&1; do
+    sleep 1
+  done
+}
+
 pid_is_running() {
   local pid="$1"
 
@@ -1024,6 +1112,8 @@ wait_for_ready() {
 }
 
 start_backend() {
+  local skip_build="${1:-0}"
+
   clear_stale_pid_file "$BACKEND_PID_FILE"
 
   local existing_pid
@@ -1055,11 +1145,20 @@ start_backend() {
 
   echo "Starting backend on $BACKEND_BIND_ADDR"
   log_verbose "Backend build log: $BACKEND_LOG_FILE"
-  clear_cargo_build_lock
-  (
-    cd "$ROOT_DIR"
-    run_with_log_capture "Backend build" "$BACKEND_LOG_FILE" cargo_build_backend_binary
-  )
+  if [[ "$skip_build" != "0" ]]; then
+    if [[ ! -x "$ROOT_DIR/target/debug/stitchly-server" ]]; then
+      echo "Cannot skip backend build because target/debug/stitchly-server does not exist."
+      echo "Run scripts/dev_ui_agent.sh build, or rerun startup without --skip-build."
+      return 1
+    fi
+    echo "Skipping backend build; using existing target/debug/stitchly-server"
+  else
+    wait_for_cargo_build_lock
+    (
+      cd "$ROOT_DIR"
+      run_with_log_capture "Backend build" "$BACKEND_LOG_FILE" cargo_build_backend_binary
+    )
+  fi
   (
     cd "$ROOT_DIR"
     nohup setsid env STITCHLY_SERVER_ADDR="$BACKEND_BIND_ADDR" STITCHLY_STATE_DIR="$STATE_DIR" STITCHLY_DOLT_HOME="$DOLT_HOME_DIR" "$ROOT_DIR/target/debug/stitchly-server" \
@@ -1209,11 +1308,15 @@ show_status() {
 
 start_agent() {
   local should_open=1
+  local skip_backend_build=0
 
   for arg in "$@"; do
     case "$arg" in
       --no-open)
         should_open=0
+        ;;
+      --skip-build)
+        skip_backend_build=1
         ;;
       --verbose|--trace)
         ;;
@@ -1227,12 +1330,13 @@ start_agent() {
 
   if verbose_enabled; then
     echo "[verbose] Startup flags: verbose=$VERBOSE trace=$TRACE no_open=$((1 - should_open))"
+    echo "[verbose] Backend skip build: $skip_backend_build"
     echo "[verbose] State directory: $STATE_DIR"
   fi
 
   ensure_state_paths_writable
   ensure_prerequisites
-  start_backend
+  start_backend "$skip_backend_build"
   ensure_dolt_via_api
   start_frontend
 
@@ -1272,7 +1376,7 @@ run_backend_build_command() {
 
   ensure_state_dirs_writable
   ensure_backend_prerequisites
-  clear_cargo_build_lock
+  wait_for_cargo_build_lock
   (
     cd "$ROOT_DIR"
     cargo_build_backend_binary
@@ -1301,7 +1405,7 @@ run_backend_check_command() {
 
   ensure_state_dirs_writable
   ensure_backend_prerequisites
-  clear_cargo_build_lock
+  wait_for_cargo_build_lock
   (
     cd "$ROOT_DIR"
     cargo_check_runtime_server
@@ -1324,7 +1428,7 @@ run_backend_test_command() {
 
   ensure_state_dirs_writable
   ensure_backend_prerequisites
-  clear_cargo_build_lock
+  wait_for_cargo_build_lock
   (
     cd "$ROOT_DIR"
     cargo_test_runtime_server "${test_args[@]}"
@@ -1353,7 +1457,7 @@ run_backend_timings_command() {
 
   ensure_state_dirs_writable
   ensure_backend_prerequisites
-  clear_cargo_build_lock
+  wait_for_cargo_build_lock
   (
     cd "$ROOT_DIR"
     cargo_timings_runtime_server
@@ -1412,7 +1516,7 @@ main() {
           args+=("$arg")
         fi
         ;;
-      --no-open|--verbose|--trace)
+      --no-open|--skip-build|--verbose|--trace)
         args+=("$arg")
         ;;
       *)

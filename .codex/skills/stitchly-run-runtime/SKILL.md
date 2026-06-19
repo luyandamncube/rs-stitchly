@@ -37,7 +37,7 @@ Load execution contract docs only when node execution semantics change:
 2. Preserve backend ownership of execution semantics; frontend should observe and invoke.
 3. For polling, streams, and detail views, check stale-state and duplicate-fetch behavior.
 4. Keep stored events/logs durable enough to survive refresh and backend restart where the current storage layer supports it.
-5. Validate Rust changes with `cargo test --workspace` or the narrow affected package test when practical.
+5. Validate Rust changes with the narrow affected package check or test when practical; load `.codex/skills/stitchly-rust-quality/references/compile-routing.md` when choosing between `runtime_core`, `runtime_server`, build, and restart.
 6. Validate frontend run UI changes with `corepack pnpm --dir apps/web test --run`.
 
 ## Token Traps

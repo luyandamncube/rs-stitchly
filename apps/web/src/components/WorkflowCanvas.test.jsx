@@ -620,6 +620,32 @@ function buildSqlTransformCollectionWorkflow() {
   return workflow
 }
 
+function buildSqlTransformSingleWorkflow() {
+  const workflow = buildSqlTransformCollectionWorkflow()
+  const sqlNode = workflow.nodes.find((node) => node.node_id === 'sql_transform')
+
+  if (sqlNode) {
+    sqlNode.config = {
+      ...sqlNode.config,
+      output_table_name: 'earnings_calendar_normalized',
+      source_table_name: 'earnings_calendar'
+    }
+  }
+
+  workflow.edges = workflow.edges.map((edge) =>
+    edge.edge_id === 'edge_load_to_duckdb_tables_to_sql_transform_items'
+      ? {
+          ...edge,
+          edge_id: 'edge_load_to_duckdb_table_to_sql_transform_table',
+          source_port_id: 'table',
+          target_port_id: 'table'
+        }
+      : edge
+  )
+
+  return workflow
+}
+
 function buildTableMergeWorkflow() {
   const workflow = buildLoadToDuckDbFromDumpWorkflow()
 
@@ -1190,6 +1216,18 @@ describe('WorkflowCanvas', () => {
     expect(container.querySelectorAll('[data-id="sql_transform"] [data-handleid="table"]')).toHaveLength(2)
     expect(container.querySelectorAll('[data-id="sql_transform"] [data-handleid="items"]')).toHaveLength(2)
     expect(container.querySelector('[data-id="sql_transform"] .schema-node')).toBeNull()
+  })
+
+  it('renders the sql transform single-table source override in the node body', () => {
+    render(<CanvasHarness workflowOverride={buildSqlTransformSingleWorkflow()} />)
+
+    const sqlTransformNode = getSqlTransformNode()
+
+    expect(within(sqlTransformNode).getByText('Source')).toBeInTheDocument()
+    expect(within(sqlTransformNode).getByText('earnings_calendar')).toBeInTheDocument()
+    expect(
+      within(sqlTransformNode).getByText('staging_curated.earnings_calendar_normalized')
+    ).toBeInTheDocument()
   })
 
   it('renders the table merge node with durable reconcile details instead of the generic schema fallback', () => {

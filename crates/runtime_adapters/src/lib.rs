@@ -5334,6 +5334,18 @@ fn execute_sql_transform_single_table(
             json!(source_schema_name.clone()),
         );
         metadata_object.insert("source_table".to_string(), json!(source_table_name.clone()));
+        metadata_object.insert(
+            "source_table_name".to_string(),
+            json!(output_table_name.clone()),
+        );
+        metadata_object.insert(
+            "logical_table_name".to_string(),
+            json!(output_table_name.clone()),
+        );
+        metadata_object.insert(
+            "physical_table_name".to_string(),
+            json!(output_table_name.clone()),
+        );
         metadata_object.insert("transform_kind".to_string(), json!("sql_transform"));
         metadata_object.insert(
             "materialization_mode".to_string(),
@@ -10453,6 +10465,11 @@ mod tests {
                         "columns": [],
                         "primary_key": [],
                         "checks": []
+                    },
+                    "metadata": {
+                        "logical_table_name": "balance_sheet_assets",
+                        "source_table_name": "balance_sheet_assets",
+                        "physical_table_name": "earnings__balance_sheet_assets__snapshot"
                     }
                 }),
             },

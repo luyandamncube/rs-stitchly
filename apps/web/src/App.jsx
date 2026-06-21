@@ -4515,11 +4515,25 @@ function CanvasRunsHistoryPanel({
                         <span>Failure Context</span>
                         <span>{humanizeRunStatus(selectedRun.error.category)}</span>
                       </div>
-                      <p className="runs-detail-callout">
-                        <strong>{humanizeRunStatus(selectedRun.error.category)}</strong>
-                        {' '}
-                        {selectedRun.error.message}
-                      </p>
+                      <div className="runs-detail-callout">
+                        <div className="runs-detail-callout__toolbar">
+                          <strong>{humanizeRunStatus(selectedRun.error.category)}</strong>
+                          <button
+                            className="runs-detail-callout__copy"
+                            onClick={() => {
+                              if (navigator?.clipboard?.writeText) {
+                                navigator.clipboard.writeText(
+                                  `${humanizeRunStatus(selectedRun.error.category)}\n${selectedRun.error.message}`
+                                )
+                              }
+                            }}
+                            type="button"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                        <pre>{selectedRun.error.message}</pre>
+                      </div>
                     </section>
                   ) : null}
 

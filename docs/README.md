@@ -23,6 +23,7 @@ The goal is to document:
 - Execution-specific runtime contract docs live under `04_execution/` and use numbered filenames starting at `01_...`.
 - Venture and idea-evaluation docs live under `05_venture/` and use numbered filenames starting at `00_...`.
 - Trading-research strategy docs live under `06_trading_research/` and use numbered filenames starting at `00_...`.
+- Data-contract docs for concrete source datasets and curated table shapes live under `07_data_contracts/`.
 - When a major product or technical direction changes, update the relevant doc and add an entry to `00_foundation/11_decision_log.md`.
 - Prefer extending an existing numbered doc before creating a new one for overlapping content.
 
@@ -101,3 +102,8 @@ The goal is to document:
 
 - `06_trading_research/00_systematic_technical_strategy_research.md`: first structured direction for technical strategy research workflows, including research layers, table families, and node implications
 - `06_trading_research/01_derivatives_and_volatility_strategy_research.md`: first structured direction for options, volatility, and position-structure research workflows, including dashboards, payoff evaluation, and ranking
+
+## Data Contracts
+
+- `07_data_contracts/00_earnings_curated_tables.md`: first-pass DoltHub earnings source-to-curated table contracts, SQL transforms, durable targets, and merge keys
+- `07_data_contracts/01_rates_curated_tables.md`: first-pass DoltHub rates source-to-curated table contracts, treasury snapshot/delta normalization, durable target, and merge keys

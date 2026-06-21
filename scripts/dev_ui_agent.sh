@@ -45,6 +45,8 @@ fi
 VERBOSE="${STITCHLY_VERBOSE:-0}"
 TRACE="${STITCHLY_TRACE:-0}"
 VERBOSE_HEARTBEAT_SECONDS="${STITCHLY_VERBOSE_HEARTBEAT_SECONDS:-60}"
+VERBOSE_PROGRESS_SECONDS="${STITCHLY_VERBOSE_PROGRESS_SECONDS:-5}"
+VERBOSE_STREAM_LOGS="${STITCHLY_VERBOSE_STREAM_LOGS:-1}"
 
 for raw_arg in "$@"; do
   case "$raw_arg" in
@@ -97,10 +99,17 @@ Environment overrides:
                              Best-effort install missing Unix prerequisites before startup.
                              Installs curl, lsof, Node/npm via nvm, corepack, Rust/Cargo, and dolt where supported.
                              Default: 1
-  STITCHLY_VERBOSE           Stream startup progress and backend build output to the terminal.
+  STITCHLY_VERBOSE           Show startup diagnostics and compact long-running command progress.
                              Default: 0
+  STITCHLY_VERBOSE_STREAM_LOGS
+                             Stream full long-running command logs when verbose.
+                             Set to 0 for a compact one-line timer.
+                             Default: 1
   STITCHLY_TRACE             Enable shell tracing (set -x). Implies STITCHLY_VERBOSE=1.
                              Default: 0
+  STITCHLY_VERBOSE_PROGRESS_SECONDS
+                             Compact verbose progress refresh interval, in seconds.
+                             Default: 5
   STITCHLY_VERBOSE_HEARTBEAT_SECONDS
                              Verbose heartbeat interval, in seconds, for long-running steps.
                              Default: 60
@@ -384,29 +393,105 @@ stop_verbose_heartbeat() {
   stop_background_process "$heartbeat_pid"
 }
 
+start_verbose_progress_indicator() {
+  local label="$1"
+  local log_file="$2"
+  local interval="$3"
+
+  (
+    set +e
+    local elapsed=0
+    local sleep_pid=""
+
+    cleanup_progress() {
+      trap - TERM INT EXIT
+      if [[ -n "$sleep_pid" ]]; then
+        kill "$sleep_pid" 2>/dev/null || true
+      fi
+      printf "\r\033[K" >&2
+      exit 0
+    }
+
+    trap cleanup_progress TERM INT EXIT
+
+    while true; do
+      local last_line=""
+      if [[ -f "$log_file" ]]; then
+        last_line="$(tail -n 1 "$log_file" 2>/dev/null || true)"
+      fi
+
+      if [[ -n "$last_line" ]]; then
+        printf "\r\033[K[verbose] %s running for %ss. Last: %.140s" "$label" "$elapsed" "$last_line" >&2
+      else
+        printf "\r\033[K[verbose] %s running for %ss." "$label" "$elapsed" >&2
+      fi
+
+      sleep "$interval" &
+      sleep_pid=$!
+      wait "$sleep_pid"
+      local sleep_status=$?
+      sleep_pid=""
+      if (( sleep_status != 0 )); then
+        exit 0
+      fi
+
+      elapsed=$((elapsed + interval))
+    done
+  ) &
+  echo $!
+}
+
+stop_verbose_progress_indicator() {
+  local progress_pid="$1"
+
+  stop_background_process "$progress_pid"
+}
+
 run_with_log_capture() {
   local label="$1"
   local log_file="$2"
   shift 2
   local heartbeat_pid=""
+  local progress_pid=""
+  local tail_pid=""
 
   prepare_log_file "$log_file"
 
   if verbose_enabled; then
-    local tail_pid=""
-    tail -n +1 -f "$log_file" &
-    tail_pid=$!
-    heartbeat_pid="$(start_verbose_heartbeat "$label" "$log_file" "$VERBOSE_HEARTBEAT_SECONDS")"
+    if [[ "$VERBOSE_STREAM_LOGS" != "0" ]]; then
+      echo "[verbose] Streaming $label output from $log_file"
+      tail -n +1 -f "$log_file" &
+      tail_pid=$!
+      heartbeat_pid="$(start_verbose_heartbeat "$label" "$log_file" "$VERBOSE_HEARTBEAT_SECONDS")"
+    else
+      echo "[verbose] $label output is being written to $log_file"
+      echo "[verbose] Set STITCHLY_VERBOSE_STREAM_LOGS=1 to stream full output."
+      progress_pid="$(start_verbose_progress_indicator "$label" "$log_file" "$VERBOSE_PROGRESS_SECONDS")"
+    fi
 
     set +e
     "$@" >>"$log_file" 2>&1
     local command_status=$?
     set -e
 
-    stop_verbose_heartbeat "$heartbeat_pid"
-    heartbeat_pid=""
-    stop_background_process "$tail_pid"
-    tail_pid=""
+    if [[ -n "$progress_pid" ]]; then
+      stop_verbose_progress_indicator "$progress_pid"
+      progress_pid=""
+      if (( command_status == 0 )); then
+        echo "[verbose] $label completed. Log: $log_file"
+      else
+        echo "[verbose] $label failed. Last log lines:"
+        tail -n 80 "$log_file" || true
+      fi
+    fi
+    if [[ -n "$heartbeat_pid" ]]; then
+      stop_verbose_heartbeat "$heartbeat_pid"
+      heartbeat_pid=""
+    fi
+    if [[ -n "$tail_pid" ]]; then
+      stop_background_process "$tail_pid"
+      tail_pid=""
+    fi
 
     return "$command_status"
   else

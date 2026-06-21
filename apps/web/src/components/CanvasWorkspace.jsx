@@ -747,7 +747,7 @@ export default function CanvasWorkspace({
     setBusyState((current) => ({ ...current, validate: true }));
 
     try {
-      const nextWorkflow = normalizeCanvasWorkflow(workflow);
+      const nextWorkflow = normalizeExecutableCanvasWorkflow(workflow);
       if (workflowSignature(nextWorkflow) !== workflowSignature(workflow)) {
         setWorkflow(nextWorkflow);
       }
@@ -775,7 +775,7 @@ export default function CanvasWorkspace({
     setEvents([]);
 
     try {
-      const nextWorkflow = normalizeCanvasWorkflow(workflow);
+      const nextWorkflow = normalizeExecutableCanvasWorkflow(workflow);
       if (workflowSignature(nextWorkflow) !== workflowSignature(workflow)) {
         setWorkflow(nextWorkflow);
       }
@@ -4657,31 +4657,47 @@ function CanvasSqlTransformManagementPanel({
           />
         </div>
 
-        <div className="canvas-node-panel__field">
-          <div className="canvas-node-panel__field-head">
-            <label htmlFor="canvas-sql-transform-output-table-template">Output table name template</label>
+        {isCollectionMode ? (
+          <div className="canvas-node-panel__field">
+            <div className="canvas-node-panel__field-head">
+              <label htmlFor="canvas-sql-transform-output-table-template">Output table name template</label>
+            </div>
+            <input
+              id="canvas-sql-transform-output-table-template"
+              className="canvas-node-panel__input"
+              onChange={(event) =>
+                onNodeConfigChange?.((currentConfig) =>
+                  applySqlTransformConfigUpdate(currentConfig, {
+                    output_table_name_template: event.target.value
+                  })
+                )
+              }
+              placeholder="{{table_name}}__transformed"
+              type="text"
+              value={config.output_table_name_template}
+            />
           </div>
-          <input
-            id="canvas-sql-transform-output-table-template"
-            className="canvas-node-panel__input"
-            onChange={(event) =>
-              onNodeConfigChange?.((currentConfig) =>
-                applySqlTransformConfigUpdate(currentConfig, {
-                  output_table_name_template: event.target.value
-                })
-              )
-            }
-            placeholder="{{table_name}}__transformed"
-            type="text"
-            value={config.output_table_name_template}
-          />
-          {/* <p className="canvas-node-panel__hint">
-            {isCollectionMode
-              ? `Produces one output view per input table. Use {{table_name}} to preserve per-table identity.`
-              : `Used as the output name template. Legacy single-table overrides can still be handled at runtime.`}{' '}
-            Example: {'{{table_name}}'}__transformed.
-          </p> */}
-        </div>
+        ) : (
+          <div className="canvas-node-panel__field">
+            <div className="canvas-node-panel__field-head">
+              <label htmlFor="canvas-sql-transform-output-table-name">Output table name</label>
+            </div>
+            <input
+              id="canvas-sql-transform-output-table-name"
+              className="canvas-node-panel__input"
+              onChange={(event) =>
+                onNodeConfigChange?.((currentConfig) =>
+                  applySqlTransformConfigUpdate(currentConfig, {
+                    output_table_name: event.target.value
+                  })
+                )
+              }
+              placeholder={DEFAULT_SQL_TRANSFORM_OUTPUT_TABLE_NAME}
+              type="text"
+              value={config.output_table_name}
+            />
+          </div>
+        )}
 
         <div className="canvas-node-panel__field">
           <div className="canvas-node-panel__field-head">
@@ -7033,6 +7049,7 @@ const DEFAULT_TABLE_MERGE_WRITE_POLICY = 'upsert';
 const DEFAULT_TABLE_MERGE_DELETE_HANDLING = 'apply_delete_markers';
 const DEFAULT_TABLE_MERGE_SCHEMA_DRIFT_BEHAVIOR = 'fail_and_require_review';
 const DEFAULT_TABLE_MERGE_KEY_COLUMNS = ['symbol', 'report_date'];
+const MAX_TABLE_MERGE_KEY_COLUMNS = 20;
 const DEFAULT_RATES_TABLE_MERGE_KEY_COLUMNS = ['curve_date', 'tenor'];
 const DEFAULT_TABLE_INPUT_CATALOG = 'workflow.duckdb';
 const DEFAULT_TABLE_INPUT_SCHEMA = 'runs';
@@ -7203,7 +7220,11 @@ function normalizeDoltRepoSyncPanelConfig(node) {
 
 function normalizeDoltChangeManifestPanelConfig(node) {
   const config = node?.config ?? {};
-  const selectedTables = normalizeDoltChangeManifestSelectedTables(config.selected_tables);
+  const selectedTablesText =
+    typeof config.selected_tables_text === 'string' ? config.selected_tables_text : null;
+  const selectedTables = normalizeDoltChangeManifestSelectedTables(
+    selectedTablesText ?? config.selected_tables
+  );
 
   return {
     execution: normalizeNodeExecutionTimingConfig(config),
@@ -7212,7 +7233,7 @@ function normalizeDoltChangeManifestPanelConfig(node) {
         ? config.schema_change_policy
         : DEFAULT_DOLT_CHANGE_MANIFEST_SCHEMA_CHANGE_POLICY,
     selected_tables: selectedTables,
-    selected_tables_text: selectedTables.join(', '),
+    selected_tables_text: selectedTablesText ?? selectedTables.join(', '),
     table_scope:
       config.table_scope === 'allowlist'
         ? config.table_scope
@@ -7222,7 +7243,11 @@ function normalizeDoltChangeManifestPanelConfig(node) {
 
 function normalizeDoltDumpPanelConfig(node) {
   const config = node?.config ?? {};
-  const selectedTables = normalizeDoltDumpSelectedTables(config.selected_tables);
+  const selectedTablesText =
+    typeof config.selected_tables_text === 'string' ? config.selected_tables_text : null;
+  const selectedTables = normalizeDoltDumpSelectedTables(
+    selectedTablesText ?? config.selected_tables
+  );
 
   return {
     artifact_retention:
@@ -7238,7 +7263,7 @@ function normalizeDoltDumpPanelConfig(node) {
     output_format:
       config.output_format === 'csv' ? 'csv' : DEFAULT_DOLT_DUMP_OUTPUT_FORMAT,
     selected_tables: selectedTables,
-    selected_tables_text: selectedTables.join(', '),
+    selected_tables_text: selectedTablesText ?? selectedTables.join(', '),
     table_selection_mode:
       config.table_selection_mode === 'all_tables' ||
         config.table_selection_mode === 'manual_tables'
@@ -7513,11 +7538,20 @@ function normalizeQualityCheckPanelConfig(node) {
 
 function normalizeTableMergeKeyList(value) {
   if (Array.isArray(value)) {
-    return [...new Set(value.map((entry) => (typeof entry === 'string' ? entry.trim() : '')).filter(Boolean))];
+    return [
+      ...new Set(
+        value
+          .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+          .filter(Boolean)
+      )
+    ].slice(0, MAX_TABLE_MERGE_KEY_COLUMNS);
   }
 
   if (typeof value === 'string') {
-    return [...new Set(value.split(',').map((entry) => entry.trim()).filter(Boolean))];
+    return [...new Set(value.split(',').map((entry) => entry.trim()).filter(Boolean))].slice(
+      0,
+      MAX_TABLE_MERGE_KEY_COLUMNS
+    );
   }
 
   return [];
@@ -7546,7 +7580,11 @@ function normalizeTableMergeKeysByTable(value) {
 
 function normalizeTableMergePanelConfig(node) {
   const config = node?.config ?? {};
-  const mergeKeyColumns = normalizeTableMergeKeyColumns(config.merge_key_columns);
+  const mergeKeyColumnsText =
+    typeof config.merge_key_columns_text === 'string' ? config.merge_key_columns_text : null;
+  const mergeKeyColumns = normalizeTableMergeKeyColumns(
+    mergeKeyColumnsText ?? config.merge_key_columns
+  );
   const mergeKeysByTable = normalizeTableMergeKeysByTable(config.merge_keys_by_table);
 
   return {
@@ -7556,7 +7594,7 @@ function normalizeTableMergePanelConfig(node) {
         : DEFAULT_TABLE_MERGE_DELETE_HANDLING,
     execution: normalizeNodeExecutionTimingConfig(config),
     merge_key_columns: mergeKeyColumns,
-    merge_key_columns_text: mergeKeyColumns.join(', '),
+    merge_key_columns_text: mergeKeyColumnsText ?? mergeKeyColumns.join(', '),
     merge_keys_by_table: mergeKeysByTable,
     schema_drift_behavior:
       config.schema_drift_behavior === 'allow_additive_changes'
@@ -7946,13 +7984,12 @@ function applyDoltChangeManifestConfigUpdate(currentConfig = {}, patch = {}) {
     ...currentConfig,
     ...patch
   };
-  const { selected_tables_text: _selectedTablesText, ...rest } = next;
   const selectedTables = normalizeDoltChangeManifestSelectedTables(
     next.selected_tables_text ?? next.selected_tables
   );
 
   return {
-    ...rest,
+    ...next,
     execution: normalizeNodeExecutionTimingConfig(next),
     schema_change_policy:
       next.schema_change_policy === 'fail_run'
@@ -7972,13 +8009,12 @@ function applyDoltDumpConfigUpdate(currentConfig = {}, patch = {}) {
     ...currentConfig,
     ...patch
   };
-  const { selected_tables_text: _selectedTablesText, ...rest } = next;
   const selectedTables = normalizeDoltDumpSelectedTables(
     next.selected_tables_text ?? next.selected_tables
   );
 
   return {
-    ...rest,
+    ...next,
     artifact_retention:
       next.artifact_retention === 'ephemeral_per_run' ||
         next.artifact_retention === 'persist_all'
@@ -10834,9 +10870,7 @@ function appendCanvasNode(workflow, typeId, options = {}) {
     nextWorkflow.nodes.find((node) => node.node_id === selectedNodeId) ??
     nextWorkflow.nodes[nextWorkflow.nodes.length - 1] ??
     null;
-  const nextNodeId = nextWorkflow.nodes.some((node) => node.node_id === typeId)
-    ? `${typeId}_${nextWorkflow.nodes.filter((node) => node.type_id === typeId).length + 1}`
-    : typeId;
+  const nextNodeId = allocateCanvasNodeId(nextWorkflow, typeId);
 
   const nextNode = {
     node_id: nextNodeId,
@@ -11123,6 +11157,25 @@ function appendCanvasNode(workflow, typeId, options = {}) {
   };
 }
 
+function allocateCanvasNodeId(workflow, typeId) {
+  const existingNodeIds = new Set(
+    (workflow?.nodes ?? [])
+      .map((node) => (typeof node?.node_id === 'string' ? node.node_id : ''))
+      .filter(Boolean)
+  );
+
+  if (!existingNodeIds.has(typeId)) {
+    return typeId;
+  }
+
+  let suffix = 2;
+  while (existingNodeIds.has(`${typeId}_${suffix}`)) {
+    suffix += 1;
+  }
+
+  return `${typeId}_${suffix}`;
+}
+
 function buildCanvasStarterWorkflow() {
   return prepareCanvasWorkflow(cloneWorkflow(starterWorkflowFixture));
 }
@@ -11138,8 +11191,94 @@ function normalizeCanvasWorkflow(workflow) {
   }
 
   return normalizeKnownCanvasWorkflowConfigs(
-    prepareCanvasWorkflow(cloneWorkflow(workflow))
+    repairDuplicateCanvasNodeIds(prepareCanvasWorkflow(cloneWorkflow(workflow)))
   );
+}
+
+function normalizeExecutableCanvasWorkflow(workflow) {
+  return normalizeKnownCanvasWorkflowConfigs(
+    repairDisconnectedTableMergeNodes(normalizeCanvasWorkflow(workflow))
+  );
+}
+
+function repairDuplicateCanvasNodeIds(workflow) {
+  if (!workflow || !Array.isArray(workflow.nodes)) {
+    return workflow;
+  }
+
+  const seenNodeIds = new Set();
+  const usedNodeIds = new Set(
+    workflow.nodes
+      .map((node) => (typeof node?.node_id === 'string' ? node.node_id : ''))
+      .filter(Boolean)
+  );
+  let changed = false;
+
+  const nodes = workflow.nodes.map((node) => {
+    const nodeId = typeof node?.node_id === 'string' ? node.node_id.trim() : '';
+
+    if (!nodeId || !seenNodeIds.has(nodeId)) {
+      if (nodeId) {
+        seenNodeIds.add(nodeId);
+      }
+      return node;
+    }
+
+    changed = true;
+    const nodeTypeId =
+      typeof node?.type_id === 'string' && node.type_id.trim()
+        ? node.type_id.trim()
+        : nodeId;
+    const repairedNodeId = allocateCanvasNodeId(
+      { nodes: [...usedNodeIds].map((id) => ({ node_id: id })) },
+      nodeTypeId
+    );
+    usedNodeIds.add(repairedNodeId);
+    seenNodeIds.add(repairedNodeId);
+
+    return {
+      ...node,
+      node_id: repairedNodeId
+    };
+  });
+
+  return changed ? { ...workflow, nodes } : workflow;
+}
+
+function repairDisconnectedTableMergeNodes(workflow) {
+  if (!workflow || !Array.isArray(workflow.nodes) || !Array.isArray(workflow.edges)) {
+    return workflow;
+  }
+
+  const disconnectedTableMergeIds = new Set(
+    workflow.nodes
+      .filter((node) => {
+        if (node?.type_id !== 'table_merge' || typeof node.node_id !== 'string') {
+          return false;
+        }
+
+        return !workflow.edges.some(
+          (edge) =>
+            edge.target_node_id === node.node_id &&
+            (edge.target_port_id === 'table' || edge.target_port_id === 'items')
+        );
+      })
+      .map((node) => node.node_id)
+  );
+
+  if (disconnectedTableMergeIds.size === 0) {
+    return workflow;
+  }
+
+  return {
+    ...workflow,
+    edges: workflow.edges.filter(
+      (edge) =>
+        !disconnectedTableMergeIds.has(edge.source_node_id) &&
+        !disconnectedTableMergeIds.has(edge.target_node_id)
+    ),
+    nodes: workflow.nodes.filter((node) => !disconnectedTableMergeIds.has(node.node_id))
+  };
 }
 
 function normalizeKnownCanvasWorkflowConfigs(workflow) {

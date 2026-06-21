@@ -2657,11 +2657,15 @@ function normalizeSqlTransformNodeConfig(config = {}, workflow = null, nodeId = 
       ? config.output_table_name_template.trim()
       : '{{table_name}}'
   const targetName = outputTableName ?? outputTableNameTemplate
+  const sourceTableNameOverride =
+    typeof config?.source_table_name === 'string' && config.source_table_name.trim()
+      ? config.source_table_name.trim()
+      : null
 
   return {
     materialization_mode_label:
       config?.materialization_mode === 'view' ? 'view' : 'view only',
-    source_table_label: sourceContext?.sourceTable ?? '{{source}}',
+    source_table_label: sourceTableNameOverride ?? sourceContext?.sourceTable ?? '{{source}}',
     target_label: `${targetSchema}.${targetName}`
   }
 }

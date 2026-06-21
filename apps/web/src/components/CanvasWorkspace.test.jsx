@@ -6,10 +6,22 @@ import nodeDefinitionFixture from '../../../../tests/fixtures/api/node_definitio
 import CanvasWorkspace from './CanvasWorkspace.jsx';
 
 vi.mock('./WorkflowCanvas', () => ({
-  default: function WorkflowCanvasMock({ onSelectionChange }) {
+  default: function WorkflowCanvasMock({ onNodeTypeDrop, onSelectionChange }) {
     return (
       <div data-testid="workflow-canvas">
         <span>Workflow canvas</span>
+        <button
+          onClick={() => onNodeTypeDrop?.('sql_transform', { x: 480, y: 240 })}
+          type="button"
+        >
+          Add sql transform node
+        </button>
+        <button
+          onClick={() => onNodeTypeDrop?.('table_merge', { x: 640, y: 240 })}
+          type="button"
+        >
+          Add table merge node
+        </button>
         <button onClick={() => onSelectionChange?.('table_input_runs')} type="button">
           Select table input node
         </button>
@@ -580,6 +592,28 @@ function buildSqlTransformCollectionWorkflow() {
   return workflow;
 }
 
+function buildSqlTransformSingleWorkflow() {
+  const workflow = buildSqlTransformCollectionWorkflow();
+  const sqlNode = workflow.nodes.find((node) => node.node_id === 'sql_transform');
+
+  if (sqlNode) {
+    sqlNode.config.output_table_name = 'treasury_curve_normalized';
+  }
+
+  workflow.edges = workflow.edges.map((edge) =>
+    edge.edge_id === 'edge_load_to_duckdb_tables_to_sql_transform_items'
+      ? {
+          ...edge,
+          edge_id: 'edge_load_to_duckdb_table_to_sql_transform_table',
+          source_port_id: 'table',
+          target_port_id: 'table'
+        }
+      : edge
+  );
+
+  return workflow;
+}
+
 function buildTableMergeWorkflow() {
   const workflow = buildLoadToDuckDbWorkflow();
 
@@ -613,6 +647,100 @@ function buildTableMergeWorkflow() {
   });
 
   return workflow;
+}
+
+function buildTableMergeWorkflowWithSuffixGap() {
+  const workflow = buildTableMergeWorkflow();
+  const baseMergeNode = workflow.nodes.find((node) => node.node_id === 'table_merge');
+
+  workflow.nodes.push(
+    {
+      ...baseMergeNode,
+      node_id: 'table_merge_2',
+      position: { x: 2400, y: 180 }
+    },
+    {
+      ...baseMergeNode,
+      node_id: 'table_merge_4',
+      position: { x: 2680, y: 180 }
+    }
+  );
+  workflow.edges.push(
+    {
+      edge_id: 'edge_load_to_duckdb_to_table_merge_2',
+      source_node_id: 'load_to_duckdb',
+      source_port_id: 'table',
+      target_node_id: 'table_merge_2',
+      target_port_id: 'table'
+    },
+    {
+      edge_id: 'edge_load_to_duckdb_to_table_merge_4',
+      source_node_id: 'load_to_duckdb',
+      source_port_id: 'table',
+      target_node_id: 'table_merge_4',
+      target_port_id: 'table'
+    }
+  );
+
+  return workflow;
+}
+
+function buildTableMergeWorkflowWithDuplicateNodeId() {
+  const workflow = buildTableMergeWorkflowWithSuffixGap();
+  const baseMergeNode = workflow.nodes.find((node) => node.node_id === 'table_merge');
+
+  workflow.nodes.push(
+    {
+      ...baseMergeNode,
+      node_id: 'table_merge_10',
+      position: { x: 2960, y: 180 }
+    },
+    {
+      ...baseMergeNode,
+      node_id: 'table_merge_10',
+      position: { x: 3240, y: 180 }
+    }
+  );
+
+  return workflow;
+}
+
+function buildTableMergeWorkflowWithOrphanMerge() {
+  const workflow = buildTableMergeWorkflow();
+  const baseMergeNode = workflow.nodes.find((node) => node.node_id === 'table_merge');
+
+  workflow.nodes.push({
+    ...baseMergeNode,
+    node_id: 'table_merge_2',
+    position: { x: 2400, y: 180 }
+  });
+
+  return workflow;
+}
+
+function buildSqlTransformWorkflowWithSuffixGap() {
+  const workflow = buildSqlTransformCollectionWorkflow();
+  const baseSqlNode = workflow.nodes.find((node) => node.node_id === 'sql_transform');
+
+  workflow.nodes.push(
+    {
+      ...baseSqlNode,
+      node_id: 'sql_transform_2',
+      position: { x: 2400, y: 180 }
+    },
+    {
+      ...baseSqlNode,
+      node_id: 'sql_transform_4',
+      position: { x: 2680, y: 180 }
+    }
+  );
+
+  return workflow;
+}
+
+function findDuplicateNodeIds(workflow) {
+  const nodeIds = workflow.nodes.map((node) => node.node_id);
+  return [...new Set(nodeIds.filter((nodeId, index) => nodeIds.indexOf(nodeId) !== index))];
 }
 
 function buildCheckpointWriteWorkflow() {
@@ -1355,10 +1483,8 @@ describe('CanvasWorkspace', () => {
     expect(screen.getByLabelText('Output table name template')).toHaveValue(
       '{{table_name}}__normalized'
     );
+    expect(screen.queryByLabelText('Output table name')).not.toBeInTheDocument();
     expect(screen.getByLabelText('SQL template')).toHaveValue('select *\nfrom {{source}}');
-    expect(screen.getByLabelText('SQL transform preview context')).toHaveTextContent(
-      'staging_curated.earnings_calendar__normalized'
-    );
     expect(screen.getByLabelText('SQL transform preview context')).toHaveTextContent(
       'staging_curated.{{table_name}}__normalized'
     );
@@ -1368,6 +1494,37 @@ describe('CanvasWorkspace', () => {
     expect(screen.getByText('Transform contract').closest('.canvas-node-panel__footer')).toHaveTextContent(
       'same SQL template per table'
     );
+  });
+
+  it('shows sql transform output table name control for single-table mode', async () => {
+    const workflowWithSqlTransform = buildSqlTransformSingleWorkflow();
+
+    api.getWorkflow.mockResolvedValue({
+      workflow: {
+        workflow_id: workflowWithSqlTransform.workflow_id,
+        version: workflowWithSqlTransform.version
+      },
+      definition: workflowWithSqlTransform
+    });
+
+    render(
+      <CanvasWorkspace
+        workflowId={workflowWithSqlTransform.workflow_id}
+        workspaceId="ws_test"
+      />
+    );
+
+    await screen.findByLabelText('Workflow run status');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select sql transform node' }));
+
+    expect(await screen.findByLabelText('SQL transform input summary')).toHaveTextContent(
+      'Single table'
+    );
+    expect(screen.getByLabelText('Output table name')).toHaveValue(
+      'treasury_curve_normalized'
+    );
+    expect(screen.queryByLabelText('Output table name template')).not.toBeInTheDocument();
   });
 
   it('shows the table merge management panel with durable reconcile controls', async () => {
@@ -1394,7 +1551,9 @@ describe('CanvasWorkspace', () => {
 
     expect(await screen.findByLabelText('Target schema')).toHaveTextContent('tables');
     expect(screen.getByLabelText('Write policy')).toHaveTextContent('Upsert');
-    expect(screen.getByLabelText('Merge key')).toHaveValue('symbol, report_date');
+    expect(screen.getByLabelText('Single-table merge key')).toHaveValue(
+      'symbol, report_date'
+    );
     expect(screen.getByLabelText('Delete handling')).toHaveTextContent(
       'Apply delete markers'
     );
@@ -1404,6 +1563,290 @@ describe('CanvasWorkspace', () => {
     expect(screen.getByLabelText('Current merge state')).toHaveTextContent(
       'earnings_calendar +2 more'
     );
+  });
+
+  it('persists more than two comma-separated table merge keys', async () => {
+    const workflowWithTableMerge = buildTableMergeWorkflow();
+
+    api.getWorkflow.mockResolvedValue({
+      workflow: {
+        workflow_id: workflowWithTableMerge.workflow_id,
+        version: workflowWithTableMerge.version
+      },
+      definition: workflowWithTableMerge
+    });
+
+    render(
+      <CanvasWorkspace
+        workflowId={workflowWithTableMerge.workflow_id}
+        workspaceId="ws_test"
+      />
+    );
+
+    await screen.findByLabelText('Workflow run status');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select table merge node' }));
+    fireEvent.change(await screen.findByLabelText('Single-table merge key'), {
+      target: {
+        value: 'symbol, statement_date, period, fiscal_year, fiscal_quarter, source_table'
+      }
+    });
+
+    await waitFor(() => {
+      expect(api.updateWorkflow).toHaveBeenCalled();
+    });
+
+    const updatedWorkflow = api.updateWorkflow.mock.calls.at(-1)[2];
+    const tableMergeNode = updatedWorkflow.nodes.find(
+      (node) => node.node_id === 'table_merge'
+    );
+
+    expect(tableMergeNode.config.merge_key_columns).toEqual([
+      'symbol',
+      'statement_date',
+      'period',
+      'fiscal_year',
+      'fiscal_quarter',
+      'source_table'
+    ]);
+    expect(tableMergeNode.config.merge_key_columns_text).toBe(
+      'symbol, statement_date, period, fiscal_year, fiscal_quarter, source_table'
+    );
+  });
+
+  it('keeps a trailing comma visible while editing table merge keys', async () => {
+    const workflowWithTableMerge = buildTableMergeWorkflow();
+
+    api.getWorkflow.mockResolvedValue({
+      workflow: {
+        workflow_id: workflowWithTableMerge.workflow_id,
+        version: workflowWithTableMerge.version
+      },
+      definition: workflowWithTableMerge
+    });
+
+    render(
+      <CanvasWorkspace
+        workflowId={workflowWithTableMerge.workflow_id}
+        workspaceId="ws_test"
+      />
+    );
+
+    await screen.findByLabelText('Workflow run status');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select table merge node' }));
+    fireEvent.change(await screen.findByLabelText('Single-table merge key'), {
+      target: {
+        value: 'symbol,'
+      }
+    });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Single-table merge key')).toHaveValue('symbol,');
+    });
+    await waitFor(() => {
+      expect(api.updateWorkflow).toHaveBeenCalled();
+    });
+
+    const updatedWorkflow = api.updateWorkflow.mock.calls.at(-1)[2];
+    const tableMergeNode = updatedWorkflow.nodes.find(
+      (node) => node.node_id === 'table_merge'
+    );
+
+    expect(tableMergeNode.config.merge_key_columns).toEqual(['symbol']);
+    expect(tableMergeNode.config.merge_key_columns_text).toBe('symbol,');
+  });
+
+  it('keeps a trailing comma visible while editing selected table lists', async () => {
+    const workflowWithManifest = buildDoltChangeManifestWorkflow();
+    const manifestNode = workflowWithManifest.nodes.find(
+      (node) => node.node_id === 'dolt_change_manifest'
+    );
+    manifestNode.config.table_scope = 'allowlist';
+
+    api.getWorkflow.mockResolvedValue({
+      workflow: {
+        workflow_id: workflowWithManifest.workflow_id,
+        version: workflowWithManifest.version
+      },
+      definition: workflowWithManifest
+    });
+
+    render(
+      <CanvasWorkspace
+        workflowId={workflowWithManifest.workflow_id}
+        workspaceId="ws_test"
+      />
+    );
+
+    await screen.findByLabelText('Workflow run status');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select dolt change manifest node' }));
+    fireEvent.change(await screen.findByLabelText('Selected tables'), {
+      target: {
+        value: 'earnings_calendar,'
+      }
+    });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Selected tables')).toHaveValue('earnings_calendar,');
+    });
+    await waitFor(() => {
+      expect(api.updateWorkflow).toHaveBeenCalled();
+    });
+
+    const updatedWorkflow = api.updateWorkflow.mock.calls.at(-1)[2];
+    const manifestNodeAfterUpdate = updatedWorkflow.nodes.find(
+      (node) => node.node_id === 'dolt_change_manifest'
+    );
+
+    expect(manifestNodeAfterUpdate.config.selected_tables).toEqual(['earnings_calendar']);
+    expect(manifestNodeAfterUpdate.config.selected_tables_text).toBe('earnings_calendar,');
+  });
+
+  it('allocates the first unused node id when adding duplicate node types', async () => {
+    const workflowWithSuffixGap = buildSqlTransformWorkflowWithSuffixGap();
+
+    api.getWorkflow.mockResolvedValue({
+      workflow: {
+        workflow_id: workflowWithSuffixGap.workflow_id,
+        version: workflowWithSuffixGap.version
+      },
+      definition: workflowWithSuffixGap
+    });
+
+    render(
+      <CanvasWorkspace
+        workflowId={workflowWithSuffixGap.workflow_id}
+        workspaceId="ws_test"
+      />
+    );
+
+    await screen.findByLabelText('Workflow run status');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add sql transform node' }));
+
+    await waitFor(() => {
+      expect(api.updateWorkflow).toHaveBeenCalled();
+    });
+
+    const updatedWorkflow = api.updateWorkflow.mock.calls.at(-1)[2];
+    const sqlTransformNodeIds = updatedWorkflow.nodes
+      .filter((node) => node.type_id === 'sql_transform')
+      .map((node) => node.node_id);
+
+    expect(sqlTransformNodeIds).toContain('sql_transform_3');
+    expect(new Set(sqlTransformNodeIds).size).toBe(sqlTransformNodeIds.length);
+  });
+
+  it('keeps newly dropped table merge nodes while editing before they are connected', async () => {
+    const workflowWithoutTableMerge = buildSqlTransformCollectionWorkflow();
+
+    api.getWorkflow.mockResolvedValue({
+      workflow: {
+        workflow_id: workflowWithoutTableMerge.workflow_id,
+        version: workflowWithoutTableMerge.version
+      },
+      definition: workflowWithoutTableMerge
+    });
+
+    render(
+      <CanvasWorkspace
+        workflowId={workflowWithoutTableMerge.workflow_id}
+        workspaceId="ws_test"
+      />
+    );
+
+    await screen.findByLabelText('Workflow run status');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add table merge node' }));
+
+    await waitFor(() => {
+      expect(api.updateWorkflow).toHaveBeenCalled();
+    });
+
+    const updatedWorkflow = api.updateWorkflow.mock.calls.at(-1)[2];
+    const tableMergeNodeIds = updatedWorkflow.nodes
+      .filter((node) => node.type_id === 'table_merge')
+      .map((node) => node.node_id);
+
+    expect(tableMergeNodeIds).toContain('table_merge');
+  });
+
+  it('repairs duplicate node ids before workflow validation', async () => {
+    const workflowWithDuplicateNodeId = buildTableMergeWorkflowWithDuplicateNodeId();
+
+    api.getWorkflow.mockResolvedValue({
+      workflow: {
+        workflow_id: workflowWithDuplicateNodeId.workflow_id,
+        version: workflowWithDuplicateNodeId.version
+      },
+      definition: workflowWithDuplicateNodeId
+    });
+    api.validateWorkflow.mockResolvedValue({
+      valid: true,
+      errors: [],
+      warnings: []
+    });
+
+    render(
+      <CanvasWorkspace
+        workflowId={workflowWithDuplicateNodeId.workflow_id}
+        workspaceId="ws_test"
+      />
+    );
+
+    await screen.findByLabelText('Workflow run status');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open run control' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Validate Workflow' }));
+
+    await waitFor(() => {
+      expect(api.validateWorkflow).toHaveBeenCalled();
+    });
+
+    const validatedWorkflow = api.validateWorkflow.mock.calls.at(-1)[0];
+
+    expect(findDuplicateNodeIds(validatedWorkflow)).toEqual([]);
+  });
+
+  it('removes disconnected table merge nodes before workflow validation', async () => {
+    const workflowWithOrphanMerge = buildTableMergeWorkflowWithOrphanMerge();
+
+    api.getWorkflow.mockResolvedValue({
+      workflow: {
+        workflow_id: workflowWithOrphanMerge.workflow_id,
+        version: workflowWithOrphanMerge.version
+      },
+      definition: workflowWithOrphanMerge
+    });
+    api.validateWorkflow.mockResolvedValue({
+      valid: true,
+      errors: [],
+      warnings: []
+    });
+
+    render(
+      <CanvasWorkspace
+        workflowId={workflowWithOrphanMerge.workflow_id}
+        workspaceId="ws_test"
+      />
+    );
+
+    await screen.findByLabelText('Workflow run status');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open run control' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Validate Workflow' }));
+
+    await waitFor(() => {
+      expect(api.validateWorkflow).toHaveBeenCalled();
+    });
+
+    const validatedWorkflow = api.validateWorkflow.mock.calls.at(-1)[0];
+    const nodeIds = validatedWorkflow.nodes.map((node) => node.node_id);
+
+    expect(nodeIds).toContain('table_merge');
+    expect(nodeIds).not.toContain('table_merge_2');
   });
 
   it('shows the checkpoint write management panel with checkpoint persistence controls', async () => {

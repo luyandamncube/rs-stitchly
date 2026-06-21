@@ -12,7 +12,7 @@ Use the cheapest validation that proves the change. Prefer `scripts/dev_ui_agent
 - `crates/runtime_adapter_contract/**`: lightweight adapter trait, context, result, and error boundary. Prefer `scripts/dev_ui_agent.sh check adapter-contract`; this should not pull DuckDB/Arrow.
 - `crates/runtime_adapters/**`: concrete node execution adapters. This is the heavy path because DuckDB/parquet pulls `arrow-*`; prefer `scripts/dev_ui_agent.sh check adapters` before building the server.
 - `crates/runtime_core/**`: planning, scheduling, run state, events, logs, and cancellation. Prefer `scripts/dev_ui_agent.sh check core`; build the server only when runtime behavior must be exercised over HTTP/SSE.
-- `crates/runtime_server/**`: Axum routes, workspace/workflow/catalog endpoints, platform paths. Prefer `scripts/dev_ui_agent.sh check server`; use `scripts/dev_ui_agent.sh check server-light` for UI/control-plane work that does not need concrete runtime adapters.
+- `crates/runtime_server/**`: Axum routes, workspace/workflow/catalog endpoints, platform paths. Prefer `scripts/dev_ui_agent.sh check server`; use `scripts/dev_ui_agent.sh check server-light` for UI/control-plane work that does not need concrete runtime adapters or DuckDB-backed catalog storage.
 - `tests/**`: run the narrow relevant test first. Use workspace tests only when the change is cross-crate or risky.
 
 ## Heavy Dependency Clues
@@ -24,11 +24,11 @@ The repo `rust-toolchain.toml` selects `nightly` so bare Cargo and rust-analyzer
 ## Runtime Rules
 
 - Use `scripts/dev_ui_agent.sh build` only when a backend binary is required.
-- Use `scripts/dev_ui_agent.sh build server-light` or `scripts/dev_ui_agent.sh restart --no-open --light` for UI/control-plane work that does not need concrete runtime adapters.
+- Use `scripts/dev_ui_agent.sh build server-light` or `scripts/dev_ui_agent.sh restart --no-open --light` for UI/control-plane work that does not need concrete runtime adapters, DuckDB-backed catalog endpoints, or run mirroring into workspace DuckDB.
 - Use `scripts/dev_ui_agent.sh restart --no-open --skip-build` when the existing binary is enough.
 - Use `scripts/dev_ui_agent.sh timings <target>` when investigating compile bottlenecks.
 - Do not use temporary target dirs to dodge locks unless the user explicitly asks for isolated builds.
-- See `docs/02_build/01_dev_build_modes.md` before changing DuckDB linkage. Current parquet support implies bundled DuckDB through `libduckdb-sys`.
+- See `docs/02_build/01_dev_build_modes.md` before changing DuckDB linkage. `server-light` disables DuckDB storage entirely; `server-system-duckdb` enables DuckDB storage without the bundled feature. Current adapter parquet support implies bundled DuckDB through `libduckdb-sys`.
 
 ## Timing Recipes
 

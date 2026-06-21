@@ -1,0 +1,3 @@
+interface:
+  display_name: "Stitchly DuckDB Repair"
+  short_description: "Quarantine and recreate corrupt Stitchly workflow DuckDB files"

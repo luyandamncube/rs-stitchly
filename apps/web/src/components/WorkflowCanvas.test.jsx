@@ -660,7 +660,9 @@ function buildTableMergeWorkflow() {
         wait_after_seconds: 0,
         wait_before_seconds: 0
       },
-      merge_key_columns: ['symbol', 'report_date'],
+      merge_keys_by_table: {
+        earnings__sales_estimate__snapshot__normalized: ['symbol', 'report_date']
+      },
       schema_drift_behavior: 'fail_and_require_review',
       target_schema: 'tables',
       write_policy: 'upsert'

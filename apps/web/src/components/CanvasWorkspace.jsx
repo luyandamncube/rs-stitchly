@@ -4719,6 +4719,27 @@ function CanvasSqlTransformManagementPanel({
 
         <div className="canvas-node-panel__field">
           <div className="canvas-node-panel__field-head">
+            <label htmlFor="canvas-sql-transform-missing-source-behavior">Missing source table</label>
+          </div>
+          <CanvasNodePanelSelect
+            id="canvas-sql-transform-missing-source-behavior"
+            onChange={(nextValue) =>
+              onNodeConfigChange?.((currentConfig) =>
+                applySqlTransformConfigUpdate(currentConfig, {
+                  missing_source_behavior: nextValue
+                })
+              )
+            }
+            options={[
+              { label: 'Fail run', value: 'fail_run' },
+              { label: 'Skip branch', value: 'skip_branch' }
+            ]}
+            value={config.missing_source_behavior}
+          />
+        </div>
+
+        <div className="canvas-node-panel__field">
+          <div className="canvas-node-panel__field-head">
             <label htmlFor="canvas-sql-transform-sql-text">SQL template</label>
           </div>
           <textarea
@@ -4996,26 +5017,6 @@ function CanvasTableMergeManagementPanel({
               { label: 'Snapshot replace', value: 'snapshot_replace' }
             ]}
             value={config.write_policy}
-          />
-        </div>
-
-        <div className="canvas-node-panel__field">
-          <div className="canvas-node-panel__field-head">
-            <label htmlFor="canvas-table-merge-key-columns">{isCollectionMode ? 'Fallback merge key' : 'Single-table merge key'}</label>
-          </div>
-          <input
-            id="canvas-table-merge-key-columns"
-            className="canvas-node-panel__input"
-            onChange={(event) =>
-              onNodeConfigChange?.((currentConfig) =>
-                applyTableMergeConfigUpdate(currentConfig, {
-                  merge_key_columns_text: event.target.value
-                })
-              )
-            }
-            placeholder={isCollectionMode ? 'optional fallback, e.g. symbol, report_date' : 'symbol, report_date'}
-            type="text"
-            value={config.merge_key_columns_text}
           />
         </div>
 
@@ -7043,12 +7044,12 @@ const DEFAULT_SQL_TRANSFORM_TARGET_SCHEMA = 'staging_curated';
 const DEFAULT_SQL_TRANSFORM_OUTPUT_TABLE_NAME = 'normalized_view';
 const DEFAULT_SQL_TRANSFORM_OUTPUT_TABLE_NAME_TEMPLATE = '{{table_name}}';
 const DEFAULT_SQL_TRANSFORM_MATERIALIZATION_MODE = 'view';
+const DEFAULT_SQL_TRANSFORM_MISSING_SOURCE_BEHAVIOR = 'fail_run';
 const DEFAULT_SQL_TRANSFORM_SQL_TEXT = 'select *\nfrom {{source}}';
 const DEFAULT_TABLE_MERGE_TARGET_SCHEMA = 'tables';
 const DEFAULT_TABLE_MERGE_WRITE_POLICY = 'upsert';
 const DEFAULT_TABLE_MERGE_DELETE_HANDLING = 'apply_delete_markers';
 const DEFAULT_TABLE_MERGE_SCHEMA_DRIFT_BEHAVIOR = 'fail_and_require_review';
-const DEFAULT_TABLE_MERGE_KEY_COLUMNS = ['symbol', 'report_date'];
 const MAX_TABLE_MERGE_KEY_COLUMNS = 20;
 const DEFAULT_RATES_TABLE_MERGE_KEY_COLUMNS = ['curve_date', 'tenor'];
 const DEFAULT_TABLE_INPUT_CATALOG = 'workflow.duckdb';
@@ -7408,6 +7409,10 @@ function normalizeSqlTransformPanelConfig(node) {
       config.materialization_mode === 'view'
         ? config.materialization_mode
         : DEFAULT_SQL_TRANSFORM_MATERIALIZATION_MODE,
+    missing_source_behavior:
+      config.missing_source_behavior === 'skip_branch'
+        ? config.missing_source_behavior
+        : DEFAULT_SQL_TRANSFORM_MISSING_SOURCE_BEHAVIOR,
     output_table_name: normalizeNodeConfigTextField(
       config,
       'output_table_name',
@@ -7558,8 +7563,7 @@ function normalizeTableMergeKeyList(value) {
 }
 
 function normalizeTableMergeKeyColumns(value) {
-  const keys = normalizeTableMergeKeyList(value);
-  return keys.length > 0 ? keys : [...DEFAULT_TABLE_MERGE_KEY_COLUMNS];
+  return normalizeTableMergeKeyList(value);
 }
 
 function normalizeTableMergeKeysByTable(value) {
@@ -7578,14 +7582,17 @@ function normalizeTableMergeKeysByTable(value) {
   );
 }
 
+function getSingleTableMergeKeysByTableColumns(mergeKeysByTable) {
+  const entries = Object.entries(normalizeTableMergeKeysByTable(mergeKeysByTable));
+  return entries.length === 1 ? entries[0][1] : null;
+}
+
 function normalizeTableMergePanelConfig(node) {
   const config = node?.config ?? {};
-  const mergeKeyColumnsText =
-    typeof config.merge_key_columns_text === 'string' ? config.merge_key_columns_text : null;
-  const mergeKeyColumns = normalizeTableMergeKeyColumns(
-    mergeKeyColumnsText ?? config.merge_key_columns
-  );
   const mergeKeysByTable = normalizeTableMergeKeysByTable(config.merge_keys_by_table);
+  const singleTableMergeKeys = getSingleTableMergeKeysByTableColumns(mergeKeysByTable);
+  const mergeKeyColumns =
+    singleTableMergeKeys ?? normalizeTableMergeKeyColumns(config.merge_key_columns);
 
   return {
     delete_handling:
@@ -7594,7 +7601,6 @@ function normalizeTableMergePanelConfig(node) {
         : DEFAULT_TABLE_MERGE_DELETE_HANDLING,
     execution: normalizeNodeExecutionTimingConfig(config),
     merge_key_columns: mergeKeyColumns,
-    merge_key_columns_text: mergeKeyColumnsText ?? mergeKeyColumns.join(', '),
     merge_keys_by_table: mergeKeysByTable,
     schema_drift_behavior:
       config.schema_drift_behavior === 'allow_additive_changes'
@@ -8106,6 +8112,10 @@ function applySqlTransformConfigUpdate(currentConfig = {}, patch = {}) {
       next.materialization_mode === 'view'
         ? next.materialization_mode
         : DEFAULT_SQL_TRANSFORM_MATERIALIZATION_MODE,
+    missing_source_behavior:
+      next.missing_source_behavior === 'skip_branch'
+        ? next.missing_source_behavior
+        : DEFAULT_SQL_TRANSFORM_MISSING_SOURCE_BEHAVIOR,
     output_table_name: normalizeNodeConfigTextField(
       next,
       'output_table_name',
@@ -8136,18 +8146,20 @@ function applyTableMergeConfigUpdate(currentConfig = {}, patch = {}) {
     ...currentConfig,
     ...patch
   };
+  const mergeKeysByTable = normalizeTableMergeKeysByTable(next.merge_keys_by_table);
+  const singleTableMergeKeys = getSingleTableMergeKeysByTableColumns(mergeKeysByTable);
+  const { merge_key_columns_text: _mergeKeyColumnsText, ...rest } = next;
 
   return {
-    ...next,
+    ...rest,
     delete_handling:
       next.delete_handling === 'ignore_delete_markers'
         ? next.delete_handling
         : DEFAULT_TABLE_MERGE_DELETE_HANDLING,
     execution: normalizeNodeExecutionTimingConfig(next),
-    merge_key_columns: normalizeTableMergeKeyColumns(
-      next.merge_key_columns_text ?? next.merge_key_columns
-    ),
-    merge_keys_by_table: normalizeTableMergeKeysByTable(next.merge_keys_by_table),
+    merge_key_columns:
+      singleTableMergeKeys ?? normalizeTableMergeKeyColumns(next.merge_key_columns),
+    merge_keys_by_table: mergeKeysByTable,
     schema_drift_behavior:
       next.schema_drift_behavior === 'allow_additive_changes'
         ? next.schema_drift_behavior
@@ -8867,6 +8879,14 @@ function buildTableMergeRuntimeSummary(config, workflow, nodeId) {
   const sourceTables = sourceContext?.sourceTables ?? [];
   const mergeKeysByTable = normalizeTableMergeKeysByTable(config?.merge_keys_by_table);
   const keyedTableCount = Object.keys(mergeKeysByTable).length;
+  const singleTableMergeKeys = getSingleTableMergeKeysByTableColumns(mergeKeysByTable);
+  const legacyMergeKeyColumns = normalizeTableMergeKeyColumns(config?.merge_key_columns);
+  const singleTableMergeKeyLabel =
+    singleTableMergeKeys?.length > 0
+      ? singleTableMergeKeys.join(', ')
+      : legacyMergeKeyColumns.length > 0
+        ? legacyMergeKeyColumns.join(', ')
+        : 'No merge key';
   const missingKeyTables = sourceTables.filter(
     (tableName) => !mergeKeysByTable[tableName]?.length
   );
@@ -8876,15 +8896,15 @@ function buildTableMergeRuntimeSummary(config, workflow, nodeId) {
     inputMode,
     inputModeLabel: inputMode === 'collection' ? 'Table collection' : 'Single table',
     mergeKeyLabel:
-      inputMode === 'collection'
+      keyedTableCount === 1
+        ? singleTableMergeKeyLabel
+        : inputMode === 'collection'
         ? keyedTableCount > 0
           ? missingKeyTables.length > 0 && sourceTables.length > 0
             ? `${keyedTableCount} table mapping${keyedTableCount === 1 ? '' : 's'} · ${missingKeyTables.length} missing`
             : `${keyedTableCount} table mapping${keyedTableCount === 1 ? '' : 's'}`
           : 'No per-table keys'
-        : config?.merge_key_columns?.length > 0
-          ? config.merge_key_columns.join(', ')
-          : 'No merge key',
+        : singleTableMergeKeyLabel,
     missingKeyTables,
     schemaDriftLabel: describeTableMergeSchemaDriftBehavior(
       config?.schema_drift_behavior
@@ -11037,6 +11057,7 @@ function appendCanvasNode(workflow, typeId, options = {}) {
                                 wait_before_seconds: 0
                               },
                               materialization_mode: DEFAULT_SQL_TRANSFORM_MATERIALIZATION_MODE,
+                              missing_source_behavior: DEFAULT_SQL_TRANSFORM_MISSING_SOURCE_BEHAVIOR,
                               output_table_name: DEFAULT_SQL_TRANSFORM_OUTPUT_TABLE_NAME,
                               output_table_name_template: DEFAULT_SQL_TRANSFORM_OUTPUT_TABLE_NAME_TEMPLATE,
                               source_table_name: '',
@@ -11050,7 +11071,7 @@ function appendCanvasNode(workflow, typeId, options = {}) {
                                   wait_after_seconds: 0,
                                   wait_before_seconds: 0
                                 },
-                                merge_key_columns: [...DEFAULT_TABLE_MERGE_KEY_COLUMNS],
+                                merge_keys_by_table: {},
                                 schema_drift_behavior: DEFAULT_TABLE_MERGE_SCHEMA_DRIFT_BEHAVIOR,
                                 target_schema: DEFAULT_TABLE_MERGE_TARGET_SCHEMA,
                                 write_policy: DEFAULT_TABLE_MERGE_WRITE_POLICY
@@ -11314,7 +11335,7 @@ function normalizeKnownCanvasWorkflowConfigs(workflow) {
     }
 
     const mergeKeyColumns = normalizeTableMergeKeyColumns(
-      nextNode?.config?.merge_key_columns_text ?? nextNode?.config?.merge_key_columns
+      nextNode?.config?.merge_key_columns
     );
     if (
       mergeKeyColumns.length === 1 &&
@@ -11325,8 +11346,7 @@ function normalizeKnownCanvasWorkflowConfigs(workflow) {
         ...nextNode,
         config: {
           ...(nextNode.config ?? {}),
-          merge_key_columns: [...DEFAULT_RATES_TABLE_MERGE_KEY_COLUMNS],
-          merge_key_columns_text: DEFAULT_RATES_TABLE_MERGE_KEY_COLUMNS.join(', ')
+          merge_key_columns: [...DEFAULT_RATES_TABLE_MERGE_KEY_COLUMNS]
         }
       };
     }

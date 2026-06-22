@@ -924,12 +924,21 @@ struct SqlTransformConfig {
     source_table_name: Option<String>,
     #[serde(default)]
     materialization_mode: Option<SqlTransformMaterializationMode>,
+    #[serde(default)]
+    missing_source_behavior: Option<SqlTransformMissingSourceBehavior>,
 }
 
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum SqlTransformMaterializationMode {
     View,
+}
+
+#[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum SqlTransformMissingSourceBehavior {
+    FailRun,
+    SkipBranch,
 }
 
 #[derive(Deserialize)]
@@ -3861,6 +3870,7 @@ fn source_tables_from_table_reference(
 fn resolve_sql_transform_source_table(
     table_payload: &TableReferencePayload,
     source_table_name: Option<&str>,
+    missing_source_behavior: SqlTransformMissingSourceBehavior,
     node_id: &str,
 ) -> Result<(String, String), AdapterError> {
     let source_tables = source_tables_from_table_reference(table_payload, node_id)?;
@@ -3883,17 +3893,26 @@ fn resolve_sql_transform_source_table(
             return Ok((schema_name, table_name));
         }
 
-        return Err(AdapterError::ExecutionFailed {
-            node_id: node_id.to_string(),
-            message: format!(
-                "sql_transform source table `{source_table_name}` did not match any incoming table references. Available tables: `{}`.",
-                source_tables
-                    .iter()
-                    .map(|(schema_name, table_name)| format!("{schema_name}.{table_name}"))
-                    .collect::<Vec<_>>()
-                    .join("`, `")
-            ),
-        });
+        let available_tables = source_tables
+            .iter()
+            .map(|(schema_name, table_name)| format!("{schema_name}.{table_name}"))
+            .collect::<Vec<_>>()
+            .join("`, `");
+        let message = format!(
+            "sql_transform source table `{source_table_name}` did not match any incoming table references. Available tables: `{available_tables}`."
+        );
+
+        return if missing_source_behavior == SqlTransformMissingSourceBehavior::SkipBranch {
+            Err(AdapterError::Skipped {
+                node_id: node_id.to_string(),
+                message,
+            })
+        } else {
+            Err(AdapterError::ExecutionFailed {
+                node_id: node_id.to_string(),
+                message,
+            })
+        };
     }
 
     if source_tables.len() == 1 {
@@ -5075,8 +5094,19 @@ fn execute_table_merge(
     let schema_drift_behavior = config
         .schema_drift_behavior
         .unwrap_or(TableMergeSchemaDriftBehavior::FailAndRequireReview);
-    let merge_key_columns = normalize_table_merge_key_columns(config.merge_key_columns);
     let merge_keys_by_table = normalize_merge_keys_by_table(config.merge_keys_by_table);
+    let merge_key_columns = {
+        let legacy_merge_key_columns = normalize_table_merge_key_columns(config.merge_key_columns);
+        if legacy_merge_key_columns.is_empty() && merge_keys_by_table.len() == 1 {
+            merge_keys_by_table
+                .values()
+                .next()
+                .cloned()
+                .unwrap_or_default()
+        } else {
+            legacy_merge_key_columns
+        }
+    };
 
     let connection = open_runtime_workflow_duckdb(context, &node.node_id)?;
 
@@ -5264,9 +5294,13 @@ fn execute_sql_transform_single_table(
         .materialization_mode
         .unwrap_or(SqlTransformMaterializationMode::View);
     let materialize_as_table = sql_transform_requires_table_materialization(sql_text);
+    let missing_source_behavior = config
+        .missing_source_behavior
+        .unwrap_or(SqlTransformMissingSourceBehavior::FailRun);
     let (source_schema_name, source_table_name) = resolve_sql_transform_source_table(
         &table_payload,
         config.source_table_name.as_deref(),
+        missing_source_behavior,
         node_id,
     )?;
     let output_table_name = resolve_sql_transform_output_table_name(
@@ -10439,7 +10473,9 @@ mod tests {
             config: json!({
                 "target_schema": "tables",
                 "write_policy": "upsert",
-                "merge_key_columns": ["symbol", "report_date"],
+                "merge_keys_by_table": {
+                    "earnings_calendar": ["symbol", "report_date"]
+                },
                 "delete_handling": "apply_delete_markers",
                 "schema_drift_behavior": "fail_and_require_review"
             }),

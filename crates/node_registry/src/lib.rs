@@ -1960,6 +1960,13 @@ pub fn builtin_node_definitions() -> Vec<NodeDefinition> {
                         "enum": ["view"],
                         "default": "view"
                     },
+                    "missing_source_behavior": {
+                        "type": "string",
+                        "enum": ["fail_run", "skip_branch"],
+                        "default": "fail_run",
+                        "title": "Missing source table behavior",
+                        "description": "Controls what happens when source_table_name is configured but absent from the incoming table references."
+                    },
                     "sql_text": {
                         "type": "string",
                         "default": "select *\nfrom {{source}}",
@@ -2100,16 +2107,10 @@ pub fn builtin_node_definitions() -> Vec<NodeDefinition> {
                         "enum": ["upsert", "append_only", "snapshot_replace"],
                         "default": "upsert"
                     },
-                    "merge_key_columns": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "default": ["symbol", "report_date"],
-                        "description": "Legacy single-table upsert keys used when the `table` input is connected."
-                    },
                     "merge_keys_by_table": {
                         "type": "object",
                         "default": {},
-                        "description": "Per-table upsert keys used when the `items` collection input is connected.",
+                        "description": "Per-table upsert keys. A single entry also drives single-table merge key display and execution.",
                         "additionalProperties": {
                             "type": "array",
                             "items": { "type": "string" }

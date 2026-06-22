@@ -37,6 +37,8 @@ pub enum AdapterError {
     ConnectionFailed { node_id: String, message: String },
     #[error("execution failed for node `{node_id}`: {message}")]
     ExecutionFailed { node_id: String, message: String },
+    #[error("skipped node `{node_id}`: {message}")]
+    Skipped { node_id: String, message: String },
     #[error("unsupported node type `{0}`")]
     UnsupportedNode(String),
 }

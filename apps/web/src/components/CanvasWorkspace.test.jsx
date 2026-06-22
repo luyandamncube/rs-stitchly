@@ -1484,6 +1484,19 @@ describe('CanvasWorkspace', () => {
       '{{table_name}}__normalized'
     );
     expect(screen.queryByLabelText('Output table name')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Missing source table' })).toHaveTextContent(
+      'Fail run'
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Missing source table' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Skip branch' }));
+    await waitFor(() => {
+      expect(api.updateWorkflow).toHaveBeenCalled();
+    });
+    const updatedWorkflow = api.updateWorkflow.mock.calls.at(-1)[2];
+    const sqlTransformNode = updatedWorkflow.nodes.find(
+      (node) => node.node_id === 'sql_transform'
+    );
+    expect(sqlTransformNode.config.missing_source_behavior).toBe('skip_branch');
     expect(screen.getByLabelText('SQL template')).toHaveValue('select *\nfrom {{source}}');
     expect(screen.getByLabelText('SQL transform preview context')).toHaveTextContent(
       'staging_curated.{{table_name}}__normalized'
@@ -1551,9 +1564,8 @@ describe('CanvasWorkspace', () => {
 
     expect(await screen.findByLabelText('Target schema')).toHaveTextContent('tables');
     expect(screen.getByLabelText('Write policy')).toHaveTextContent('Upsert');
-    expect(screen.getByLabelText('Single-table merge key')).toHaveValue(
-      'symbol, report_date'
-    );
+    expect(screen.queryByLabelText('Single-table merge key')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Merge keys by table JSON')).toBeInTheDocument();
     expect(screen.getByLabelText('Delete handling')).toHaveTextContent(
       'Apply delete markers'
     );
@@ -1565,7 +1577,7 @@ describe('CanvasWorkspace', () => {
     );
   });
 
-  it('persists more than two comma-separated table merge keys', async () => {
+  it('persists one-table JSON merge keys as the single-table runtime key', async () => {
     const workflowWithTableMerge = buildTableMergeWorkflow();
 
     api.getWorkflow.mockResolvedValue({
@@ -1586,11 +1598,27 @@ describe('CanvasWorkspace', () => {
     await screen.findByLabelText('Workflow run status');
 
     fireEvent.click(screen.getByRole('button', { name: 'Select table merge node' }));
-    fireEvent.change(await screen.findByLabelText('Single-table merge key'), {
+    fireEvent.change(await screen.findByLabelText('Merge keys by table JSON'), {
       target: {
-        value: 'symbol, statement_date, period, fiscal_year, fiscal_quarter, source_table'
+        value: JSON.stringify(
+          {
+            merge_keys_by_table: {
+              earnings__balance_sheet_assets__snapshot__normalized: [
+                'symbol',
+                'statement_date',
+                'period',
+                'fiscal_year',
+                'fiscal_quarter',
+                'source_table'
+              ]
+            }
+          },
+          null,
+          2
+        )
       }
     });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply Merge Keys' }));
 
     await waitFor(() => {
       expect(api.updateWorkflow).toHaveBeenCalled();
@@ -1609,13 +1637,30 @@ describe('CanvasWorkspace', () => {
       'fiscal_quarter',
       'source_table'
     ]);
-    expect(tableMergeNode.config.merge_key_columns_text).toBe(
-      'symbol, statement_date, period, fiscal_year, fiscal_quarter, source_table'
-    );
+    expect(tableMergeNode.config.merge_keys_by_table).toEqual({
+      earnings__balance_sheet_assets__snapshot__normalized: [
+        'symbol',
+        'statement_date',
+        'period',
+        'fiscal_year',
+        'fiscal_quarter',
+        'source_table'
+      ]
+    });
+    expect(tableMergeNode.config.merge_key_columns_text).toBeUndefined();
   });
 
-  it('keeps a trailing comma visible while editing table merge keys', async () => {
+  it('updates the table merge current key summary from one JSON mapping', async () => {
     const workflowWithTableMerge = buildTableMergeWorkflow();
+    const tableMergeNode = workflowWithTableMerge.nodes.find(
+      (node) => node.node_id === 'table_merge'
+    );
+    tableMergeNode.config = {
+      ...tableMergeNode.config,
+      merge_keys_by_table: {
+        earnings__rank_score__snapshot__normalized: ['symbol', 'rank_date']
+      }
+    };
 
     api.getWorkflow.mockResolvedValue({
       workflow: {
@@ -1635,26 +1680,10 @@ describe('CanvasWorkspace', () => {
     await screen.findByLabelText('Workflow run status');
 
     fireEvent.click(screen.getByRole('button', { name: 'Select table merge node' }));
-    fireEvent.change(await screen.findByLabelText('Single-table merge key'), {
-      target: {
-        value: 'symbol,'
-      }
-    });
 
-    await waitFor(() => {
-      expect(screen.getByLabelText('Single-table merge key')).toHaveValue('symbol,');
-    });
-    await waitFor(() => {
-      expect(api.updateWorkflow).toHaveBeenCalled();
-    });
-
-    const updatedWorkflow = api.updateWorkflow.mock.calls.at(-1)[2];
-    const tableMergeNode = updatedWorkflow.nodes.find(
-      (node) => node.node_id === 'table_merge'
+    expect(await screen.findByLabelText('Current merge state')).toHaveTextContent(
+      'symbol, rank_date'
     );
-
-    expect(tableMergeNode.config.merge_key_columns).toEqual(['symbol']);
-    expect(tableMergeNode.config.merge_key_columns_text).toBe('symbol,');
   });
 
   it('keeps a trailing comma visible while editing selected table lists', async () => {

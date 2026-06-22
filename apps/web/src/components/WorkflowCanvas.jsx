@@ -2591,11 +2591,10 @@ function normalizeTableMergeNodeConfig(config = {}) {
     config?.write_policy === 'append_only' || config?.write_policy === 'snapshot_replace'
       ? config.write_policy
       : 'upsert'
-  const mergeKeyColumns = Array.isArray(config?.merge_key_columns)
-    ? config.merge_key_columns
-        .map((value) => (typeof value === 'string' ? value.trim() : ''))
-        .filter(Boolean)
-    : []
+  const mergeKeyColumnsByTable = normalizeTableMergeKeysByTable(config?.merge_keys_by_table)
+  const singleTableMergeKeys = getSingleTableMergeKeysByTableColumns(mergeKeyColumnsByTable)
+  const mergeKeyColumns =
+    singleTableMergeKeys ?? normalizeTableMergeKeyList(config?.merge_key_columns)
   const deleteHandling =
     config?.delete_handling === 'ignore_delete_markers'
       ? 'ignore_delete_markers'
@@ -3224,6 +3223,36 @@ function describeDoltDiffExportFilter(changeFilter) {
     default:
       return 'All changes'
   }
+}
+
+function normalizeTableMergeKeyList(value) {
+  if (Array.isArray(value)) {
+    return [...new Set(value.map((entry) => (typeof entry === 'string' ? entry.trim() : '')).filter(Boolean))]
+  }
+
+  if (typeof value === 'string') {
+    return [...new Set(value.split(',').map((entry) => entry.trim()).filter(Boolean))]
+  }
+
+  return []
+}
+
+function normalizeTableMergeKeysByTable(value) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+
+  return Object.fromEntries(
+    Object.entries(source)
+      .map(([tableName, keys]) => {
+        const normalizedTableName = typeof tableName === 'string' ? tableName.trim() : ''
+        return [normalizedTableName, normalizeTableMergeKeyList(keys)]
+      })
+      .filter(([tableName, keys]) => tableName && keys.length > 0)
+  )
+}
+
+function getSingleTableMergeKeysByTableColumns(mergeKeysByTable) {
+  const entries = Object.entries(normalizeTableMergeKeysByTable(mergeKeysByTable))
+  return entries.length === 1 ? entries[0][1] : null
 }
 
 function normalizeDoltChangeManifestSelectedTables(value) {

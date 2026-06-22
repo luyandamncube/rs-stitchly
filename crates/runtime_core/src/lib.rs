@@ -865,6 +865,7 @@ impl RuntimeService {
         };
 
         let mut outputs = BTreeMap::<(String, String), workflow_schema::TypedValue>::new();
+        let mut skipped_nodes = BTreeSet::<String>::new();
         for node_id in plan {
             if self.finalize_run_if_cancelled(&record, &run_id).await {
                 return;
@@ -890,6 +891,21 @@ impl RuntimeService {
                 .await;
                 return;
             };
+
+            if let Some(source_node_id) =
+                skipped_upstream_dependency(node, &workflow, &skipped_nodes)
+            {
+                let skip_message = format!(
+                    "Skipping `{}` because upstream node `{}` was skipped.",
+                    node.node_id, source_node_id
+                );
+                self.record_log(&record, &run_id, Some(&node.node_id), skip_message)
+                    .await;
+                self.mark_node_finished(&record, &run_id, node, NodeRunStatus::Skipped, None, None)
+                    .await;
+                skipped_nodes.insert(node.node_id.clone());
+                continue;
+            }
 
             let inputs = match collect_inputs(node, &workflow, &outputs) {
                 Ok(inputs) => inputs,
@@ -1035,6 +1051,24 @@ impl RuntimeService {
                     }
                 }
                 Ok(Err(error)) => {
+                    if let AdapterError::Skipped { message, .. } = error {
+                        self.record_log(&record, &run_id, Some(&node.node_id), message)
+                            .await;
+                        self.mark_node_finished(
+                            &record,
+                            &run_id,
+                            node,
+                            NodeRunStatus::Skipped,
+                            None,
+                            None,
+                        )
+                        .await;
+                        skipped_nodes.insert(node.node_id.clone());
+                        if self.finalize_run_if_cancelled(&record, &run_id).await {
+                            return;
+                        }
+                        continue;
+                    }
                     self.fail_run(
                         &record,
                         &run_id,
@@ -3371,6 +3405,20 @@ fn collect_inputs(
     Ok(inputs)
 }
 
+fn skipped_upstream_dependency(
+    node: &WorkflowNode,
+    workflow: &WorkflowDefinition,
+    skipped_nodes: &BTreeSet<String>,
+) -> Option<String> {
+    workflow
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.target_node_id == node.node_id && skipped_nodes.contains(&edge.source_node_id)
+        })
+        .map(|edge| edge.source_node_id.clone())
+}
+
 fn run_target() -> EventTarget {
     EventTarget {
         kind: EventTargetKind::Run,
@@ -3413,6 +3461,7 @@ fn to_run_error_from_adapter(node: &WorkflowNode, error: AdapterError) -> RunErr
         AdapterError::ExecutionFailed { .. }
         | AdapterError::InvalidConfig { .. }
         | AdapterError::MissingInput { .. }
+        | AdapterError::Skipped { .. }
         | AdapterError::TextTypeMismatch { .. }
         | AdapterError::DatasetRefTypeMismatch { .. } => RunErrorCategory::ExecutionError,
     };
